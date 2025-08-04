@@ -9,7 +9,7 @@ description = "Enhanced MCP server for enabling memory for Claude through a know
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
-    {name = "Dr. Joel Casimir", email = "jc214x@gmail.com"}
+    {name = "study-flamingo", email = "y9agf5y5@anonaddy.me"}
 ]
 keywords = ["mcp", "memory", "knowledge-graph", "temporal", "observations", "claude", "ai", "python"]
 classifiers = [

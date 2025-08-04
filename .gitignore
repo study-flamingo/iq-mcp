@@ -106,3 +106,4 @@ temp/
 .venv
 .vscode
 memory.jsonl
+.env
