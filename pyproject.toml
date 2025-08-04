@@ -3,15 +3,15 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mcp-server-memory-temporal"
-version = "0.7.0"
-description = "Enhanced MCP server for enabling memory for Claude through a knowledge graph with temporal observations and smart cleanup"
+name = "iq-mcp"
+version = "0.1.0"
+description = "Enhanced version of the original knowledge graph memory MCP server."
 readme = "README.md"
 license = {text = "MIT"}
 authors = [
     {name = "study-flamingo", email = "y9agf5y5@anonaddy.me"}
 ]
-keywords = ["mcp", "memory", "knowledge-graph", "temporal", "observations", "claude", "ai", "python"]
+keywords = ["mcp", "memory", "knowledge-graph", "persistence", "observations", "claude", "ai", "python", "mcp-server"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",

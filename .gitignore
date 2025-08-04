@@ -107,3 +107,7 @@ temp/
 .vscode
 memory.jsonl
 .env
+__pycache__/
+*.egg
+*.egg-info/
+*.pyc
