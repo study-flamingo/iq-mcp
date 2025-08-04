@@ -12,7 +12,7 @@ import sys
 import logging
 
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Annotated, Any
 
 from fastmcp import FastMCP
 
@@ -102,7 +102,7 @@ mcp = FastMCP("iq-mcp")
 
 
 @mcp.tool
-async def create_entities(entities: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+async def create_entities(entities: Annotated[list[dict[str, str]], "List of entity objects with name, entityType, and observations fields"]) -> list[dict[str, str]]:
     """Create multiple new entities in the knowledge graph.
     
     Args:
@@ -127,7 +127,7 @@ async def create_entities(entities: List[Dict[str, Any]]) -> List[Dict[str, Any]
 
 
 @mcp.tool
-async def create_relations(relations: List[Dict[str, str]]) -> List[Dict[str, str]]:
+async def create_relations(relations: Annotated[list[dict[str, str]], "List of relation objects with from, to, and relationType fields"]) -> list[dict[str, str]]:
     """Create multiple new relations between entities in the knowledge graph. Relations should be in active voice.
     
     Args:
@@ -152,7 +152,7 @@ async def create_relations(relations: List[Dict[str, str]]) -> List[Dict[str, st
 
 
 @mcp.tool
-async def add_observations(observations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+async def add_observations(observations: Annotated[list[dict[str, str]], "List of observation objects with entityName and contents fields"]) -> list[dict[str, str]]:
     """Add new observations to existing entities in the knowledge graph. Supports both simple strings and temporal observations with durability metadata (permanent, long-term, short-term, temporary).
     
     Args:
@@ -193,7 +193,7 @@ async def add_observations(observations: List[Dict[str, Any]]) -> List[Dict[str,
 
 
 @mcp.tool
-async def cleanup_outdated_observations() -> Dict[str, Any]:
+async def cleanup_outdated_observations() -> dict[str, Any]:
     """Remove observations that are likely outdated based on their durability and age.
     
     Returns:
@@ -208,7 +208,7 @@ async def cleanup_outdated_observations() -> Dict[str, Any]:
 
 
 @mcp.tool
-async def get_observations_by_durability(entityName: str) -> Dict[str, Any]:
+async def get_observations_by_durability(entityName: Annotated[str, "The name of the entity to get observations for"]) -> dict[str, Any]:
     """Get observations for an entity grouped by their durability type.
     
     Args:
@@ -229,7 +229,7 @@ async def get_observations_by_durability(entityName: str) -> Dict[str, Any]:
 
 
 @mcp.tool
-async def delete_entities(entityNames: List[str]) -> str:
+async def delete_entities(entityNames: Annotated[list[str], "List of entity names to delete"]) -> str:
     """Delete multiple entities and their associated relations from the knowledge graph.
     
     Args:
@@ -250,7 +250,7 @@ async def delete_entities(entityNames: List[str]) -> str:
 
 
 @mcp.tool
-async def delete_observations(deletions: List[Dict[str, Any]]) -> str:
+async def delete_observations(deletions: Annotated[list[dict[str, str]], "List of deletion objects with entityName and observations fields"]) -> str:
     """Delete specific observations from entities in the knowledge graph.
     
     Args:
@@ -275,7 +275,7 @@ async def delete_observations(deletions: List[Dict[str, Any]]) -> str:
 
 
 @mcp.tool
-async def delete_relations(relations: List[Dict[str, str]]) -> str:
+async def delete_relations(relations: Annotated[list[dict[str, str]], "List of relation objects with from, to, and relationType fields"]) -> str:
     """Delete multiple relations from the knowledge graph.
     
     Args:
@@ -300,7 +300,7 @@ async def delete_relations(relations: List[Dict[str, str]]) -> str:
 
 
 @mcp.tool
-async def read_graph() -> Dict[str, Any]:
+async def read_graph() -> dict[str, Any]:
     """Read the entire knowledge graph.
     
     Returns:
@@ -315,7 +315,7 @@ async def read_graph() -> Dict[str, Any]:
 
 
 @mcp.tool
-async def search_nodes(query: str) -> Dict[str, Any]:
+async def search_nodes(query: Annotated[str, "The search query to match against entity names, types, and observation content"]) -> dict[str, Any]:
     """Search for nodes in the knowledge graph based on a query.
     
     Args:
@@ -336,7 +336,7 @@ async def search_nodes(query: str) -> Dict[str, Any]:
 
 
 @mcp.tool
-async def open_nodes(names: List[str]) -> Dict[str, Any]:
+async def open_nodes(names: Annotated[list[str], "List of entity names to retrieve"]) -> dict[str, Any]:
     """Open specific nodes in the knowledge graph by their names.
     
     Args:
