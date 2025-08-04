@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcp-server-memory-temporal"
+version = "0.7.0"
+description = "Enhanced MCP server for enabling memory for Claude through a knowledge graph with temporal observations and smart cleanup"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Dr. Joel Casimir", email = "jc214x@gmail.com"}
+]
+keywords = ["mcp", "memory", "knowledge-graph", "temporal", "observations", "claude", "ai", "python"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.13",
+]
+requires-python = ">=3.13"
+dependencies = [
+    "fastmcp>=2.11.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.1.1",
+    "typing-extensions>=4.5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/study-flamingo/mcp-server-memory-temporal"
+Repository = "https://github.com/study-flamingo/mcp-server-memory-temporal.git"
+Issues = "https://github.com/study-flamingo/mcp-server-memory-temporal/issues"
+
+[project.scripts]
+iq-mcp = "src.mcp_knowledge_graph.__main__:main"
+
+[tool.setuptools]
+packages = ["src.mcp_knowledge_graph"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+    "pytest-asyncio>=1.1.0",
+    "ruff>=0.12.7",
+]
