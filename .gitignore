@@ -106,6 +106,7 @@ temp/
 .venv
 .vscode
 memory.jsonl
+memory.json
 .env
 __pycache__/
 *.egg

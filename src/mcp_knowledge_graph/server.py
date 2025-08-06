@@ -7,6 +7,7 @@ knowledge graph operations as tools for LLM integration using FastMCP 2.11.
 
 import argparse
 import asyncio
+import json
 import os
 import sys
 import logging
@@ -34,12 +35,7 @@ if IQ_DEBUG:
 
 
 
-# Memory path can be specified via environment variable
-try:
-    IQ_MEMORY_PATH = Path(os.getenv("IQ_MEMORY_PATH", "memory.jsonl"))
-    logger.debug(f"Memory path: {IQ_MEMORY_PATH}")
-except Exception as e:
-    raise FileNotFoundError(f"Memory path error: {e}")
+
 
 
 def parse_args() -> argparse.Namespace:
@@ -101,8 +97,193 @@ manager = KnowledgeGraphManager(memory_path)
 mcp = FastMCP("iq-mcp")
 
 
+def _validate_and_parse_input(input_data: list[dict[str, Any]] | str, expected_type: str) -> list[dict[str, Any]]:
+    """
+    Validate and parse input data, converting JSON strings to list of dictionaries.
+    
+    Args:
+        input_data: Either a list of dictionaries or a JSON string
+        expected_type: Description of expected type for error messages
+        
+    Returns:
+        List of dictionaries ready for model validation
+        
+    Raises:
+        ValueError: If input cannot be parsed or validated
+    """
+    if isinstance(input_data, str):
+        try:
+            parsed_data = json.loads(input_data)
+            if not isinstance(parsed_data, list):
+                raise ValueError(f"String input must parse to a list, got {type(parsed_data).__name__}")
+            return parsed_data
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON string for {expected_type}: {e}")
+    elif isinstance(input_data, list):
+        return input_data
+    else:
+        raise ValueError(f"Input must be a list or JSON string, got {type(input_data).__name__}")
+
+
+def _validate_and_parse_string_list(input_data: list[str] | str, expected_type: str) -> list[str]:
+    """
+    Validate and parse input data, converting JSON strings to list of strings.
+    
+    Args:
+        input_data: Either a list of strings or a JSON string
+        expected_type: Description of expected type for error messages
+        
+    Returns:
+        List of strings ready for processing
+        
+    Raises:
+        ValueError: If input cannot be parsed or validated
+    """
+    if isinstance(input_data, str):
+        try:
+            parsed_data = json.loads(input_data)
+            if not isinstance(parsed_data, list):
+                raise ValueError(f"String input must parse to a list, got {type(parsed_data).__name__}")
+            
+            # Validate all items are strings
+            for i, item in enumerate(parsed_data):
+                if not isinstance(item, str):
+                    raise ValueError(f"All list items must be strings, item {i} is {type(item).__name__}")
+            
+            return parsed_data
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON string for {expected_type}: {e}")
+    elif isinstance(input_data, list):
+        # Validate all items are strings
+        for i, item in enumerate(input_data):
+            if not isinstance(item, str):
+                raise ValueError(f"All list items must be strings, item {i} is {type(item).__name__}")
+        return input_data
+    else:
+        raise ValueError(f"Input must be a list or JSON string, got {type(input_data).__name__}")
+
+
+def _validate_and_parse_entities(input_data: list[dict[str, Any]] | str) -> list[Entity]:
+    """
+    Validate and parse Entity objects from input data.
+    
+    Args:
+        input_data: Either a list of entity dictionaries or a JSON string
+        
+    Returns:
+        List of validated Entity objects
+        
+    Raises:
+        ValueError: If validation fails
+    """
+    entities_data = _validate_and_parse_input(input_data, "entity objects")
+    
+    entity_objects = []
+    for i, entity_data in enumerate(entities_data):
+        try:
+            entity_objects.append(Entity(**entity_data))
+        except Exception as e:
+            raise ValueError(f"Invalid entity data at index {i}: {e}")
+    
+    return entity_objects
+
+
+def _validate_and_parse_relations(input_data: list[dict[str, Any]] | str) -> list[Relation]:
+    """
+    Validate and parse Relation objects from input data.
+    
+    Args:
+        input_data: Either a list of relation dictionaries or a JSON string
+        
+    Returns:
+        List of validated Relation objects
+        
+    Raises:
+        ValueError: If validation fails
+    """
+    relations_data = _validate_and_parse_input(input_data, "relation objects")
+    
+    relation_objects = []
+    for i, relation_data in enumerate(relations_data):
+        try:
+            relation_objects.append(Relation(**relation_data))
+        except Exception as e:
+            raise ValueError(f"Invalid relation data at index {i}: {e}")
+    
+    return relation_objects
+
+
+def _validate_and_parse_add_observations(input_data: list[dict[str, Any]] | str) -> list[AddObservationRequest]:
+    """
+    Validate and parse AddObservationRequest objects from input data.
+    
+    Args:
+        input_data: Either a list of observation request dictionaries or a JSON string
+        
+    Returns:
+        List of validated AddObservationRequest objects
+        
+    Raises:
+        ValueError: If validation fails
+    """
+    observations_data = _validate_and_parse_input(input_data, "observation objects")
+    
+    requests = []
+    for i, obs_data in enumerate(observations_data):
+        try:
+            if "entityName" not in obs_data or "contents" not in obs_data:
+                raise ValueError("Missing required fields: entityName and contents")
+            
+            # Handle mixed content types (strings and objects)
+            contents = []
+            for j, content in enumerate(obs_data["contents"]):
+                if isinstance(content, str):
+                    contents.append(content)
+                elif isinstance(content, dict):
+                    try:
+                        contents.append(ObservationInput(**content))
+                    except Exception as e:
+                        raise ValueError(f"Invalid observation content at index {j}: {e}")
+                else:
+                    raise ValueError(f"Invalid content type at index {j}: {type(content)}")
+            
+            requests.append(AddObservationRequest(
+                entity_name=obs_data["entityName"],
+                contents=contents
+            ))
+        except Exception as e:
+            raise ValueError(f"Invalid observation request at index {i}: {e}")
+    
+    return requests
+
+
+def _validate_and_parse_delete_observations(input_data: list[dict[str, Any]] | str) -> list[DeleteObservationRequest]:
+    """
+    Validate and parse DeleteObservationRequest objects from input data.
+    
+    Args:
+        input_data: Either a list of deletion request dictionaries or a JSON string
+        
+    Returns:
+        List of validated DeleteObservationRequest objects
+        
+    Raises:
+        ValueError: If validation fails
+    """
+    deletions_data = _validate_and_parse_input(input_data, "deletion objects")
+    
+    deletion_objects = []
+    for i, deletion_data in enumerate(deletions_data):
+        try:
+            deletion_objects.append(DeleteObservationRequest(**deletion_data))
+        except Exception as e:
+            raise ValueError(f"Invalid deletion data at index {i}: {e}")
+    
+    return deletion_objects
+
+
 @mcp.tool
-async def create_entities(entities: Annotated[list[dict[str, str]], "List of entity objects with name, entityType, and observations fields"]) -> list[dict[str, str]]:
+async def create_entities(entities: Annotated[list[dict[str, Any]] | str, "List of entity objects with name, entityType, and observations fields"]) -> list[dict[str, Any]] | str:
     """Create multiple new entities in the knowledge graph.
     
     Args:
@@ -112,13 +293,7 @@ async def create_entities(entities: Annotated[list[dict[str, str]], "List of ent
         List of created entity objects
     """
     try:
-        entity_objects = []
-        for entity_data in entities:
-            try:
-                entity_objects.append(Entity(**entity_data))
-            except Exception as e:
-                raise ValueError(f"Invalid entity data: {e}")
-        
+        entity_objects = _validate_and_parse_entities(entities)
         result = await manager.create_entities(entity_objects)
         logger.debug("🛠️ Tool registered: create_entities")
         return [e.dict() for e in result]
@@ -127,7 +302,7 @@ async def create_entities(entities: Annotated[list[dict[str, str]], "List of ent
 
 
 @mcp.tool
-async def create_relations(relations: Annotated[list[dict[str, str]], "List of relation objects with from, to, and relationType fields"]) -> list[dict[str, str]]:
+async def create_relations(relations: Annotated[list[dict[str, Any]] | str, "List of relation objects with from, to, and relationType fields"]) -> list[dict[str, Any]] | str:
     """Create multiple new relations between entities in the knowledge graph. Relations should be in active voice.
     
     Args:
@@ -137,13 +312,7 @@ async def create_relations(relations: Annotated[list[dict[str, str]], "List of r
         List of created relation objects
     """
     try:
-        relation_objects = []
-        for relation_data in relations:
-            try:
-                relation_objects.append(Relation(**relation_data))
-            except Exception as e:
-                raise ValueError(f"Invalid relation data: {e}")
-        
+        relation_objects = _validate_and_parse_relations(relations)
         result = await manager.create_relations(relation_objects)
         logger.debug("🛠️ Tool registered: create_relations")
         return [r.dict() for r in result]
@@ -152,7 +321,7 @@ async def create_relations(relations: Annotated[list[dict[str, str]], "List of r
 
 
 @mcp.tool
-async def add_observations(observations: Annotated[list[dict[str, str]], "List of observation objects with entityName and contents fields"]) -> list[dict[str, str]]:
+async def add_observations(observations: Annotated[list[dict[str, Any]] | str, "List of observation objects with entityName and contents fields"]) -> list[dict[str, Any]] | str:
     """Add new observations to existing entities in the knowledge graph. Supports both simple strings and temporal observations with durability metadata (permanent, long-term, short-term, temporary).
     
     Args:
@@ -162,29 +331,7 @@ async def add_observations(observations: Annotated[list[dict[str, str]], "List o
         List of processed observation request objects
     """
     try:
-        requests = []
-        for obs_data in observations:
-            if "entityName" not in obs_data or "contents" not in obs_data:
-                raise ValueError("Missing required fields: entityName and contents")
-            
-            # Handle mixed content types (strings and objects)
-            contents = []
-            for content in obs_data["contents"]:
-                if isinstance(content, str):
-                    contents.append(content)
-                elif isinstance(content, dict):
-                    try:
-                        contents.append(ObservationInput(**content))
-                    except Exception as e:
-                        raise ValueError(f"Invalid observation content: {e}")
-                else:
-                    raise ValueError(f"Invalid content type: {type(content)}")
-            
-            requests.append(AddObservationRequest(
-                entity_name=obs_data["entityName"],
-                contents=contents
-            ))
-        
+        requests = _validate_and_parse_add_observations(observations)
         result = await manager.add_observations(requests)
         logger.debug("🛠️ Tool registered: add_observations")
         return [r.model_dump() for r in result]
@@ -229,20 +376,23 @@ async def get_observations_by_durability(entityName: Annotated[str, "The name of
 
 
 @mcp.tool
-async def delete_entities(entityNames: Annotated[list[str], "List of entity names to delete"]) -> str:
+async def delete_entities(entityNames: Annotated[list[str] | str, "List of entity names to delete, or JSON string representing a list"]) -> str:
     """Delete multiple entities and their associated relations from the knowledge graph.
     
     Args:
-        entityNames: List of entity names to delete
+        entityNames: List of entity names to delete, or JSON string representing a list
     
     Returns:
         Success message
     """
     try:
-        if not entityNames or not isinstance(entityNames, list):
+        # Validate and parse input
+        entity_names = _validate_and_parse_string_list(entityNames, "entity names")
+        
+        if not entity_names:
             raise ValueError("entityNames must be a non-empty list")
         
-        await manager.delete_entities(entityNames)
+        await manager.delete_entities(entity_names)
         logger.debug("🛠️ Tool registered: delete_entities")
         return "Entities deleted successfully"
     except Exception as e:
@@ -250,7 +400,7 @@ async def delete_entities(entityNames: Annotated[list[str], "List of entity name
 
 
 @mcp.tool
-async def delete_observations(deletions: Annotated[list[dict[str, str]], "List of deletion objects with entityName and observations fields"]) -> str:
+async def delete_observations(deletions: Annotated[list[dict[str, Any]] | str, "List of deletion objects with entityName and observations fields"]) -> str:
     """Delete specific observations from entities in the knowledge graph.
     
     Args:
@@ -260,13 +410,7 @@ async def delete_observations(deletions: Annotated[list[dict[str, str]], "List o
         Success message
     """
     try:
-        deletion_objects = []
-        for deletion_data in deletions:
-            try:
-                deletion_objects.append(DeleteObservationRequest(**deletion_data))
-            except Exception as e:
-                raise ValueError(f"Invalid deletion data: {e}")
-        
+        deletion_objects = _validate_and_parse_delete_observations(deletions)
         await manager.delete_observations(deletion_objects)
         logger.debug("🛠️ Tool registered: delete_observations")
         return "Observations deleted successfully"
@@ -275,7 +419,7 @@ async def delete_observations(deletions: Annotated[list[dict[str, str]], "List o
 
 
 @mcp.tool
-async def delete_relations(relations: Annotated[list[dict[str, str]], "List of relation objects with from, to, and relationType fields"]) -> str:
+async def delete_relations(relations: Annotated[list[dict[str, Any]] | str, "List of relation objects with from, to, and relationType fields"]) -> str:
     """Delete multiple relations from the knowledge graph.
     
     Args:
@@ -285,13 +429,7 @@ async def delete_relations(relations: Annotated[list[dict[str, str]], "List of r
         Success message
     """
     try:
-        relation_objects = []
-        for relation_data in relations:
-            try:
-                relation_objects.append(Relation(**relation_data))
-            except Exception as e:
-                raise ValueError(f"Invalid relation data: {e}")
-        
+        relation_objects = _validate_and_parse_relations(relations)
         await manager.delete_relations(relation_objects)
         logger.debug("🛠️ Tool registered: delete_relations")
         return "Relations deleted successfully"
@@ -336,20 +474,23 @@ async def search_nodes(query: Annotated[str, "The search query to match against 
 
 
 @mcp.tool
-async def open_nodes(names: Annotated[list[str], "List of entity names to retrieve"]) -> dict[str, Any]:
+async def open_nodes(names: Annotated[list[str] | str, "List of entity names to retrieve, or JSON string representing a list"]) -> dict[str, Any]:
     """Open specific nodes in the knowledge graph by their names.
     
     Args:
-        names: List of entity names to retrieve
+        names: List of entity names to retrieve, or JSON string representing a list
     
     Returns:
         Retrieved node data
     """
     try:
-        if not names or not isinstance(names, list):
+        # Validate and parse input
+        entity_names = _validate_and_parse_string_list(names, "entity names")
+        
+        if not entity_names:
             raise ValueError("names must be a non-empty list")
         
-        result = await manager.open_nodes(names)
+        result = await manager.open_nodes(entity_names)
         logger.debug("🛠️ Tool registered: open_nodes")
         return result.model_dump()
     except Exception as e:
