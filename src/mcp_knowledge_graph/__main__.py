@@ -15,15 +15,16 @@ def main():
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger("iq-mcp")
 
+    # First load the .env file in the current directory
     if load_dotenv(verbose=True):
-        logger.info("🌎 .env file loaded")
+        logger.info("🌎 .env file from root dir loaded")
 
-    # .env path can be specified with environment variable
+    # Also load the user-specified .env file
     IQ_ENV_PATH = os.getenv("IQ_ENV_PATH", ".env")
 
     if Path(IQ_ENV_PATH).is_file():
         if load_dotenv(IQ_ENV_PATH):
-            logger.info(f"🌎 .env file loaded from {IQ_ENV_PATH}")
+            logger.debug(f"🚩 User .env file loaded from {IQ_ENV_PATH}")
         else:
             logger.error("⛔ Bad .env file, unable to load")
 
@@ -32,12 +33,16 @@ def main():
         logger.info("🐞 IQ-MCP is running in debug mode")
         logger.setLevel(logging.DEBUG)
 
-    # Memory path can be specified via environment variable
+    # Load the memory path
     try:
         IQ_MEMORY_PATH = Path(os.getenv("IQ_MEMORY_PATH", DEFAULT_MEMORY_PATH)).resolve()
         logger.debug(f"Memory path: {IQ_MEMORY_PATH}")
     except Exception as e:
         raise FileNotFoundError(f"Memory file path error: {e}")
+
+    # Load the transport
+    IQ_TRANSPORT = os.getenv("IQ_TRANSPORT", "stdio")
+    logger.debug(f"\nConfiguration: IQ_DEBUG={IQ_DEBUG}\nIQ_MEMORY_PATH={IQ_MEMORY_PATH}\nIQ_TRANSPORT={IQ_TRANSPORT}")
 
     logger.debug("Running IQ-MCP as a module")
     try:

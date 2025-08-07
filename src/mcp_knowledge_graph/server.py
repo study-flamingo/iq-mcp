@@ -13,7 +13,7 @@ import sys
 import logging
 
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal, Union
 
 from fastmcp import FastMCP
 
@@ -41,6 +41,20 @@ IQ_DEBUG = bool(os.getenv("IQ_DEBUG", "false").lower() == "true")
 if IQ_DEBUG:
     logger.setLevel(logging.DEBUG)
 
+
+# Define valid FastMCP transport types
+Transport = Literal["stdio", "sse", "streamable-http"]
+
+TRANSPORT_ENUM: dict[str, Transport] = {
+    "stdio": "stdio",
+    "http": "streamable-http",
+    "sse": "sse", 
+    "streamable-http": "streamable-http",
+    "streamableHttp": "streamable-http",
+    "streamable_http": "streamable-http",
+    "streamable http": "streamable-http",
+    "streamablehttp": "streamable-http",
+}
 
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
@@ -555,9 +569,19 @@ async def open_nodes(
 
 async def start_server():
     """Common entry point for the MCP server."""
+    transport = os.getenv("IQ_TRANSPORT", "stdio")
+    
+    # Validate and normalize the transport type
+    transport_key = transport.lower().strip()
+    if transport_key not in TRANSPORT_ENUM:
+        raise ValueError(f"Invalid transport specified: '{transport}'. Valid options: stdio, streamable-http, sse")
+    
+    validated_transport: Transport = TRANSPORT_ENUM[transport_key]
+    logger.debug(f"🆗 Transport validated: {transport} -> {validated_transport}")
+
     try:
-        logger.info("🧠 Starting IQ-MCP server")
-        await mcp.run_async(transport="stdio")
+        logger.info(f"🧠 Starting IQ-MCP server with transport: {validated_transport}")
+        await mcp.run_async(transport=validated_transport)
     except Exception as e:
         print(f"Server error: {e}", file=sys.stderr)
         sys.exit(1)
