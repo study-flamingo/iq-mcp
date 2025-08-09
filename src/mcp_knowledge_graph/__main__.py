@@ -20,7 +20,7 @@ def main():
         logger.info("🌎 .env file from root dir loaded")
 
     # Also load the user-specified .env file
-    IQ_ENV_PATH = os.getenv("IQ_ENV_PATH", ".env")
+    IQ_ENV_PATH = os.getenv("IQ_ENV_PATH", ".env")  # Project root
 
     if Path(IQ_ENV_PATH).is_file():
         if load_dotenv(IQ_ENV_PATH):
@@ -44,7 +44,12 @@ def main():
     IQ_TRANSPORT = os.getenv("IQ_TRANSPORT", "stdio")
     logger.debug(f"\nConfiguration: IQ_DEBUG={IQ_DEBUG}\nIQ_MEMORY_PATH={IQ_MEMORY_PATH}\nIQ_TRANSPORT={IQ_TRANSPORT}")
 
-    logger.debug("Running IQ-MCP as a module")
+    # Load optional transport details for streamable-http
+    IQ_STREAMABLE_HTTP_HOST = os.getenv("IQ_STREAMABLE_HTTP_HOST")
+    IQ_STREAMABLE_HTTP_PORT = os.getenv("IQ_STREAMABLE_HTTP_PORT")
+    if IQ_STREAMABLE_HTTP_HOST or IQ_STREAMABLE_HTTP_PORT:
+        logger.debug(f"Streamable-http details: host={IQ_STREAMABLE_HTTP_HOST}, port={IQ_STREAMABLE_HTTP_PORT}")
+
     try:
         asyncio.run(start_server())
     except KeyboardInterrupt:

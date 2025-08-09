@@ -144,7 +144,7 @@ Tests use realistic sample data:
 - **Organizations**: Companies, startups, etc.  
 - **Projects**: Development projects with timelines
 
-### Sample Relations
+### Sample Relations$$
 - **Employment**: "works at", "manages", "employs"
 - **Project**: "leads", "develops", "sponsors"
 - **Business**: "acquires", "collaborates with"

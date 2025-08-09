@@ -47,11 +47,11 @@ class ObservationInput(BaseModel):
     Helper model for creating observations with optional durability.
     
     This makes durability optional when creating new observations,
-    defaulting to 'long-term' for backward compatibility.
+    defaulting to 'short-term' for backward compatibility.
     """
     
     content: str = Field(..., description="The observation content")
-    durability: Optional[DurabilityType] = Field(default=DurabilityType.LONG_TERM, description="How long this observation is expected to remain relevant")
+    durability: Optional[DurabilityType] = Field(default=DurabilityType.SHORT_TERM, description="How long this observation is expected to remain relevant.")
 
 
 class Entity(BaseModel):

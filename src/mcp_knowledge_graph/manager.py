@@ -28,8 +28,9 @@ from .models import (
 
 
 logger = logging.getLogger("iq-mcp")
-logger.setLevel(logging.DEBUG)
-
+logger.setLevel(logging.INFO)
+if os.getenv("IQ_DEBUG", "false").lower() == "true":
+    logger.setLevel(logging.DEBUG)
 
 class KnowledgeGraphManager:
     """
@@ -134,7 +135,10 @@ class KnowledgeGraphManager:
             KnowledgeGraph loaded from file, or empty graph if file doesn't exist
         """
         if not self.memory_file_path.exists():
+            logger.warning(f"⛔ Memory file not found at {self.memory_file_path}! Returning empty graph.")
             return KnowledgeGraph()
+        else:
+            logger.info(f"📈 Loaded graph from {self.memory_file_path}")
 
         try:
             entities = []
@@ -148,28 +152,35 @@ class KnowledgeGraphManager:
 
                     try:
                         item = json.loads(line)
-                        if item.get("type") == "entity":
-                            # Remove the type field and create Entity
-                            entity_data = {k: v for k, v in item.items() if k != "type"}
-                            entity = Entity(**entity_data)
+
+                        # Strict format: Must have 'type' and 'data' dict
+                        item_type = item.get("type")
+                        payload = item.get("data")
+
+                        if item_type not in ("entity", "relation") or not isinstance(payload, dict):
+                            logger.warning(
+                                f"Warning: Skipping line without required 'type' and 'data' object in {self.memory_file_path}"
+                            )
+                            continue
+
+                        if item_type == "entity":
+                            entity = Entity(**payload)
                             # Normalize observations when loading
                             entity.observations = [
                                 self._normalize_observation(obs) for obs in entity.observations
                             ]
                             entities.append(entity)
-                        elif item.get("type") == "relation":
-                            # Remove the type field and create Relation
-                            relation_data = {k: v for k, v in item.items() if k != "type"}
-                            relations.append(Relation(**relation_data))
-                    except (json.JSONDecodeError, ValueError) as e:
+                        elif item_type == "relation":
+                            relations.append(Relation(**payload))
+                    except (json.JSONDecodeError, ValueError, TypeError) as e:
                         # Skip invalid lines but continue processing
-                        print(f"Warning: Skipping invalid line in {self.memory_file_path}: {e}")
+                        logger.warning(f"Warning: Skipping invalid line in {self.memory_file_path}: {e}")
                         continue
 
             return KnowledgeGraph(entities=entities, relations=relations)
 
         except Exception as e:
-            print(f"Error loading graph: {e}")
+            logger.error(f"Error loading graph: {e}")
             return KnowledgeGraph()
 
     async def _save_graph(self, graph: KnowledgeGraph) -> None:
@@ -184,15 +195,15 @@ class KnowledgeGraphManager:
 
             # Save entities
             for entity in graph.entities:
-                entity_dict = entity.dict(by_alias=True)
-                entity_dict["type"] = "entity"
-                lines.append(json.dumps(entity_dict, separators=(",", ":")))
+                entity_payload = entity.dict(by_alias=True)
+                record = {"type": "entity", "data": entity_payload}
+                lines.append(json.dumps(record, separators=(",", ":")))
 
             # Save relations
             for relation in graph.relations:
-                relation_dict = relation.dict(by_alias=True)
-                relation_dict["type"] = "relation"
-                lines.append(json.dumps(relation_dict, separators=(",", ":")))
+                relation_payload = relation.dict(by_alias=True)
+                record = {"type": "relation", "data": relation_payload}
+                lines.append(json.dumps(record, separators=(",", ":")))
 
             with open(self.memory_file_path, "w", encoding="utf-8") as f:
                 f.write("\n".join(lines))
