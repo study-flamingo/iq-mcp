@@ -6,7 +6,7 @@ including entities, relations, and temporal observations with durability metadat
 """
 
 from datetime import datetime
-from typing import List, Union, Literal, Optional
+from typing import Optional
 from pydantic import BaseModel, Field
 from enum import Enum
 
@@ -64,7 +64,7 @@ class Entity(BaseModel):
     
     name: str = Field(..., description="Unique identifier for the entity")
     entity_type: str = Field(..., description="Type classification (e.g., 'person', 'organization', 'event')", alias="entityType")
-    observations: List[Union[str, TimestampedObservation]] = Field(default_factory=list, description="Associated observations in string or temporal format")
+    observations: list[TimestampedObservation] = Field(default_factory=list, description="Associated observations in string or temporal format")
     
     class Config:
         populate_by_name = True
@@ -94,8 +94,8 @@ class KnowledgeGraph(BaseModel):
     supporting both entities and the relations between them.
     """
     
-    entities: List[Entity] = Field(default_factory=list, description="All entities in the knowledge graph")
-    relations: List[Relation] = Field(default_factory=list, description="All relations between entities")
+    entities: list[Entity] = Field(default_factory=list, description="All entities in the knowledge graph")
+    relations: list[Relation] = Field(default_factory=list, description="All relations between entities")
 
 
 class CleanupResult(BaseModel):
@@ -103,34 +103,34 @@ class CleanupResult(BaseModel):
     
     entities_processed: int = Field(..., description="Number of entities that were processed")
     observations_removed: int = Field(..., description="Total number of observations removed")
-    removed_observations: List[dict] = Field(default_factory=list, description="Details of removed observations")
+    removed_observations: list[dict] = Field(default_factory=list, description="Details of removed observations")
 
 
 class DurabilityGroupedObservations(BaseModel):
     """Observations grouped by their durability type."""
     
-    permanent: List[TimestampedObservation] = Field(default_factory=list)
-    long_term: List[TimestampedObservation] = Field(default_factory=list)
-    short_term: List[TimestampedObservation] = Field(default_factory=list)
-    temporary: List[TimestampedObservation] = Field(default_factory=list)
+    permanent: list[TimestampedObservation] = Field(default_factory=list)
+    long_term: list[TimestampedObservation] = Field(default_factory=list)
+    short_term: list[TimestampedObservation] = Field(default_factory=list)
+    temporary: list[TimestampedObservation] = Field(default_factory=list)
 
 
 class AddObservationRequest(BaseModel):
     """Request model for adding observations to an entity."""
     
     entity_name: str = Field(..., description="The name of the entity to add observations to")
-    contents: List[Union[str, ObservationInput]] = Field(..., description="Observations to add - can be simple strings or objects with durability metadata")
+    contents: list[ObservationInput] = Field(..., description="Observations to add - can be simple strings or objects with durability metadata")
 
 
 class AddObservationResult(BaseModel):
     """Result of adding observations to an entity."""
     
     entity_name: str = Field(..., description="The entity name that was updated")
-    added_observations: List[TimestampedObservation] = Field(..., description="The observations that were actually added (excluding duplicates)")
+    added_observations: list[TimestampedObservation] = Field(..., description="The observations that were actually added (excluding duplicates)")
 
 
 class DeleteObservationRequest(BaseModel):
     """Request model for deleting observations from an entity."""
     
     entity_name: str = Field(..., description="The name of the entity containing the observations")
-    observations: List[str] = Field(..., description="Array of observation contents to delete")
+    observations: list[str] = Field(..., description="Array of observation contents to delete")

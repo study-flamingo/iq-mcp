@@ -14,7 +14,7 @@ import logging
 from fastmcp.exceptions import ToolError, ValidationError
 
 from pathlib import Path
-from typing import Annotated, Any, Literal, Union
+from typing import Annotated, Any, Literal
 
 from fastmcp import FastMCP
 
@@ -34,6 +34,14 @@ from src.mcp_knowledge_graph.models import (
     DeleteObservationRequest,
     ObservationInput,
 )
+
+# Default port for HTTP transport
+DEFAULT_PORT = 8000
+
+# Load instructions from instructions.md - these instructions are used to prompt the model by default.
+with open("instructions.md", "r") as file:
+    IQ_INSTRUCTIONS = file.read()
+
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -119,252 +127,173 @@ logger.debug(f"🔍 Memory path: {memory_path}")
 manager = KnowledgeGraphManager(memory_path)
 
 # Create FastMCP server instance
-mcp = FastMCP("iq-mcp")
+mcp = FastMCP(
+    name="iq-mcp",
+    version="0.1.0",
+    instructions=IQ_INSTRUCTIONS
+)
 
 
-def _validate_and_parse_input(
-    input_data: list[dict[str, Any]] | str, expected_type: str
-) -> list[dict[str, Any]]:
-    """
-    Validate and parse input data, converting JSON strings to list of dictionaries.
-
+def _ensure_non_empty_string(value: Any, name: str) -> str:
+    """Ensure a value is a non-empty string and return it.
+    
     Args:
-        input_data: Either a list of dictionaries or a JSON string
-        expected_type: Description of expected type for error messages
+        value: The value to check
+        name: The name of the value, for error messages
 
     Returns:
-        List of dictionaries ready for model validation
+        The value if it is a non-empty string
+    """
+    if not isinstance(value, str) or not value.strip():
+        raise ValidationError(f"{name} must be a non-empty string")
+    return value
 
-    Raises:
-        ValidationError: If input cannot be parsed or validated
+
+def _ensure_string_list(input_data: Any, expected_type: str = "string list") -> list[str]:
+    """
+    Ensure input is a list[str]. If a JSON string is provided, parse and validate it.
     """
     if isinstance(input_data, str):
         try:
-            parsed_data = json.loads(input_data)
-            if not isinstance(parsed_data, list):
-                raise ValidationError(
-                    f"String input must parse to a list, got {type(parsed_data).__name__}"
-                )
-            return parsed_data
+            parsed = json.loads(input_data)
         except json.JSONDecodeError as e:
             raise ValidationError(f"Invalid JSON string for {expected_type}: {e}")
-    elif isinstance(input_data, list):
-        return input_data
-    else:
-        raise ValidationError(f"Input must be a list or JSON string, got {type(input_data).__name__}")
+        input_data = parsed
 
+    if not isinstance(input_data, list) or not input_data:
+        raise ValidationError(f"{expected_type} must be a non-empty list of strings")
 
-def _validate_and_parse_string_list(input_data: list[str] | str, expected_type: str) -> list[str]:
-    """
-    Validate and parse input data, converting JSON strings to list of strings.
-
-    Args:
-        input_data: Either a list of strings or a JSON string
-        expected_type: Description of expected type for error messages
-
-    Returns:
-        List of strings ready for processing
-
-    Raises:
-        ValidationError: If input cannot be parsed or validated
-    """
-    if isinstance(input_data, str):
-        try:
-            parsed_data = json.loads(input_data)
-            if not isinstance(parsed_data, list):
-                raise ValidationError(
-                    f"String input must parse to a list, got {type(parsed_data).__name__}"
-                )
-
-            # Validate all items are strings
-            for i, item in enumerate(parsed_data):
-                if not isinstance(item, str):
-                    raise ValidationError(
-                        f"All list items must be strings, item {i} is {type(item).__name__}"
-                    )
-
-            return parsed_data
-        except json.JSONDecodeError as e:
-            raise ValidationError(f"Invalid JSON string for {expected_type}: {e}")
-    elif isinstance(input_data, list):
-        # Validate all items are strings
-        for i, item in enumerate(input_data):
-            if not isinstance(item, str):
-                raise ValidationError(
-                    f"All list items must be strings, item {i} is {type(item).__name__}"
-                )
-        return input_data
-    else:
-        raise ValidationError(f"Input must be a list or JSON string, got {type(input_data).__name__}")
-
-
-def _validate_and_parse_entities(input_data: list[dict[str, Any]] | str) -> list[Entity]:
-    """
-    Validate and parse Entity objects from input data.
-
-    Args:
-        input_data: Either a list of entity dictionaries or a JSON string
-
-    Returns:
-        List of validated Entity objects
-
-    Raises:
-        ValidationError: If validation fails
-    """
-    entities_data = _validate_and_parse_input(input_data, "entity objects")
-
-    entity_objects = []
-    for i, entity_data in enumerate(entities_data):
-        try:
-            entity_objects.append(Entity(**entity_data))
-        except Exception as e:
-            raise ValidationError(f"Invalid entity data at index {i}: {e}")
-
-    return entity_objects
-
-
-def _validate_and_parse_relations(input_data: list[dict[str, Any]] | str) -> list[Relation]:
-    """
-    Validate and parse Relation objects from input data.
-
-    Args:
-        input_data: Either a list of relation dictionaries or a JSON string
-
-    Returns:
-        List of validated Relation objects
-
-    Raises:
-        ValidationError: If validation fails
-    """
-    relations_data = _validate_and_parse_input(input_data, "relation objects")
-
-    relation_objects = []
-    for i, relation_data in enumerate(relations_data):
-        try:
-            relation_objects.append(Relation(**relation_data))
-        except Exception as e:
-            raise ValidationError(f"Invalid relation data at index {i}: {e}")
-
-    return relation_objects
-
-
-def _validate_and_parse_add_observations(
-    input_data: list[dict[str, Any]] | str,
-) -> list[AddObservationRequest]:
-    """
-    Validate and parse AddObservationRequest objects from input data.
-
-    Args:
-        input_data: Either a list of observation request dictionaries or a JSON string
-
-    Returns:
-        List of validated AddObservationRequest objects
-
-    Raises:
-        ValidationError: If validation fails
-    """
-    observations_data = _validate_and_parse_input(input_data, "observation objects")
-
-    requests = []
-    for i, obs_data in enumerate(observations_data):
-        try:
-            if "entityName" not in obs_data or "contents" not in obs_data:
-                raise ValidationError("Missing required fields: entityName and contents")
-
-            # Handle mixed content types (strings and objects)
-            contents = []
-            for j, content in enumerate(obs_data["contents"]):
-                if isinstance(content, str):
-                    contents.append(content)
-                elif isinstance(content, dict):
-                    try:
-                        contents.append(ObservationInput(**content))
-                    except Exception as e:
-                        raise ValidationError(f"Invalid observation content at index {j}: {e}")
-                else:
-                    raise ValidationError(f"Invalid content type at index {j}: {type(content)}")
-
-            requests.append(
-                AddObservationRequest(entity_name=obs_data["entityName"], contents=contents)
+    for i, item in enumerate(input_data):
+        if not isinstance(item, str):
+            raise ValidationError(
+                f"All items in {expected_type} must be strings, item {i} is {type(item).__name__}"
             )
-        except Exception as e:
-            raise ValidationError(f"Invalid observation request at index {i}: {e}")
-
-    return requests
+    return input_data
 
 
-def _validate_and_parse_delete_observations(
-    input_data: list[dict[str, Any]] | str,
-) -> list[DeleteObservationRequest]:
-    """
-    Validate and parse DeleteObservationRequest objects from input data.
-
-    Args:
-        input_data: Either a list of deletion request dictionaries or a JSON string
-
-    Returns:
-        List of validated DeleteObservationRequest objects
-
-    Raises:
-        ValidationError: If validation fails
-    """
-    deletions_data = _validate_and_parse_input(input_data, "deletion objects")
-
-    deletion_objects = []
-    for i, deletion_data in enumerate(deletions_data):
+def _build_models_from_dicts(
+    items: list[dict[str, Any]] | str,
+    model_cls: Any,
+    required_fields: set[str],
+    item_label: str,
+):
+    """Validate a list of dicts, ensure required fields, and construct Pydantic models."""
+    # Allow JSON string input
+    if isinstance(items, str):
         try:
-            deletion_objects.append(DeleteObservationRequest(**deletion_data))
+            items = json.loads(items)
+        except json.JSONDecodeError as e:
+            raise ValidationError(f"Invalid JSON string for {item_label.lower()}s: {e}")
+
+    if not isinstance(items, list) or not items:
+        raise ValidationError(f"{item_label.lower()}s must be a non-empty list")
+
+    models = []
+    for i, data in enumerate(items):
+        if not isinstance(data, dict):
+            raise ValidationError(f"{item_label} at index {i} must be an object")
+
+        missing = required_fields - set(data.keys())
+        if missing:
+            raise ValidationError(f"{item_label} at index {i} missing required fields: {missing}")
+
+        try:
+            models.append(model_cls(**data))
         except Exception as e:
-            raise ValidationError(f"Invalid deletion data at index {i}: {e}")
+            raise ValidationError(f"Invalid {item_label.lower()} data at index {i}: {e}")
 
-    return deletion_objects
-
+    return models
 
 @mcp.tool
 async def add_observations(
-    entity_name: Annotated[str, "The name of the entity to add observations to"],
+    data: Annotated[
+        list[dict[str, Any]] | str | None,
+        "Either a list of request objects or a JSON string of that list. Each item: {entityName, contents}.",
+    ] = None,
+    entity_name: Annotated[
+        str | None, "The name of the entity to add observations to (legacy single-entity form)"
+    ] = None,
     observations: Annotated[
-        list[str] | list[dict[str, Any]], 
-        "List of observation strings or objects with 'content' and optional 'durability' fields"
-    ],
-) -> dict[str, Any]:
-    """Add new observations to an existing entity in the knowledge graph. Supports both simple strings and temporal observations with durability metadata (permanent, long-term, short-term, temporary).
+        list[str] | list[dict[str, Any]] | None,
+        "List of observation strings or objects with 'content' and optional 'durability' fields (legacy single-entity form)",
+    ] = None,
+) -> list[dict[str, Any]]:
+    """Add observations to entities.
 
-    Args:
-        entity_name: The name of the entity to add observations to
-        observations: List of observation strings or objects with 'content' and optional 'durability' fields
-
-    Returns:
-        Result of the observation addition operation
+    Supports two forms:
+    - Batch: data=[{entityName, contents:[...]}] or JSON string of that list
+    - Single-entity (legacy): entity_name + observations
     """
     try:
-        if not entity_name or not isinstance(entity_name, str):
-            raise ValidationError("entity_name must be a non-empty string")
-        
-        if not observations or not isinstance(observations, list):
-            raise ValidationError("observations must be a non-empty list")
+        requests: list[AddObservationRequest] = []
 
-        # Convert observations to the expected format; skips invalid observation entries
-        contents = []
-        for i, obs in enumerate(observations):
-            if isinstance(obs, str):
-                obs = ObservationInput(content=obs)  # Convert string to ObservationInput with default durability (short-term)
-                contents.append(obs)
-            elif isinstance(obs, dict):
-                if "content" not in obs:
-                    raise ValidationError(f"Observation object at index {i} must have a 'content' field")
+        if entity_name is not None or observations is not None:
+            # Legacy single-entity path
+            _ensure_non_empty_string(entity_name, "entity_name")  # type: ignore[arg-type]
+            if not isinstance(observations, list) or not observations:  # type: ignore[unreachable]
+                raise ValidationError("observations must be a non-empty list")
+
+            obs_list: list[ObservationInput] = []  # type: ignore[arg-type]
+            for i, obs in enumerate(observations):
+                if isinstance(obs, str):
+                    obs_list.append(ObservationInput(content=obs))
+                elif isinstance(obs, dict):
+                    if "content" not in obs or obs.get("content") is None:
+                        raise ValidationError(
+                            f"Observation object at index {i} must have a 'content' field"
+                        )
+                    obs_list.append(ObservationInput(**obs))
+                else:
+                    raise ValidationError(
+                        f"Observation at index {i} must be a string or object with 'content' field"
+                    )
+
+            requests = [AddObservationRequest(entity_name=entity_name, contents=obs)]  # type: ignore[arg-type]
+
+        else:
+            # Batch path: expect list or JSON string
+            if isinstance(data, str):
                 try:
-                    contents.append(ObservationInput(**obs))
-                except Exception as e:
-                    raise ValidationError(f"Invalid observation object at index {i}: {e}")
-            else:
-                raise ValidationError(f"Observation at index {i} must be a string or object with 'content' field")
+                    data = json.loads(data)
+                except json.JSONDecodeError as e:
+                    raise ValidationError(f"Invalid JSON string for observations: {e}")
 
-        # Create the request object
-        request = AddObservationRequest(entity_name=entity_name, contents=contents)
-        result = await manager.add_observations([request])
+            if not isinstance(data, list) or not data:
+                raise ValidationError("data must be a non-empty list of observation requests")
+
+            for i, item in enumerate(data):
+                if not isinstance(item, dict):
+                    raise ValidationError(f"Request at index {i} must be an object")
+                if "entityName" not in item or "contents" not in item:
+                    raise ValidationError(
+                        f"Request at index {i} missing required fields: 'entityName' and 'contents'"
+                    )
+
+                name = _ensure_non_empty_string(item["entityName"], "entityName")
+                contents_raw = item["contents"]
+                if not isinstance(contents_raw, list) or not contents_raw:
+                    raise ValidationError("contents must be a non-empty list")
+
+                obs_list: list[ObservationInput] = []
+                for j, obs in enumerate(contents_raw):
+                    if isinstance(obs, str):
+                        obs_list.append(ObservationInput(content=obs))
+                    elif isinstance(obs, dict):
+                        if "content" not in obs:
+                            raise ValidationError(
+                                f"Observation object at index {j} must have a 'content' field"
+                            )
+                        obs_list.append(ObservationInput(**obs))
+                    else:
+                        raise ValidationError(
+                            f"Observation at index {j} must be a string or object with 'content' field"
+                        )
+
+                requests.append(AddObservationRequest(entity_name=name, contents=obs_list))
+
+        result = await manager.add_observations(requests)
         logger.debug("🛠️ Tool invoked: add_observations")
-        return result[0].model_dump()
+        return [r.model_dump() for r in result]
     except Exception as e:
         raise ToolError(f"Failed to add observations: {e}")
 
@@ -385,24 +314,12 @@ async def create_entities(
         List of created entity objects
     """
     try:
-        entity_objects = []
-        for i, entity_data in enumerate(entities):
-            if not isinstance(entity_data, dict):
-                raise ValidationError(f"Entity at index {i} must be an object")
-            
-            required_fields = {"name", "entityType", "observations"}
-            missing_fields = required_fields - set(entity_data.keys())
-            if missing_fields:
-                raise ValidationError(f"Entity at index {i} missing required fields: {missing_fields}")
-            
-            try:
-                entity_objects.append(Entity(**entity_data))
-            except Exception as e:
-                raise ValidationError(f"Invalid entity data at index {i}: {e}")
-
+        entity_objects = _build_models_from_dicts(
+            entities, Entity, {"name", "entityType", "observations"}, "Entity"
+        )
         result = await manager.create_entities(entity_objects)
         logger.debug("🛠️ Tool invoked: create_entities")
-        return [e.dict() for e in result]
+        return [e.model_dump(by_alias=True) for e in result]
     except Exception as e:
         raise ToolError(f"Failed to create entities: {e}")
 
@@ -423,24 +340,12 @@ async def create_relations(
         List of created relation objects
     """
     try:
-        relation_objects = []
-        for i, relation_data in enumerate(relations):
-            if not isinstance(relation_data, dict):
-                raise ValidationError(f"Relation at index {i} must be an object")
-            
-            required_fields = {"from", "to", "relationType"}
-            missing_fields = required_fields - set(relation_data.keys())
-            if missing_fields:
-                raise ValidationError(f"Relation at index {i} missing required fields: {missing_fields}")
-            
-            try:
-                relation_objects.append(Relation(**relation_data))
-            except Exception as e:
-                raise ValidationError(f"Invalid relation data at index {i}: {e}")
-
+        relation_objects = _build_models_from_dicts(
+            relations, Relation, {"from", "to", "relationType"}, "Relation"
+        )
         result = await manager.create_relations(relation_objects)
         logger.debug("🛠️ Tool invoked: create_relations")
-        return [r.dict() for r in result]
+        return [r.model_dump(by_alias=True) for r in result]
     except Exception as e:
         raise ToolError(f"Failed to create relations: {e}")
 
@@ -473,8 +378,7 @@ async def get_observations_by_durability(
         Observations grouped by durability type
     """
     try:
-        if not entityName or not isinstance(entityName, str):
-            raise ValidationError("entityName must be a non-empty string")
+        _ensure_non_empty_string(entityName, "entityName")
 
         result = await manager.get_observations_by_durability(entityName)
         logger.debug("🛠️ Tool invoked: get_observations_by_durability")
@@ -496,15 +400,8 @@ async def delete_entities(
         Success message
     """
     try:
-        if not entity_names or not isinstance(entity_names, list):
-            raise ValidationError("entity_names must be a non-empty list")
-
-        # Validate all items are strings
-        for i, name in enumerate(entity_names):
-            if not isinstance(name, str):
-                raise ValidationError(f"Entity name at index {i} must be a string, got {type(name).__name__}")
-
-        await manager.delete_entities(entity_names)
+        names = _ensure_string_list(entity_names, "entity_names")
+        await manager.delete_entities(names)
         logger.debug("🛠️ Tool invoked: delete_entities")
         return "Entities deleted successfully"
     except Exception as e:
@@ -513,32 +410,49 @@ async def delete_entities(
 
 @mcp.tool
 async def delete_observations(
-    entity_name: Annotated[str, "The name of the entity containing the observations"],
-    observations: Annotated[list[str], "List of observation contents to delete"],
+    data: Annotated[
+        list[dict[str, Any]] | str | None,
+        "Either a list of deletion request objects or JSON string of that list. Each item: {entityName, observations}.",
+    ] = None,
+    entity_name: Annotated[
+        str | None, "The name of the entity containing the observations (legacy single-entity form)"
+    ] = None,
+    observations: Annotated[
+        list[str] | str | None, "List of observation contents to delete (legacy single-entity form)"
+    ] = None,
 ) -> str:
-    """Delete specific observations from an entity in the knowledge graph.
-
-    Args:
-        entity_name: The name of the entity containing the observations
-        observations: List of observation contents to delete
-
-    Returns:
-        Success message
-    """
+    """Delete specific observations. Supports batch or single-entity forms."""
     try:
-        if not entity_name or not isinstance(entity_name, str):
-            raise ValidationError("entity_name must be a non-empty string")
-        
-        if not observations or not isinstance(observations, list):
-            raise ValidationError("observations must be a non-empty list")
+        requests: list[DeleteObservationRequest] = []
 
-        # Validate all items are strings
-        for i, obs in enumerate(observations):
-            if not isinstance(obs, str):
-                raise ValidationError(f"Observation at index {i} must be a string, got {type(obs).__name__}")
+        if entity_name is not None or observations is not None:
+            _ensure_non_empty_string(entity_name, "entity_name")  # type: ignore[arg-type]
+            obs_list = _ensure_string_list(observations, "observations")  # type: ignore[arg-type]
+            requests = [DeleteObservationRequest(entity_name=entity_name, observations=obs_list)]  # type: ignore[arg-type]
+        else:
+            if isinstance(data, str):
+                try:
+                    data = json.loads(data)
+                except json.JSONDecodeError as e:
+                    raise ValidationError(f"Invalid JSON string for deletions: {e}")
 
-        deletion_request = DeleteObservationRequest(entity_name=entity_name, observations=observations)
-        await manager.delete_observations([deletion_request])
+            if not isinstance(data, list) or not data:
+                raise ValidationError("data must be a non-empty list of deletion requests")
+
+            for i, item in enumerate(data):
+                if not isinstance(item, dict):
+                    raise ValidationError(f"Request at index {i} must be an object")
+                if "entityName" not in item or "observations" not in item:
+                    raise ValidationError(
+                        f"Request at index {i} missing required fields: 'entityName' and 'observations'"
+                    )
+                name = _ensure_non_empty_string(item["entityName"], "entityName")
+                obs_list = _ensure_string_list(item["observations"], "observations")
+                requests.append(
+                    DeleteObservationRequest(entity_name=name, observations=obs_list)
+                )
+
+        await manager.delete_observations(requests)
         logger.debug("🛠️ Tool invoked: delete_observations")
         return "Observations deleted successfully"
     except Exception as e:
@@ -561,21 +475,9 @@ async def delete_relations(
         Success message
     """
     try:
-        relation_objects = []
-        for i, relation_data in enumerate(relations):
-            if not isinstance(relation_data, dict):
-                raise ValidationError(f"Relation at index {i} must be an object")
-            
-            required_fields = {"from", "to", "relationType"}
-            missing_fields = required_fields - set(relation_data.keys())
-            if missing_fields:
-                raise ValidationError(f"Relation at index {i} missing required fields: {missing_fields}")
-            
-            try:
-                relation_objects.append(Relation(**relation_data))
-            except Exception as e:
-                raise ValidationError(f"Invalid relation data at index {i}: {e}")
-
+        relation_objects = _build_models_from_dicts(
+            relations, Relation, {"from", "to", "relationType"}, "Relation"
+        )
         await manager.delete_relations(relation_objects)
         logger.debug("🛠️ Tool invoked: delete_relations")
         return "Relations deleted successfully"
@@ -585,15 +487,16 @@ async def delete_relations(
 
 @mcp.tool
 async def read_graph() -> dict[str, Any]:
-    """Read the entire knowledge graph.
+    """# ***CRITICAL: USE THIS TOOL FIRST AT THE BEGINNING OF EACH CONVERSATION!!!***
+    Read the entire knowledge graph.
 
     Returns:
-        Complete knowledge graph data
+        Complete knowledge graph data in JSON format
     """
     try:
         result = await manager.read_graph()
         logger.debug("🛠️ Tool invoked: read_graph")
-        return result.model_dump()
+        return result.model_dump(by_alias=True)
     except Exception as e:
         raise ToolError(f"Failed to read graph: {e}")
 
@@ -607,7 +510,7 @@ async def search_nodes(
     """Search for nodes in the knowledge graph based on a query.
 
     Args:
-        query: The search query to match against entity names, types, and observation content
+        query: The search query to match against entity names, types, and/or observation content
 
     Returns:
         Search results containing matching nodes
@@ -618,7 +521,7 @@ async def search_nodes(
 
         result = await manager.search_nodes(query)
         logger.debug("🛠️ Tool invoked: search_nodes")
-        return result.dict()
+        return result.model_dump(by_alias=True)
     except Exception as e:
         raise ToolError(f"Failed to search nodes: {e}")
 
@@ -636,19 +539,35 @@ async def open_nodes(
         Retrieved node data
     """
     try:
-        if not entity_names or not isinstance(entity_names, list):
-            raise ValidationError("entity_names must be a non-empty list")
-
-        # Validate all items are strings
-        for i, name in enumerate(entity_names):
-            if not isinstance(name, str):
-                raise ValidationError(f"Entity name at index {i} must be a string, got {type(name).__name__}")
-
-        result = await manager.open_nodes(entity_names)
+        names = _ensure_string_list(entity_names, "entity_names")
+        result = await manager.open_nodes(names)
         logger.debug("🛠️ Tool invoked: open_nodes")
-        return result.model_dump()
+        return result.model_dump(by_alias=True)
     except Exception as e:
         raise ToolError(f"Failed to open nodes: {e}")
+
+
+@mcp.tool
+async def merge_entities(
+    newEntityName: Annotated[str, "Name of the new merged entity (typically the first in the list)"],
+    entityNames: Annotated[list[str] | str, "Names of entities to merge into the new entity"],
+) -> dict[str, Any]:
+    """Merge a list of entities into a new entity with the provided name.
+
+    The manager will combine observations and update relations to point to the new entity.
+    """
+    try:
+        _ensure_non_empty_string(newEntityName, "newEntityName")
+
+        names = _ensure_string_list(entityNames, "entity names")
+        if not names:
+            raise ValidationError("entityNames must contain at least one name")
+
+        merged = await manager.merge_entities(newEntityName, names)
+        logger.debug("🛠️ Tool invoked: merge_entities")
+        return merged.dict(by_alias=True)
+    except Exception as e:
+        raise ToolError(f"Failed to merge entities: {e}")
 
 
 async def start_server():
@@ -667,7 +586,7 @@ async def start_server():
     if validated_transport == "http":
         transport_kwargs = {
             "host": os.getenv("IQ_STREAMABLE_HTTP_HOST"),
-            "port": int(os.getenv("IQ_STREAMABLE_HTTP_PORT")),
+            "port": int(os.getenv("IQ_STREAMABLE_HTTP_PORT", DEFAULT_PORT)),
             "path": os.getenv("IQ_STREAMABLE_HTTP_PATH"),
             "log_level": "debug" if IQ_DEBUG else "info"
         }
