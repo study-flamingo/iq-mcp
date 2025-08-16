@@ -9,15 +9,14 @@ import json
 import os
 import logging
 from datetime import datetime, timedelta
-from typing import List, Union, Dict, Set
+from typing import Any
 from pathlib import Path
 
 from .models import (
     Entity,
     Relation,
     KnowledgeGraph,
-    TimestampedObservation,
-    ObservationInput,
+    Observation,
     AddObservationRequest,
     AddObservationResult,
     DeleteObservationRequest,
@@ -52,58 +51,12 @@ class KnowledgeGraphManager:
         # Ensure the directory exists
         self.memory_file_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def _create_timestamped_observation(
-        self, input_data: str | ObservationInput
-    ) -> TimestampedObservation:
-        """
-        Create a timestamped observation from input.
-
-        Converts string observations (old format) or ObservationInput objects
-        to the new TimestampedObservation format with current timestamp.
-
-        Args:
-            input_data: Either a string or ObservationInput object
-
-        Returns:
-            TimestampedObservation with current timestamp
-        """
-        if isinstance(input_data, str):
-            # Convert old string format with default durability
-            return TimestampedObservation.create_now(
-                content=input_data, durability=DurabilityType.LONG_TERM
-            )
-
-        # Handle ObservationInput object
-        return TimestampedObservation.create_now(
-            content=input_data.content, durability=input_data.durability or DurabilityType.LONG_TERM
-        )
-
-    def _normalize_observation(
-        self, obs: Union[str, TimestampedObservation]
-    ) -> TimestampedObservation:
-        """
-        Normalize observations to TimestampedObservation format.
-
-        This ensures backward compatibility by converting old string observations
-        to the new temporal format when loading from storage.
-
-        Args:
-            obs: Either a string or TimestampedObservation
-
-        Returns:
-            TimestampedObservation with appropriate metadata
-        """
-        if isinstance(obs, str):
-            return self._create_timestamped_observation(obs)
-        return obs
-
-    def _get_observation_content(self, obs: Union[str, TimestampedObservation]) -> str:
-        """Return the textual content for either legacy string or timestamped observation."""
-        return obs.content if isinstance(obs, TimestampedObservation) else obs
-
-    def _format_observation_age(self, timestamp: str) -> str:
+    def _format_observation_age(self, timestamp: str | None) -> str:
         """Return a human-friendly age string for an ISO timestamp; fallback to 'unknown age'."""
         try:
+            if not timestamp:
+                return "unknown age"
+            
             obs_date = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
             age_days = (datetime.now() - obs_date).days
             return f"{age_days} days old"
@@ -111,7 +64,7 @@ class KnowledgeGraphManager:
             return "unknown age"
 
     def _group_by_durability(
-        self, observations: List[TimestampedObservation]
+        self, observations: list[Observation]
     ) -> DurabilityGroupedObservations:
         """Group timestamped observations by durability type."""
         grouped = DurabilityGroupedObservations()
@@ -126,15 +79,15 @@ class KnowledgeGraphManager:
                 grouped.temporary.append(obs)
         return grouped
 
-    def _dedupe_relations_in_place(self, relations: List[Relation]) -> List[Relation]:
+    def _dedupe_relations_in_place(self, relations: list[Relation]) -> list[Relation]:
         """Deduplicate relations by (from, to, type), keeping last occurrence order."""
-        unique: Dict[tuple[str, str, str], Relation] = {}
+        unique: dict[tuple[str, str, str], Relation] = {}
         for rel in relations:
             key = (rel.from_entity, rel.to_entity, rel.relation_type)
             unique[key] = rel
         return list(unique.values())
 
-    def _is_observation_outdated(self, obs: TimestampedObservation) -> bool:
+    def _is_observation_outdated(self, obs: Observation) -> bool:
         """
         Check if an observation is likely outdated based on durability and age.
 
@@ -146,6 +99,11 @@ class KnowledgeGraphManager:
         """
         try:
             now = datetime.now()
+            
+            # If the observation has no timestamp, add one
+            if not obs.timestamp:
+                obs.timestamp = now.isoformat()
+            
             obs_date = datetime.fromisoformat(obs.timestamp.replace("Z", "+00:00"))
             days_old = (now - obs_date).days
             months_old = days_old / 30.0
@@ -153,9 +111,9 @@ class KnowledgeGraphManager:
             if obs.durability == DurabilityType.PERMANENT:
                 return False  # Never outdated
             elif obs.durability == DurabilityType.LONG_TERM:
-                return months_old > 24  # 2+ years old
+                return months_old > 12  # 1+ years old
             elif obs.durability == DurabilityType.SHORT_TERM:
-                return months_old > 6  # 6+ months old
+                return months_old > 3  # 3+ months old
             elif obs.durability == DurabilityType.TEMPORARY:
                 return months_old > 1  # 1+ month old
             else:
@@ -177,6 +135,7 @@ class KnowledgeGraphManager:
         else:
             logger.info(f"📈 Loaded graph from {self.memory_file_path}")
 
+
         try:
             entities = []
             relations = []
@@ -185,7 +144,7 @@ class KnowledgeGraphManager:
                 for line in f:
                     line = line.strip()
                     if not line:
-                        continue
+                        break
 
                     try:
                         item = json.loads(line)
@@ -214,10 +173,7 @@ class KnowledgeGraphManager:
 
                         if item_type == "entity" and isinstance(payload, dict):
                             entity = Entity(**payload)
-                            # Normalize observations when loading
-                            entity.observations = [
-                                self._normalize_observation(obs) for obs in entity.observations
-                            ]
+
                             entities.append(entity)
                         elif item_type == "relation" and isinstance(payload, dict):
                             relations.append(Relation(**payload))
@@ -245,6 +201,10 @@ class KnowledgeGraphManager:
         Args:
             graph: The knowledge graph to save
         """
+        # Clean up outdated observations on each save
+        r = await self.cleanup_outdated_observations()
+        logger.debug(f"🧹 Cleaned up {r.observations_removed} outdated observations from {r.entities_processed} entities")
+
         try:
             lines = []
 
@@ -266,15 +226,15 @@ class KnowledgeGraphManager:
         except Exception as e:
             raise RuntimeError(f"Failed to save graph: {e}")
 
-    async def create_entities(self, entities: List[Entity]) -> List[Entity]:
+    async def create_entities(self, entities: list[Entity]) -> list[Entity]:
         """
         Create multiple new entities in the knowledge graph.
 
         Args:
-            entities: List of entities to create
+            entities: list of entities to create
 
         Returns:
-            List of entities that were actually created (excludes existing names)
+            list of entities that were actually created (excludes existing names)
         """
         graph = await self._load_graph()
         existing_names = {entity.name for entity in graph.entities}
@@ -285,15 +245,15 @@ class KnowledgeGraphManager:
         await self._save_graph(graph)
         return new_entities
 
-    async def create_relations(self, relations: List[Relation]) -> List[Relation]:
+    async def create_relations(self, relations: list[Relation]) -> list[Relation]:
         """
         Create multiple new relations between entities.
 
         Args:
-            relations: List of relations to create
+            relations: list of relations to create
 
         Returns:
-            List of relations that were actually created (excludes duplicates)
+            list of relations that were actually created (excludes duplicates)
         """
         graph = await self._load_graph()
 
@@ -313,41 +273,44 @@ class KnowledgeGraphManager:
         await self._save_graph(graph)
         return new_relations
 
-    async def add_observations(
-        self, requests: List[AddObservationRequest]
-    ) -> List[AddObservationResult]:
+    async def _apply_observations(
+        self, requests: list[AddObservationRequest]
+    ) -> list[AddObservationResult]:
         """
         Add new observations to existing entities with temporal metadata.
 
         Args:
-            requests: List of observation addition requests
+            requests: list of observation addition requests
 
         Returns:
-            List of results showing what was actually added
+            list of results showing what was actually added, and/or any errors that occurred
 
         Raises:
             ValueError: If an entity is not found
         """
         graph = await self._load_graph()
-        results = []
+        results: list[AddObservationResult] = []
 
+        # Track errors, while allowing the tool to continue processing other requests
+        errors: list[Exception] = []
         for request in requests:
             # Find the entity
             entity = next((e for e in graph.entities if e.name == request.entity_name), None)
             if entity is None:
-                raise ValueError(f"Entity with name {request.entity_name} not found")
+                errors.append(ValueError(f"Entity with name {request.entity_name} not found"))
+                continue
 
-            # Convert all input contents to TimestampedObservation format
-            new_timestamped_obs = [
-                self._create_timestamped_observation(content) for content in request.contents
-            ]
+            # Create observations with timestamps from the request
+            observations_list: list[Observation] = []
+            for o in request.observations:
+                observations_list.append(Observation.add_timestamp(o.content.strip(), o.durability))
 
             # Get existing observation contents for duplicate checking
-            existing_contents = {self._get_observation_content(obs) for obs in entity.observations}
+            existing_contents = {obs.content for obs in entity.observations}
 
             # Filter out duplicates
             unique_new_obs = [
-                obs for obs in new_timestamped_obs if obs.content not in existing_contents
+                obs for obs in observations_list if obs.content not in existing_contents
             ]
 
             # Add new observations
@@ -376,12 +339,9 @@ class KnowledgeGraphManager:
         for entity in graph.entities:
             original_count = len(entity.observations)
 
-            # Normalize all observations first
-            normalized_obs = [self._normalize_observation(obs) for obs in entity.observations]
-
             # Filter out outdated observations
             kept_observations = []
-            for obs in normalized_obs:
+            for obs in entity.observations:
                 if self._is_observation_outdated(obs):
                     removed_details.append(
                         {
@@ -426,16 +386,14 @@ class KnowledgeGraphManager:
         if entity is None:
             raise ValueError(f"Entity {entity_name} not found")
 
-        # Normalize and group observations
-        normalized_obs = [self._normalize_observation(obs) for obs in entity.observations]
-        return self._group_by_durability(normalized_obs)
+        return self._group_by_durability(entity.observations)
 
-    async def delete_entities(self, entity_names: List[str]) -> None:
+    async def delete_entities(self, entity_names: list[str]) -> None:
         """
         Delete multiple entities and their associated relations.
 
         Args:
-            entity_names: List of entity names to delete
+            entity_names: list of entity names to delete
         """
         graph = await self._load_graph()
         entity_names_set = set(entity_names)
@@ -452,12 +410,12 @@ class KnowledgeGraphManager:
 
         await self._save_graph(graph)
 
-    async def delete_observations(self, deletions: List[DeleteObservationRequest]) -> None:
+    async def delete_observations(self, deletions: list[DeleteObservationRequest]) -> None:
         """
         Delete specific observations from entities.
 
         Args:
-            deletions: List of observation deletion requests
+            deletions: list of observation deletion requests
         """
         graph = await self._load_graph()
 
@@ -469,17 +427,17 @@ class KnowledgeGraphManager:
 
                 # Filter out observations that match the deletion content
                 entity.observations = [
-                    obs for obs in entity.observations if self._get_observation_content(obs) not in to_delete
+                    obs for obs in entity.observations if obs.content not in to_delete
                 ]
 
         await self._save_graph(graph)
 
-    async def delete_relations(self, relations: List[Relation]) -> None:
+    async def delete_relations(self, relations: list[Relation]) -> None:
         """
         Delete multiple relations from the knowledge graph.
 
         Args:
-            relations: List of relations to delete
+            relations: list of relations to delete
         """
         graph = await self._load_graph()
 
@@ -527,7 +485,7 @@ class KnowledgeGraphManager:
 
             # Check observations
             for obs in entity.observations:
-                if query_lower in self._get_observation_content(obs).lower():
+                if query_lower in obs.content.lower():
                     filtered_entities.append(entity)
                     break
 
@@ -543,12 +501,12 @@ class KnowledgeGraphManager:
 
         return KnowledgeGraph(entities=filtered_entities, relations=filtered_relations)
 
-    async def open_nodes(self, names: List[str]) -> KnowledgeGraph:
+    async def open_nodes(self, names: list[str]) -> KnowledgeGraph:
         """
         Open specific nodes in the knowledge graph by their names.
 
         Args:
-            names: List of entity names to retrieve
+            names: list of entity names to retrieve
 
         Returns:
             Knowledge graph containing only the specified entities and their relations
@@ -566,7 +524,7 @@ class KnowledgeGraphManager:
 
         return KnowledgeGraph(entities=filtered_entities, relations=filtered_relations)
 
-    async def merge_entities(self, new_entity_name: str, entity_names: List[str]) -> Entity:
+    async def merge_entities(self, new_entity_name: str, entity_names: list[str]) -> Entity:
         """
         Merge multiple entities into a new entity with the provided name.
 
@@ -612,7 +570,7 @@ class KnowledgeGraphManager:
         entities_to_merge = [existing_by_name[name] for name in entity_names]
 
         # Decide on entity_type: pick the most common among merged entities; fallback to first
-        type_counts: Dict[str, int] = {}
+        type_counts: dict[str, int] = {}
         for ent in entities_to_merge:
             type_counts[ent.entity_type] = type_counts.get(ent.entity_type, 0) + 1
         if type_counts:
@@ -621,14 +579,13 @@ class KnowledgeGraphManager:
             chosen_type = "unknown"
 
         # Merge and normalize observations, dedupe by content
-        seen_contents: Set[str] = set()
-        merged_observations: List[TimestampedObservation] = []
+        seen_contents: set[str] = set()
+        merged_observations: list[Observation] = []
         for ent in entities_to_merge:
             for obs in ent.observations:
-                normalized = self._normalize_observation(obs)
-                if normalized.content not in seen_contents:
-                    seen_contents.add(normalized.content)
-                    merged_observations.append(normalized)
+                if obs.content not in seen_contents:
+                    seen_contents.add(obs.content)
+                    merged_observations.append(obs)
 
         # If an entity exists with the target name and is in the merge list,
         # we will effectively replace it with the merged result. Remove all originals first.

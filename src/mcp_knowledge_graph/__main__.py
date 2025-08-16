@@ -1,4 +1,6 @@
-"""Entry point when running as a module."""
+"""
+Enhanced MCP server for knowledge graph memory.
+"""
 
 import logging
 import os
