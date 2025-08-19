@@ -54,7 +54,7 @@ Example:
 {
   "from": "John_Smith",
   "to": "Anthropic",
-  "relationType": "works_at"
+  "relation_type": "works_at"
 }
 ```
 
@@ -117,7 +117,7 @@ Create multiple new relations between entities.
 
 - `from` (string): Source entity name
 - `to` (string): Target entity name
-- `relationType` (string): Relationship type in active voice
+- `relation_type` (string): Relationship type in active voice
 
 **Behavior**: Skips duplicate relations
 
@@ -245,7 +245,7 @@ cleanup_outdated_observations()
 create_relations([{
   "from": "Dr_Smith",
   "to": "City_Hospital", 
-  "relationType": "works_at"
+  "relation_type": "works_at"
 }])
 
 # Search across all content
@@ -373,7 +373,7 @@ The server uses JSONL (JSON Lines) format for efficient streaming and backward c
 
 ```jsonl
 {"type":"entity","name":"Dr_Smith","entity_type":"person","observations":[...]}
-{"type":"relation","from":"Dr_Smith","to":"City_Hospital","relationType":"works_at"}
+{"type":"relation","from":"Dr_Smith","to":"City_Hospital","relation_type":"works_at"}
 ```
 
 ### Backward Compatibility

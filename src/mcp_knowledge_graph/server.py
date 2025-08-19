@@ -7,6 +7,7 @@ knowledge graph operations as tools for LLM integration using FastMCP 2.11.
 
 import asyncio
 import json
+from datetime import datetime
 import sys
 import logging
 from fastmcp import FastMCP
@@ -19,8 +20,10 @@ from .manager import KnowledgeGraphManager
 from .models import (
     Entity,
     Relation,
-    AddObservationRequest,
+    ObservationRequest,
     DeleteObservationRequest,
+    CreateEntryRequest,
+    DeleteEntryRequest,
 )
 from .settings import settings
 
@@ -113,17 +116,6 @@ def _build_models_from_dicts(
 
     return models
 
-class CreateEntryRequest(BaseModel):
-    entry_type: Literal["observation", "entity", "relation"] = Field(description="Type of entry to create: 'observation', 'entity', or 'relation'")
-    data: list[AddObservationRequest] | list[Entity] | list[Relation] | None = Field(
-        description="""Data to be added to the knowledge graph. 
-        
-        'data' must be a list of the appropriate object for each entry_type:
-    
-        - observation: [{'entity_name': 'entity_name', 'content': list['from': 'entity_name', 'to': 'entity_name', 'relationType': str]]
-        - entity: [{'name': 'entity_name', 'entity_type': 'entity_type', 'observations': [{'content': str, 'durability': ['temporary', 'short-term', 'long-term', 'permanent']}]}]
-        - relation: [{'from': 'entity_name', 'to': 'entity_name', 'relationType': 'relationType'}]
-         """)
 
 @mcp.tool
 async def create_entry(request: CreateEntryRequest) -> list[dict[str, Any]]:
@@ -131,9 +123,11 @@ async def create_entry(request: CreateEntryRequest) -> list[dict[str, Any]]:
     
     'data' must be a list of the appropriate object for each entry_type:
     
-    - observation: [{'entity_name': 'entity_name', 'content': list['from': 'entity_name', 'to': 'entity_name', 'relationType': str]]
-    - entity: [{'name': 'entity_name', 'entity_type': 'entity_type', 'observations': [{'content': str, 'durability': ['temporary', 'short-term', 'long-term', 'permanent']}]}]
-    - relation: [{'from': 'entity_name', 'to': 'entity_name', 'relationType': 'relationType'}]
+    - observation: [{'entity_name': 'entity_name_or_alias', 'content': [...]}]
+    - entity: [{'name': 'entity_name', 'entity_type': 'entity_type', 'observations': [{'content': str, 'durability': ['temporary', 'short-term', 'long-term', 'permanent']}], 'aliases': ['alt1', 'alt2', ...]}]
+    - relation: [{'from': 'entity_name_or_alias', 'to': 'entity_name_or_alias', 'relation_type': 'relation_type'}]
+    
+    Aliases are resolved to canonical entity names by the manager.
     """
     entry_type = request.entry_type
     data = request.data
@@ -145,14 +139,15 @@ async def create_entry(request: CreateEntryRequest) -> list[dict[str, Any]]:
                 raise ValidationError("data must be a list of observations to add, with fields: 'entity_name' and 'content'")
             
             # Build AddObservationRequest list using prior validation behavior
-            requests: list[AddObservationRequest] = []
+            obs_requests: list[ObservationRequest] = []
 
             for i, item in enumerate(data):
-                if not isinstance(item, AddObservationRequest):
+                if not isinstance(item, ObservationRequest):
                     raise ValidationError(f"Invalid request at index {i}: must be an AddObservationRequest object")
-                requests.append(item)
+                else:
+                    obs_requests.append(item)
 
-            result = await manager._apply_observations(requests)
+            result = await manager._apply_observations(obs_requests)
             return [r.model_dump() for r in result]
 
         # Expect list of Entity dicts list[{"name": "entity_name", "entity_type": "entity_type", "observations": ["content": str, "durability": ["temporary", "short-term", "long-term", "permanent"]]}]
@@ -174,7 +169,7 @@ async def create_entry(request: CreateEntryRequest) -> list[dict[str, Any]]:
             logger.debug("🛠️ Tool invoked: create_entry(kind=entity)")
             return [e.model_dump(by_alias=True) for e in result]
 
-        # Expect list of Relation dicts list[{"from": "entity_name", "to": "entity_name", "relationType": "relationType"}]
+        # Expect list of Relation dicts list[{"from": "entity_name", "to": "entity_name", "relation_type": "relation_type"}]
         elif entry_type == "relation":
             # Validate data is a list of Relation objects
             if isinstance(data, str):
@@ -187,7 +182,7 @@ async def create_entry(request: CreateEntryRequest) -> list[dict[str, Any]]:
                 raise ValidationError("data must be a non-empty list of relations")
 
             relation_objects = _build_models_from_dicts(
-                data, Relation, {"from", "to", "relationType"}, "Relation"  # type: ignore[arg-type]
+                data, Relation, {"from", "to", "relation_type"}, "Relation"  # type: ignore[arg-type]
             )
             result = await manager.create_relations(relation_objects)
             logger.debug("🛠️ Tool invoked: create_entry")
@@ -201,7 +196,7 @@ async def create_entry(request: CreateEntryRequest) -> list[dict[str, Any]]:
 
 @mcp.tool
 async def cleanup_outdated_observations() -> dict[str, Any]:
-    """Remove observations that are likely outdated based on their durability and age.
+        """Remove observations that are likely outdated based on their durability and age.
 
     Returns:
         Summary of cleanup operation
@@ -216,12 +211,12 @@ async def cleanup_outdated_observations() -> dict[str, Any]:
 
 @mcp.tool
 async def get_observations_by_durability(
-    entity_name: str = Field(description="The name of the entity to get observations for"),
+    entity_name: str = Field(description="The name or alias of the entity to get observations for"),
 ) -> dict[str, Any]:
     """Get observations for an entity grouped by their durability type.
 
     Args:
-        entity_name: The name of the entity to get observations for
+        entity_name: The name or alias of the entity to get observations for
 
     Returns:
         Observations grouped by durability type
@@ -235,24 +230,16 @@ async def get_observations_by_durability(
     except Exception as e:
         raise ToolError(f"Failed to get observations: {e}")
 
-class DeleteEntryRequest(BaseModel):
-    entry_type: Literal["observation", "entity", "relation"] = Field(description="Type of entry to create: 'observation', 'entity', or 'relation'")
-    data: list[AddObservationRequest] | list[str] | list[Relation] | None = Field(
-        description="""Data to be PERMANENTLY deleted from the knowledge graph. The data must be a list of the appropriate object for each entry_type:
-        - observation: [{'entity_name': 'entity_name', 'content': 'observation_content'}]
-        - entity: [list_of_entity_names]
-        - relation: [{'from': 'entity_name', 'to': 'entity_name', 'relationType': 'relationType'}]
-        """)
 
 @mcp.tool
 async def delete_entry(request: DeleteEntryRequest) -> str:
     """Unified deletion tool for observations, entities, and relations. Data must be a list of the appropriate object for each entry_type:
 
-    - entry_type = 'entity': list of entity names
-    - entry_type = 'observation': [{entity_name, [observation content]}]
-    - entry_type = 'relation': [{from_entity, to_entity, relation_type}]
+    - entry_type = 'entity': list of entity names or aliases
+    - entry_type = 'observation': [{entity_name_or_alias, [observation content]}]
+    - entry_type = 'relation': [{from_entity(name or alias), to_entity(name or alias), relation_type}]
 
-    ***CRITICAL: THIS ACTION IS DESTRUCTIVE AND IRREVERSIBLE - ENSURE USER CONSENTS BEFORE USE!!!***
+    ***CRITICAL: THIS ACTION IS DESTRUCTIVE AND IRREVERSIBLE - ENSURE THAT THE USER CONSENTS PRIOR TO EXECUTION!!!***
     """
     entry_type = request.entry_type
     data = request.data
@@ -312,7 +299,7 @@ async def delete_entry(request: DeleteEntryRequest) -> str:
                 raise ValidationError("data must be a non-empty list of relations")
 
             relation_objects = _build_models_from_dicts(
-                data, Relation, {"from", "to", "relationType"}, "Relation"
+                data, Relation, {"from", "to", "relation_type"}, "Relation"
             )
             await manager.delete_relations(relation_objects)
             logger.debug("🛠️ Tool invoked: delete_entry(kind=relation)")
@@ -331,9 +318,22 @@ async def read_graph() -> dict[str, Any]:
     Returns:
         Complete knowledge graph data in JSON format
     """
+    logger.debug("🛠️ Tool invoked: read_graph")
     try:
         result = await manager.read_graph()
-        logger.debug("🛠️ Tool invoked: read_graph")
+
+        # Sort observations within each entity by timestamp (descending)
+        def _obs_ts(obs_ts: str | None) -> datetime:
+            try:
+                if not obs_ts:
+                    return datetime.min
+                return datetime.fromisoformat(obs_ts.replace("Z", "+00:00"))
+            except Exception:
+                return datetime.min
+
+        for entity in result.entities:
+            entity.observations.sort(key=lambda o: _obs_ts(o.timestamp), reverse=True)
+
         return result.model_dump(by_alias=True)
     except Exception as e:
         raise ToolError(f"Failed to read graph: {e}")
@@ -341,12 +341,12 @@ async def read_graph() -> dict[str, Any]:
 
 @mcp.tool
 async def search_nodes(
-    query: str = Field(description="The search query to match against entity names, types, and observation content"),
+    query: str = Field(description="The search query to match against entity names, aliases, types, and observation content"),
 ) -> dict[str, Any]:
     """Search for nodes in the knowledge graph based on a query.
 
     Args:
-        query: The search query to match against entity names, types, and/or observation content
+        query: The search query to match against entity names, aliases, types, and/or observation content
 
     Returns:
         Search results containing matching nodes
@@ -364,12 +364,12 @@ async def search_nodes(
 
 @mcp.tool
 async def open_nodes(
-    entity_names: list[str] = Field(description="List of entity names to retrieve"),
+    entity_names: list[str] = Field(description="List of entity names or aliases to retrieve"),
 ) -> dict[str, Any]:
     """Open specific nodes in the knowledge graph by their names.
 
     Args:
-        entity_names: List of entity names to retrieve
+        entity_names: List of entity names or aliases to retrieve
 
     Returns:
         Retrieved node data
@@ -385,8 +385,8 @@ async def open_nodes(
 
 @mcp.tool
 async def merge_entities(
-    newentity_name: str = Field(description="Name of the new merged entity (typically the first in the list)"),
-    entity_names: list[str] | str = Field(description="Names of entities to merge into the new entity"),
+    newentity_name: str = Field(description="Name of the new merged entity (must not conflict with an existing name or alias unless part of the merge)"),
+    entity_names: list[str] | str = Field(description="Names or aliases of entities to merge into the new entity"),
 ) -> dict[str, Any]:
     """Merge a list of entities into a new entity with the provided name.
 

@@ -16,7 +16,7 @@ from .models import (
     Relation,
     KnowledgeGraph,
     Observation,
-    AddObservationRequest,
+    ObservationRequest,
     AddObservationResult,
     DeleteObservationRequest,
     CleanupResult,
@@ -46,6 +46,30 @@ class KnowledgeGraphManager:
         self.memory_file_path = Path(memory_file_path)
         # Ensure the directory exists
         self.memory_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # ---------- Alias helpers ----------
+    def _get_entity_by_name_or_alias(self, graph: KnowledgeGraph, identifier: str) -> Entity | None:
+        """Return the first entity whose name or aliases match the identifier (case-insensitive)."""
+        ident_lower = (identifier or "").strip().lower()
+        if not ident_lower:
+            return None
+        for entity in graph.entities:
+            if entity.name.lower() == ident_lower:
+                return entity
+            # Ensure aliases exists and compare case-insensitively
+            try:
+                for alias in entity.aliases:
+                    if isinstance(alias, str) and alias.strip().lower() == ident_lower:
+                        return entity
+            except Exception:
+                # In case legacy data has non-list or invalid aliases field
+                pass
+        return None
+
+    def _canonicalize_entity_name(self, graph: KnowledgeGraph, identifier: str) -> str:
+        """Return canonical entity name if identifier matches a name or alias; otherwise return identifier unchanged."""
+        entity = self._get_entity_by_name_or_alias(graph, identifier)
+        return entity.name if entity else identifier
 
     def _format_observation_age(self, timestamp: str | None) -> str:
         """Return a human-friendly age string for an ISO timestamp; fallback to 'unknown age'."""
@@ -163,7 +187,7 @@ class KnowledgeGraphManager:
                             if {"name", "entity_type"}.issubset(item.keys()):
                                 item_type = "entity"
                                 payload = item
-                            elif {"from", "to", "relationType"}.issubset(item.keys()):
+                            elif {"from", "to", "relation_type"}.issubset(item.keys()):
                                 item_type = "relation"
                                 payload = item
 
@@ -199,7 +223,7 @@ class KnowledgeGraphManager:
         """
         # Clean up outdated observations on each save
         r = await self.cleanup_outdated_observations()
-        logger.debug(f"🧹 Cleaned up {r.observations_removed} outdated observations from {r.entities_processed} entities")
+        logger.debug(f"🧹 Cleaned up {r.observations_removed_count} outdated observations from {r.entities_processed_count} entities")
 
         try:
             lines = []
@@ -234,8 +258,21 @@ class KnowledgeGraphManager:
         """
         graph = await self._load_graph()
         existing_names = {entity.name for entity in graph.entities}
+        existing_aliases: set[str] = set()
+        for entity in graph.entities:
+            try:
+                for alias in entity.aliases:
+                    if isinstance(alias, str):
+                        existing_aliases.add(alias)
+            except Exception:
+                continue
 
-        new_entities = [entity for entity in entities if entity.name not in existing_names]
+        # Only create entities whose canonical name does not collide with existing names or aliases
+        new_entities = [
+            entity
+            for entity in entities
+            if entity.name not in existing_names and entity.name not in existing_aliases
+        ]
 
         graph.entities.extend(new_entities)
         await self._save_graph(graph)
@@ -253,14 +290,21 @@ class KnowledgeGraphManager:
         """
         graph = await self._load_graph()
 
-        # Create set of existing relations for duplicate checking
+        # Canonicalize endpoints to entity names if aliases provided
+        canonicalized: list[Relation] = []
+        for rel in relations:
+            from_c = self._canonicalize_entity_name(graph, rel.from_entity)
+            to_c = self._canonicalize_entity_name(graph, rel.to_entity)
+            canonicalized.append(Relation(from_entity=from_c, to_entity=to_c, relation_type=rel.relation_type))
+
+        # Create set of existing relations for duplicate checking (with canonical names)
         existing_relations = {
             (r.from_entity, r.to_entity, r.relation_type) for r in graph.relations
         }
 
         new_relations = [
             relation
-            for relation in relations
+            for relation in canonicalized
             if (relation.from_entity, relation.to_entity, relation.relation_type)
             not in existing_relations
         ]
@@ -270,7 +314,7 @@ class KnowledgeGraphManager:
         return new_relations
 
     async def _apply_observations(
-        self, requests: list[AddObservationRequest]
+        self, requests: list[ObservationRequest]
     ) -> list[AddObservationResult]:
         """
         Add new observations to existing entities with temporal metadata.
@@ -290,8 +334,8 @@ class KnowledgeGraphManager:
         # Track errors, while allowing the tool to continue processing other requests
         errors: list[Exception] = []
         for request in requests:
-            # Find the entity
-            entity = next((e for e in graph.entities if e.name == request.entity_name), None)
+            # Find the entity by name or alias
+            entity = self._get_entity_by_name_or_alias(graph, request.entity_name)
             if entity is None:
                 errors.append(ValueError(f"Entity with name {request.entity_name} not found"))
                 continue
@@ -356,8 +400,8 @@ class KnowledgeGraphManager:
             await self._save_graph(graph)
 
         return CleanupResult(
-            entities_processed=len(graph.entities),
-            observations_removed=total_removed,
+            entities_processed_count=len(graph.entities),
+            observations_removed_count=total_removed,
             removed_observations=removed_details,
         )
 
@@ -377,7 +421,7 @@ class KnowledgeGraphManager:
             ValueError: If the entity is not found
         """
         graph = await self._load_graph()
-        entity = next((e for e in graph.entities if e.name == entity_name), None)
+        entity = self._get_entity_by_name_or_alias(graph, entity_name)
 
         if entity is None:
             raise ValueError(f"Entity {entity_name} not found")
@@ -392,7 +436,13 @@ class KnowledgeGraphManager:
             entity_names: list of entity names to delete
         """
         graph = await self._load_graph()
-        entity_names_set = set(entity_names)
+        # Resolve identifiers to canonical entity names
+        resolved_names: set[str] = set()
+        for ident in entity_names:
+            entity = self._get_entity_by_name_or_alias(graph, ident)
+            if entity:
+                resolved_names.add(entity.name)
+        entity_names_set = resolved_names
 
         # Remove entities
         graph.entities = [e for e in graph.entities if e.name not in entity_names_set]
@@ -416,7 +466,7 @@ class KnowledgeGraphManager:
         graph = await self._load_graph()
 
         for deletion in deletions:
-            entity = next((e for e in graph.entities if e.name == deletion.entity_name), None)
+            entity = self._get_entity_by_name_or_alias(graph, deletion.entity_name)
             if entity:
                 # Create set of observations to delete
                 to_delete = set(deletion.observations)
@@ -437,14 +487,21 @@ class KnowledgeGraphManager:
         """
         graph = await self._load_graph()
 
-        # Create set of relations to delete for efficient lookup
-        to_delete = {(r.from_entity, r.to_entity, r.relation_type) for r in relations}
+        # Canonicalize relation endpoints before building deletion set
+        canonical_to_delete = {
+            (
+                self._canonicalize_entity_name(graph, r.from_entity),
+                self._canonicalize_entity_name(graph, r.to_entity),
+                r.relation_type,
+            )
+            for r in relations
+        }
 
         # Filter out matching relations
         graph.relations = [
             r
             for r in graph.relations
-            if (r.from_entity, r.to_entity, r.relation_type) not in to_delete
+            if (r.from_entity, r.to_entity, r.relation_type) not in canonical_to_delete
         ]
 
         await self._save_graph(graph)
@@ -475,7 +532,15 @@ class KnowledgeGraphManager:
         filtered_entities = []
         for entity in graph.entities:
             # Check entity name and type
-            if query_lower in entity.name.lower() or query_lower in entity.entity_type.lower():
+            name_match = query_lower in entity.name.lower()
+            type_match = query_lower in entity.entity_type.lower()
+            alias_match = False
+            try:
+                alias_match = any(query_lower in (a or "").lower() for a in entity.aliases)
+            except Exception:
+                alias_match = False
+
+            if name_match or type_match or alias_match:
                 filtered_entities.append(entity)
                 continue
 
@@ -508,7 +573,12 @@ class KnowledgeGraphManager:
             Knowledge graph containing only the specified entities and their relations
         """
         graph = await self._load_graph()
-        names_set = set(names)
+        # Resolve identifiers to canonical names that exist in the graph
+        names_set: set[str] = set()
+        for ident in names:
+            entity = self._get_entity_by_name_or_alias(graph, ident)
+            if entity:
+                names_set.add(entity.name)
 
         # Filter entities by name
         filtered_entities = [e for e in graph.entities if e.name in names_set]
@@ -549,21 +619,47 @@ class KnowledgeGraphManager:
 
         graph = await self._load_graph()
 
-        # Check for name conflicts: if an entity exists with the new name but
-        # is not among the list to merge, this is a conflict.
+        # Canonicalize entity_names list using existing names/aliases
+        canonical_merge_names: list[str] = []
+        for ident in entity_names:
+            entity = self._get_entity_by_name_or_alias(graph, ident)
+            if not entity:
+                # Collect missing for error after this loop
+                canonical_merge_names.append(ident)  # keep as-is; we'll validate below
+            else:
+                canonical_merge_names.append(entity.name)
+
+        # Check for name conflicts: if the new name matches an existing entity name or alias
+        # that is not included in the merge set, this is a conflict.
         existing_by_name = {e.name: e for e in graph.entities}
-        if new_entity_name in existing_by_name and new_entity_name not in set(entity_names):
+        names_in_merge_set = set(canonical_merge_names)
+        conflict_entity: Entity | None = None
+        # Direct name conflict
+        if new_entity_name in existing_by_name and new_entity_name not in names_in_merge_set:
+            conflict_entity = existing_by_name[new_entity_name]
+        # Alias conflict
+        if conflict_entity is None:
+            for e in graph.entities:
+                if e.name in names_in_merge_set:
+                    continue
+                try:
+                    if any((a or "").strip().lower() == new_entity_name.strip().lower() for a in e.aliases):
+                        conflict_entity = e
+                        break
+                except Exception:
+                    continue
+        if conflict_entity is not None:
             raise ValueError(
-                f"Entity named '{new_entity_name}' already exists and is not part of the merge set"
+                f"Entity named '{new_entity_name}' already exists (as a name or alias) and is not part of the merge set"
             )
 
         # Ensure all specified entities exist
-        missing = [name for name in entity_names if name not in existing_by_name]
+        missing = [name for name in canonical_merge_names if name not in existing_by_name]
         if missing:
             raise ValueError(f"Entities not found: {', '.join(missing)}")
 
         # Gather entities to merge
-        entities_to_merge = [existing_by_name[name] for name in entity_names]
+        entities_to_merge = [existing_by_name[name] for name in canonical_merge_names]
 
         # Decide on entity_type: pick the most common among merged entities; fallback to first
         type_counts: dict[str, int] = {}
@@ -585,7 +681,7 @@ class KnowledgeGraphManager:
 
         # If an entity exists with the target name and is in the merge list,
         # we will effectively replace it with the merged result. Remove all originals first.
-        names_to_remove = set(entity_names)
+        names_to_remove = set(canonical_merge_names)
         graph.entities = [e for e in graph.entities if e.name not in names_to_remove]
 
         # Rewrite relations to point to the new entity where applicable
@@ -598,8 +694,25 @@ class KnowledgeGraphManager:
         # Deduplicate relations after rewrite
         graph.relations = self._dedupe_relations_in_place(graph.relations)
 
+        # Merge aliases: include all prior names and aliases, excluding the new name
+        merged_aliases: set[str] = set()
+        for ent in entities_to_merge:
+            if ent.name.strip().lower() != new_entity_name.strip().lower():
+                merged_aliases.add(ent.name)
+            try:
+                for a in ent.aliases:
+                    if isinstance(a, str) and a.strip() and a.strip().lower() != new_entity_name.strip().lower():
+                        merged_aliases.add(a)
+            except Exception:
+                pass
+
         # Create and insert the new merged entity
-        merged_entity = Entity(name=new_entity_name, entity_type=chosen_type, observations=merged_observations)
+        merged_entity = Entity(
+            name=new_entity_name,
+            entity_type=chosen_type,
+            observations=merged_observations,
+            aliases=sorted(merged_aliases),
+        )
         graph.entities.append(merged_entity)
 
         await self._save_graph(graph)
