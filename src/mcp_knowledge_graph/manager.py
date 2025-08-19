@@ -6,7 +6,6 @@ including CRUD operations, temporal observation handling, and smart cleanup.
 """
 
 import json
-import os
 import logging
 from datetime import datetime, timedelta
 from typing import Any
@@ -27,9 +26,6 @@ from .models import (
 
 
 logger = logging.getLogger("iq-mcp")
-logger.setLevel(logging.INFO)
-if os.getenv("IQ_DEBUG", "false").lower() == "true":
-    logger.setLevel(logging.DEBUG)
 
 class KnowledgeGraphManager:
     """
@@ -164,7 +160,7 @@ class KnowledgeGraphManager:
                                 payload = {k: v for k, v in item.items() if k != "type"}
                         else:
                             # Attempt legacy inference without explicit type
-                            if {"name", "entityType"}.issubset(item.keys()):
+                            if {"name", "entity_type"}.issubset(item.keys()):
                                 item_type = "entity"
                                 payload = item
                             elif {"from", "to", "relationType"}.issubset(item.keys()):
@@ -345,7 +341,7 @@ class KnowledgeGraphManager:
                 if self._is_observation_outdated(obs):
                     removed_details.append(
                         {
-                            "entityName": entity.name,
+                            "entity_name": entity.name,
                             "content": obs.content,
                             "age": self._format_observation_age(obs.timestamp),
                         }
@@ -603,7 +599,7 @@ class KnowledgeGraphManager:
         graph.relations = self._dedupe_relations_in_place(graph.relations)
 
         # Create and insert the new merged entity
-        merged_entity = Entity(name=new_entity_name, entityType=chosen_type, observations=merged_observations)
+        merged_entity = Entity(name=new_entity_name, entity_type=chosen_type, observations=merged_observations)
         graph.entities.append(merged_entity)
 
         await self._save_graph(graph)

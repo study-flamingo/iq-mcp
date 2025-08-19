@@ -69,7 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ```typescript
 // Start using temporal observations
 add_observations([{
-  entityName: "user", 
+  entity_name: "user", 
   contents: [
     { content: "Permanent fact", durability: "permanent" },
     { content: "Current project", durability: "temporary" }

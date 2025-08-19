@@ -33,7 +33,7 @@ Example:
 ```json
 {
   "name": "John_Smith",
-  "entityType": "person",
+  "entity_type": "person",
   "observations": [
     {
       "content": "Speaks fluent Spanish",
@@ -73,7 +73,7 @@ Observations now support temporal metadata to distinguish between permanent fact
 
 ```json
 {
-  "entityName": "John_Smith",
+  "entity_name": "John_Smith",
   "observations": [
     // Simple string (defaults to long-term)
     "Likes coffee",
@@ -104,7 +104,7 @@ Create multiple new entities in the knowledge graph.
 **Input**: `entities` (array of objects)
 
 - `name` (string): Entity identifier
-- `entityType` (string): Type classification  
+- `entity_type` (string): Type classification  
 - `observations` (string[]): Associated observations
 
 **Behavior**: Ignores entities with existing names
@@ -127,7 +127,7 @@ Add observations with optional temporal metadata.
 
 **Input**: `observations` (array of objects)
 
-- `entityName` (string): Target entity
+- `entity_name` (string): Target entity
 - `contents` (array): Mix of strings and temporal objects
 
 **Content formats**:
@@ -165,7 +165,7 @@ Automatically remove observations that have exceeded their durability timeframe.
 
 Retrieve observations grouped by durability category.
 
-**Input**: `entityName` (string)
+**Input**: `entity_name` (string)
 
 **Returns**: Object with arrays for each durability level:
 
@@ -212,13 +212,13 @@ Retrieve specific nodes by name.
 # Create an entity
 create_entities([{
   "name": "Dr_Smith",
-  "entityType": "person", 
+  "entity_type": "person", 
   "observations": ["Works at City Hospital"]
 }])
 
 # Add temporal observations
 add_observations([{
-  "entityName": "Dr_Smith",
+  "entity_name": "Dr_Smith",
   "contents": [
     { "content": "Is a cardiologist", "durability": "permanent" },
     { "content": "Recently promoted to department head", "durability": "long-term" },
@@ -372,7 +372,7 @@ Add this to the system prompt of your LLM. For example, on Claude Desktop:
 The server uses JSONL (JSON Lines) format for efficient streaming and backward compatibility:
 
 ```jsonl
-{"type":"entity","name":"Dr_Smith","entityType":"person","observations":[...]}
+{"type":"entity","name":"Dr_Smith","entity_type":"person","observations":[...]}
 {"type":"relation","from":"Dr_Smith","to":"City_Hospital","relationType":"works_at"}
 ```
 

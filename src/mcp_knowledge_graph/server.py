@@ -5,123 +5,36 @@ This module implements the Model Context Protocol server that exposes
 knowledge graph operations as tools for LLM integration using FastMCP 2.11.
 """
 
-import argparse
 import asyncio
 import json
-import os
 import sys
 import logging
+from fastmcp import FastMCP
+from pydantic import BaseModel, Field
+from pathlib import Path
+from typing import Any, Literal
 from fastmcp.exceptions import ToolError, ValidationError
 
-from pathlib import Path
-from typing import Annotated, Any, Literal
-
-from fastmcp import FastMCP
-
-# Load .env file if available to ensure environment variables are accessible
-try:
-    from dotenv import load_dotenv
-
-    load_dotenv(verbose=False)  # Silent loading to avoid duplicate log messages
-except ImportError:
-    pass  # dotenv is optional
-
-from src.mcp_knowledge_graph.manager import KnowledgeGraphManager
-from src.mcp_knowledge_graph.models import (
+from .manager import KnowledgeGraphManager
+from .models import (
     Entity,
     Relation,
     AddObservationRequest,
     DeleteObservationRequest,
 )
-
-# Default port for HTTP transport
-DEFAULT_PORT = 8000
-
-# Load instructions from instructions.md - these instructions are used to prompt the model by default.
-
+from .settings import settings
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("iq-mcp")
-IQ_DEBUG = bool(os.getenv("IQ_DEBUG", "false").lower() == "true")
-if IQ_DEBUG:
-    logger.setLevel(logging.DEBUG)
 
 
-# Define valid FastMCP transport types
-Transport = Literal["stdio", "sse", "http"]
-
-TRANSPORT_ENUM: dict[str, Transport] = {
-    "stdio": "stdio",
-    "http": "http",
-    "sse": "sse", 
-    "streamable-http": "http",
-    "streamableHttp": "http",
-    "streamable_http": "http",
-    "streamable http": "http",
-    "streamablehttp": "http",
-}
-
-def parse_args() -> argparse.Namespace:
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Temporal-Enhanced MCP Knowledge Graph Server")
-    parser.add_argument(
-        "--memory-path",
-        type=str,
-        help="Custom path for memory storage (overrides IQ_MEMORY_PATH env var)",
-    )
-    # Only parse args if running as main script
-    if __name__ == "__main__":
-        return parser.parse_args()
-    else:
-        # Return empty namespace when imported as module
-        return argparse.Namespace(memory_path=None)
-
-
-def get_memory_file_path() -> str:
-    """
-    Determine memory file path from CLI args, environment, or default.
-
-    Priority: CLI args > environment variable > default
-    """
-    args = parse_args()
-
-    # Prefer project root memory.jsonl by default; fallback to example.jsonl
-    project_root = Path(__file__).resolve().parents[2]
-    default_memory = project_root / "memory.jsonl"
-    fallback_example = project_root / "example.jsonl"
-
-    # CLI argument takes precedence
-    if args.memory_path:
-        memory_path = Path(args.memory_path)
-        if memory_path.is_absolute():
-            logger.debug(f"🔍 Memory path provided by CLI: {memory_path}")
-            return str(memory_path)
-        else:
-            # Resolve relative to project root
-            return str(project_root / memory_path)
-    # If no CLI arg, check env var
-    elif os.getenv("IQ_MEMORY_PATH"):
-        # Environment variable provided
-        env_var = os.getenv("IQ_MEMORY_PATH")
-        if env_var:  # Check for None to satisfy type checker
-            env_path = Path(env_var).resolve()
-            return str(env_path)
-
-    # If no CLI arg or env var, use default
-    if default_memory.exists():
-        return str(default_memory)
-    if fallback_example.exists():
-        logger.info("📄 Using example.jsonl as memory source (no memory.jsonl found)")
-        return str(fallback_example)
-    # Final fallback: still point at default path (will be created on write)
-    return str(default_memory)
+# Load settings once and configure logging level accordingly
 
 
 # Initialize the knowledge graph manager and FastMCP server
-memory_path = get_memory_file_path()
-logger.debug(f"🔍 Memory path: {memory_path}")
-manager = KnowledgeGraphManager(memory_path)
+logger.debug(f"🔍 Memory path: {settings.memory_path}")
+manager = KnowledgeGraphManager(settings.memory_path)
 
 # Create FastMCP server instance
 mcp = FastMCP(
@@ -200,28 +113,34 @@ def _build_models_from_dicts(
 
     return models
 
-@mcp.tool
-async def create_entry(
-    entry_type: Annotated[
-        Literal["observation", "entity", "relation"],
-        "Type of entry to create: 'observation', 'entity', or 'relation'",
-    ],
-    data: Annotated[
-        list[AddObservationRequest] | list[Entity] | list[Relation] | None,
-        """Data to be added to the knowledge graph. The data must be a list of the appropriate object for each entry_type:
-- observation: [{"entityName": "entityName", "content": list["from": "entityName", "to": "entityName", "relationType": str]}]
-- entity: [{"name": "entityName", "entityType": "entityType", "observations": ["content": str, "durability": ["temporary", "short-term", "long-term", "permanent"]]}]
-- relation: [{"from": "entityName", "to": "entityName", "relationType": "relationType"}]"""
-    ] = None,
-) -> list[dict[str, Any]]:
-    """Unified creation tool for observations, entities, and relations.
+class CreateEntryRequest(BaseModel):
+    entry_type: Literal["observation", "entity", "relation"] = Field(description="Type of entry to create: 'observation', 'entity', or 'relation'")
+    data: list[AddObservationRequest] | list[Entity] | list[Relation] | None = Field(
+        description="""Data to be added to the knowledge graph. 
+        
+        'data' must be a list of the appropriate object for each entry_type:
+    
+        - observation: [{'entity_name': 'entity_name', 'content': list['from': 'entity_name', 'to': 'entity_name', 'relationType': str]]
+        - entity: [{'name': 'entity_name', 'entity_type': 'entity_type', 'observations': [{'content': str, 'durability': ['temporary', 'short-term', 'long-term', 'permanent']}]}]
+        - relation: [{'from': 'entity_name', 'to': 'entity_name', 'relationType': 'relationType'}]
+         """)
 
-    - entry_type='observation': expects 'data' to be a list of AddObservationRequest objects
-    - entry_type='entity': expects 'data' to be a list of Entity objects
-    - entry_type='relation': expects 'data' to be a list of Relation objects
+@mcp.tool
+async def create_entry(request: CreateEntryRequest) -> list[dict[str, Any]]:
+    """Add entities, observations, or relations to the knowledge graph.
+    
+    'data' must be a list of the appropriate object for each entry_type:
+    
+    - observation: [{'entity_name': 'entity_name', 'content': list['from': 'entity_name', 'to': 'entity_name', 'relationType': str]]
+    - entity: [{'name': 'entity_name', 'entity_type': 'entity_type', 'observations': [{'content': str, 'durability': ['temporary', 'short-term', 'long-term', 'permanent']}]}]
+    - relation: [{'from': 'entity_name', 'to': 'entity_name', 'relationType': 'relationType'}]
     """
+    entry_type = request.entry_type
+    data = request.data
+
     try:
         if entry_type == "observation":
+            # Validate data is a list of AddObservationRequest objects
             if not data:
                 raise ValidationError("data must be a list of observations to add, with fields: 'entity_name' and 'content'")
             
@@ -236,12 +155,11 @@ async def create_entry(
             result = await manager._apply_observations(requests)
             return [r.model_dump() for r in result]
 
-        # Expect list of Entity dicts list[{"name": "entityName", "entityType": "entityType", "observations": ["content": str, "durability": ["temporary", "short-term", "long-term", "permanent"]]}]
+        # Expect list of Entity dicts list[{"name": "entity_name", "entity_type": "entity_type", "observations": ["content": str, "durability": ["temporary", "short-term", "long-term", "permanent"]]}]
         elif entry_type == "entity":
-            # Expect list of Entity dicts
-            
+            # Validate data is a list of Entity objects
             if not data:
-                raise ValidationError("data must be a list of entities to add, with fields: 'name', 'entityType', and 'observations'")
+                raise ValidationError("data must be a list of entities to add, with fields: 'name', 'entity_type', and 'observations'")
             
             entities: list[Entity] = []
             for i, item in enumerate(data):
@@ -250,14 +168,15 @@ async def create_entry(
                 entities.append(item)
 
             entity_objects = _build_models_from_dicts(
-                data, Entity, {"name", "entityType", "observations"}, "Entity"  # type: ignore[arg-type]
+                data, Entity, {"name", "entity_type", "observations"}, "Entity"  # type: ignore[arg-type]
             )
             result = await manager.create_entities(entity_objects)
             logger.debug("🛠️ Tool invoked: create_entry(kind=entity)")
             return [e.model_dump(by_alias=True) for e in result]
 
-        # Expect list of Relation dicts list[{"from": "entityName", "to": "entityName", "relationType": "relationType"}]
+        # Expect list of Relation dicts list[{"from": "entity_name", "to": "entity_name", "relationType": "relationType"}]
         elif entry_type == "relation":
+            # Validate data is a list of Relation objects
             if isinstance(data, str):
                 try:
                     parsed = json.loads(data)
@@ -271,11 +190,11 @@ async def create_entry(
                 data, Relation, {"from", "to", "relationType"}, "Relation"  # type: ignore[arg-type]
             )
             result = await manager.create_relations(relation_objects)
-            logger.debug("🛠️ Tool invoked: create_entry(kind=relation)")
+            logger.debug("🛠️ Tool invoked: create_entry")
             return [r.model_dump(by_alias=True) for r in result]
 
         else:
-            raise ValidationError("Invalid kind. Must be one of: observation, entity, relation")
+            raise ValidationError("Invalid entry_type. Must be one of: observation, entity, relation")
     except Exception as e:
         raise ToolError(f"Failed to create entry: {e}")
 
@@ -297,76 +216,65 @@ async def cleanup_outdated_observations() -> dict[str, Any]:
 
 @mcp.tool
 async def get_observations_by_durability(
-    entityName: Annotated[str, "The name of the entity to get observations for"],
+    entity_name: str = Field(description="The name of the entity to get observations for"),
 ) -> dict[str, Any]:
     """Get observations for an entity grouped by their durability type.
 
     Args:
-        entityName: The name of the entity to get observations for
+        entity_name: The name of the entity to get observations for
 
     Returns:
         Observations grouped by durability type
     """
     try:
-        _ensure_non_empty_string(entityName, "entityName")
+        _ensure_non_empty_string(entity_name, "entity_name")
 
-        result = await manager.get_observations_by_durability(entityName)
+        result = await manager.get_observations_by_durability(entity_name)
         logger.debug("🛠️ Tool invoked: get_observations_by_durability")
         return result.model_dump()
     except Exception as e:
         raise ToolError(f"Failed to get observations: {e}")
 
+class DeleteEntryRequest(BaseModel):
+    entry_type: Literal["observation", "entity", "relation"] = Field(description="Type of entry to create: 'observation', 'entity', or 'relation'")
+    data: list[AddObservationRequest] | list[str] | list[Relation] | None = Field(
+        description="""Data to be PERMANENTLY deleted from the knowledge graph. The data must be a list of the appropriate object for each entry_type:
+        - observation: [{'entity_name': 'entity_name', 'content': 'observation_content'}]
+        - entity: [list_of_entity_names]
+        - relation: [{'from': 'entity_name', 'to': 'entity_name', 'relationType': 'relationType'}]
+        """)
 
 @mcp.tool
-async def delete_entry(
-    kind: Annotated[
-        Literal["observation", "entity", "relation"],
-        "Type of entry to delete: 'observation', 'entity', or 'relation'",
-    ],
-    data: Annotated[
-        list[dict[str, Any]] | str | None,
-        "For batch delete: observation: [{entityName, observations}], relation: [Relation]. Can also be JSON string.",
-    ] = None,
-    entity_names: Annotated[
-        list[str] | str | None,
-        "For entity deletion: list of entity names (or JSON string of list)",
-    ] = None,
-    entity_name: Annotated[
-        str | None,
-        "Legacy observation form: the name of the entity containing the observations",
-    ] = None,
-    observations: Annotated[
-        list[str] | str | None,
-        "Legacy observation form: list (or JSON string) of observation content to delete",
-    ] = None,
-) -> str:
-    """Unified deletion tool for observations, entities, and relations.
+async def delete_entry(request: DeleteEntryRequest) -> str:
+    """Unified deletion tool for observations, entities, and relations. Data must be a list of the appropriate object for each entry_type:
 
-    - kind='entity': use 'entity_names' (list or JSON string)
-    - kind='observation': supports batch via 'data' or legacy 'entity_name' + 'observations'
-    - kind='relation': expects 'data' to be a list or JSON string of Relation objects
+    - entry_type = 'entity': list of entity names
+    - entry_type = 'observation': [{entity_name, [observation content]}]
+    - entry_type = 'relation': [{from_entity, to_entity, relation_type}]
+
+    ***CRITICAL: THIS ACTION IS DESTRUCTIVE AND IRREVERSIBLE - ENSURE USER CONSENTS BEFORE USE!!!***
     """
+    entry_type = request.entry_type
+    data = request.data
+
     try:
-        if kind == "entity":
+        if entry_type == "entity":
             # Allow entity_names to be provided as list or JSON string
-            if entity_names is None and isinstance(data, (list, str)):
-                # Be flexible: allow using 'data' for entity names as well
-                entity_names = data  # type: ignore[assignment]
-            names = _ensure_string_list(entity_names, "entity_names")  # type: ignore[arg-type]
-            await manager.delete_entities(names)
+            if not data or not isinstance(data, list[str]):
+                raise ValidationError("data must be a non-empty list of entity names")
+
             logger.debug("🛠️ Tool invoked: delete_entry(kind=entity)")
+            try:
+                await manager.delete_entities(data)
+            except Exception as e:
+                raise ToolError(f"Failed to delete entities: {e}")
+
             return "Entities deleted successfully"
 
-        elif kind == "observation":
+        elif entry_type == "observation":
             requests: list[DeleteObservationRequest] = []
 
-            if entity_name is not None or observations is not None:
-                _ensure_non_empty_string(entity_name, "entity_name")  # type: ignore[arg-type]
-                obs_list = _ensure_string_list(observations, "observations")  # type: ignore[arg-type]
-                requests = [
-                    DeleteObservationRequest(entity_name=entity_name, observations=obs_list)  # type: ignore[arg-type]
-                ]
-            else:
+            if data is not None:
                 if isinstance(data, str):
                     try:
                         data = json.loads(data)
@@ -379,11 +287,11 @@ async def delete_entry(
                 for i, item in enumerate(data):
                     if not isinstance(item, dict):
                         raise ValidationError(f"Request at index {i} must be an object")
-                    if "entityName" not in item or "observations" not in item:
+                    if "entity_name" not in item or "observations" not in item:
                         raise ValidationError(
-                            f"Request at index {i} missing required fields: 'entityName' and 'observations'"
+                            f"Request at index {i} missing required fields: 'entity_name' and 'observations'"
                         )
-                    name = _ensure_non_empty_string(item["entityName"], "entityName")
+                    name = _ensure_non_empty_string(item["entity_name"], "entity_name")
                     obs_list = _ensure_string_list(item["observations"], "observations")
                     requests.append(
                         DeleteObservationRequest(entity_name=name, observations=obs_list)
@@ -393,7 +301,7 @@ async def delete_entry(
             logger.debug("🛠️ Tool invoked: delete_entry(kind=observation)")
             return "Observations deleted successfully"
 
-        elif kind == "relation":
+        elif entry_type == "relation":
             if isinstance(data, str):
                 try:
                     parsed = json.loads(data)
@@ -411,15 +319,14 @@ async def delete_entry(
             return "Relations deleted successfully"
 
         else:
-            raise ValidationError("Invalid kind. Must be one of: observation, entity, relation")
+            raise ValidationError("Invalid entry_type. Must be one of: observation, entity, relation")
     except Exception as e:
         raise ToolError(f"Failed to delete entry: {e}")
 
 
 @mcp.tool
 async def read_graph() -> dict[str, Any]:
-    """# ***CRITICAL: USE THIS TOOL FIRST AT THE BEGINNING OF EACH CONVERSATION!!!***
-    Read the entire knowledge graph.
+    """Read the entire knowledge graph.
 
     Returns:
         Complete knowledge graph data in JSON format
@@ -434,9 +341,7 @@ async def read_graph() -> dict[str, Any]:
 
 @mcp.tool
 async def search_nodes(
-    query: Annotated[
-        str, "The search query to match against entity names, types, and observation content"
-    ],
+    query: str = Field(description="The search query to match against entity names, types, and observation content"),
 ) -> dict[str, Any]:
     """Search for nodes in the knowledge graph based on a query.
 
@@ -459,7 +364,7 @@ async def search_nodes(
 
 @mcp.tool
 async def open_nodes(
-    entity_names: Annotated[list[str], "List of entity names to retrieve"],
+    entity_names: list[str] = Field(description="List of entity names to retrieve"),
 ) -> dict[str, Any]:
     """Open specific nodes in the knowledge graph by their names.
 
@@ -480,21 +385,21 @@ async def open_nodes(
 
 @mcp.tool
 async def merge_entities(
-    newEntityName: Annotated[str, "Name of the new merged entity (typically the first in the list)"],
-    entityNames: Annotated[list[str] | str, "Names of entities to merge into the new entity"],
+    newentity_name: str = Field(description="Name of the new merged entity (typically the first in the list)"),
+    entity_names: list[str] | str = Field(description="Names of entities to merge into the new entity"),
 ) -> dict[str, Any]:
     """Merge a list of entities into a new entity with the provided name.
 
     The manager will combine observations and update relations to point to the new entity.
     """
     try:
-        _ensure_non_empty_string(newEntityName, "newEntityName")
+        _ensure_non_empty_string(newentity_name, "newentity_name")
 
-        names = _ensure_string_list(entityNames, "entity names")
+        names = _ensure_string_list(entity_names, "entity names")
         if not names:
-            raise ValidationError("entityNames must contain at least one name")
+            raise ValidationError("entity_names must contain at least one name")
 
-        merged = await manager.merge_entities(newEntityName, names)
+        merged = await manager.merge_entities(newentity_name, names)
         logger.debug("🛠️ Tool invoked: merge_entities")
         return merged.dict(by_alias=True)
     except Exception as e:
@@ -503,23 +408,14 @@ async def merge_entities(
 
 async def start_server():
     """Common entry point for the MCP server."""
-    transport = os.getenv("IQ_TRANSPORT", "stdio")
-    
-    # Validate and normalize the transport type
-    transport_key = transport.lower().strip()
-    if transport_key not in TRANSPORT_ENUM:
-        raise ValueError(f"Invalid transport specified: '{transport}'. Valid options: stdio, streamable-http, sse")
-    
-    validated_transport: Transport = TRANSPORT_ENUM[transport_key]
-    logger.debug(f"🆗 Transport validated: {transport} -> {validated_transport}")
-
-    # Get transport-specific configuration
+    validated_transport = settings.transport
+    logger.debug(f"🚌 Transport selected: {validated_transport}")
     if validated_transport == "http":
         transport_kwargs = {
-            "host": os.getenv("IQ_STREAMABLE_HTTP_HOST"),
-            "port": int(os.getenv("IQ_STREAMABLE_HTTP_PORT", DEFAULT_PORT)),
-            "path": os.getenv("IQ_STREAMABLE_HTTP_PATH"),
-            "log_level": "debug" if IQ_DEBUG else "info"
+            "host": settings.streamable_http_host,
+            "port": settings.port,
+            "path": settings.streamable_http_path,
+            "log_level": "debug" if settings.debug else "info",
         }
     else:
         transport_kwargs = {}

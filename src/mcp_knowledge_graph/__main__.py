@@ -3,11 +3,9 @@ Enhanced MCP server for knowledge graph memory.
 """
 
 import logging
-import os
 import asyncio
-from dotenv import load_dotenv
 from .server import start_server
-from pathlib import Path
+from .settings import settings
 
 # Default memory path constant
 DEFAULT_MEMORY_PATH = "./memory.json"
@@ -16,46 +14,13 @@ DEFAULT_MEMORY_PATH = "./memory.json"
 def main():
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger("iq-mcp")
-
-    # First load the .env file in the current directory
-    if load_dotenv(verbose=True):
-        logger.info("🌎 .env file from root dir loaded")
-
-    # Also load the user-specified .env file
-    IQ_ENV_PATH = os.getenv("IQ_ENV_PATH", ".env")  # Project root
-
-    if Path(IQ_ENV_PATH).is_file():
-        if load_dotenv(IQ_ENV_PATH):
-            logger.debug(f"🚩 User .env file loaded from {IQ_ENV_PATH}")
-        else:
-            logger.error("⛔ Bad .env file, unable to load")
-
-    IQ_DEBUG = bool(os.getenv("IQ_DEBUG", "false").lower() == "true")
-    if IQ_DEBUG:
-        logger.info("🐞 IQ-MCP is running in debug mode")
+    if settings.debug:
         logger.setLevel(logging.DEBUG)
-
-    # Load the memory path
-    try:
-        IQ_MEMORY_PATH = Path(os.getenv("IQ_MEMORY_PATH", DEFAULT_MEMORY_PATH)).resolve()
-        logger.debug(f"Memory path: {IQ_MEMORY_PATH}")
-    except Exception as e:
-        raise FileNotFoundError(f"Memory file path error: {e}")
-
-    # Load the transport
-    IQ_TRANSPORT = os.getenv("IQ_TRANSPORT", "stdio")
-    logger.debug(f"\nConfiguration: IQ_DEBUG={IQ_DEBUG}\nIQ_MEMORY_PATH={IQ_MEMORY_PATH}\nIQ_TRANSPORT={IQ_TRANSPORT}")
-
-    # Load optional transport details for streamable-http
-    IQ_STREAMABLE_HTTP_HOST = os.getenv("IQ_STREAMABLE_HTTP_HOST")
-    IQ_STREAMABLE_HTTP_PORT = os.getenv("IQ_STREAMABLE_HTTP_PORT")
-    if IQ_STREAMABLE_HTTP_HOST or IQ_STREAMABLE_HTTP_PORT:
-        logger.debug(f"Streamable-http details: host={IQ_STREAMABLE_HTTP_HOST}, port={IQ_STREAMABLE_HTTP_PORT}")
 
     try:
         asyncio.run(start_server())
     except KeyboardInterrupt:
-        logger.info("🛑 Received KeyboardInterrupt, closing...")
+        logger.info("🛑 Received KeyboardInterrupt, shutting down...")
         exit(0)
     except Exception as e:
         logger.error(f"❌ IQ-MCP encountered a critical error: {e}")

@@ -54,7 +54,7 @@ class Entity(BaseModel):
     """
     
     name: str = Field(..., description="Unique identifier for the entity")
-    entity_type: str = Field(..., description="Type classification (e.g., 'person', 'organization', 'event')", alias="entityType")
+    entity_type: str = Field(..., description="Type classification (e.g., 'person', 'organization', 'event')", alias="entity_type")
     observations: list[Observation] = Field(default_factory=list, description="Associated observations in string or temporal format")
     
     class Config:
