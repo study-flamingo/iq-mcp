@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "iq-mcp"
-version = "0.1.0"
+version = "0.9.0"
 description = "Enhanced version of the original knowledge graph memory MCP server."
 readme = "README.md"
 license = {text = "MIT"}
@@ -32,14 +32,21 @@ Repository = "https://github.com/study-flamingo/mcp-server-memory-temporal.git"
 Issues = "https://github.com/study-flamingo/mcp-server-memory-temporal/issues"
 
 [project.scripts]
-iq-mcp = "src.mcp_knowledge_graph.__main__:main"
+iq-mcp = "mcp_knowledge_graph.__main__:main"
+iq-mcp-visualize = "mcp_knowledge_graph.visualize:main"
 
-[tool.setuptools]
-packages = ["src.mcp_knowledge_graph"]
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [dependency-groups]
 dev = [
     "pytest>=8.4.1",
     "pytest-asyncio>=1.1.0",
     "ruff>=0.12.7",
+]
+notify = [
+    "supabase>=2.18.1",
 ]

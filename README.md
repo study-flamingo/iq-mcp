@@ -1,22 +1,18 @@
-# Knowledge Graph MCP Server 🔮 (Python)
+# IQ-MCP Knowledge Graph Server 🔮 (Python)
 
-A knowledge graph memory system for LLMs with temporal observations. *This is a Python port of the MCP knowledge graph memory server, with some minor additions and improvements.*
+A FastMCP 2.11 server that provides a temporal knowledge graph memory for LLMs. It enables persistent, searchable memory with timestamped observations, durability categories, alias-aware entity resolution, and ergonomic tools for creating, searching, maintaining, merging, and visualizing your memory graph.
 
-An advanced implementation of persistent memory using a local knowledge graph with temporal observation support. This lets Claude remember information about users across chats with intelligent time-based categorization and automatic cleanup of outdated information.
+This is a modern Python implementation using Pydantic models and FastMCP, designed for drop-in use with MCP clients (Claude Desktop, Cursor, Roo Code, etc.).
 
-## 🐍 Python Implementation
+## ✨ Highlights
 
-This is a complete Python rewrite of the original TypeScript MCP knowledge graph server, maintaining full compatibility with all features while providing improved type safety and pythonic interfaces using Pydantic models.
-
-## ✨ Feature Improvements
-
-In addition to the features offered by the root repository at [@shaneholloman/mcp-knowledge-graph](https://github.com/shaneholloman/mcp-knowledge-graph):
-
-- **Temporal Observations**: Observations now include timestamps and durability categories
-- **Smart Cleanup**: Automatically remove outdated temporary observations
-- **Enhanced Search**: Search through both string and temporal observation formats
-- **Backward Compatibility**: Existing string observations work seamlessly
-- **Unified API**: Single `add_observations` tool supports both formats
+- **Temporal observations** with durability categories and automatic timestamps
+- **Smart cleanup** that removes outdated observations by durability
+- **Alias-aware graph**: resolve entities by name or any alias
+- **Unified tools**: single `create_entry` and `delete_entry` cover CRUD
+- **Merge entities**: consolidate duplicates while preserving relations and aliases
+- **Enhanced search** across names, aliases, types, and observation content
+- **Flexible storage**: robust JSONL reader supports nested and legacy-ish formats
 
 ## Core Concepts
 
@@ -26,7 +22,8 @@ Entities are the primary nodes in the knowledge graph. Each entity has:
 
 - A unique name (identifier)
 - An entity type (e.g., "person", "organization", "event")
-- A list of observations (now supporting temporal metadata)
+- A list of timestamped observations (with durability)
+- Optional aliases (alternative names that map to the same entity)
 
 Example:
 
@@ -34,10 +31,11 @@ Example:
 {
   "name": "John_Smith",
   "entity_type": "person",
+  "aliases": ["Johnny Smith", "John S."],
   "observations": [
     {
       "content": "Speaks fluent Spanish",
-      "timestamp": "2025-06-26T18:45:00.000Z",
+      "ts": "2025-06-26T18:45:00.000Z",
       "durability": "permanent"
     }
   ]
@@ -46,9 +44,7 @@ Example:
 
 ### Relations
 
-Relations define directed connections between entities. They are always stored in active voice and describe how entities interact or relate to each other.
-
-Example:
+Relations define directed connections between entities. They are stored in active voice and describe how entities interact or relate to each other.
 
 ```json
 {
@@ -60,262 +56,197 @@ Example:
 
 ### Temporal Observations
 
-Observations now support temporal metadata to distinguish between permanent facts and temporary states:
+Observations include durability and an ISO timestamp to distinguish durable facts from transient state.
 
-#### Durability Categories
+Durability categories:
+- `permanent`: Never expires (e.g., "Born in 1990")
+- `long-term`: Relevant for ~1+ years (e.g., "Works at Acme Corp")
+- `short-term`: Relevant for ~3 months (e.g., "Working on Project X")
+- `temporary`: Relevant for ~1 month (e.g., "Currently learning TypeScript")
 
-- **`permanent`**: Never expires (e.g., "Born in 1990", "Has a degree in Physics")
-- **`long-term`**: Relevant for 2+ years (e.g., "Works at Acme Corp", "Lives in New York")
-- **`short-term`**: Relevant for ~6 months (e.g., "Working on Project X", "Training for a marathon")
-- **`temporary`**: Relevant for ~1 month (e.g., "Currently learning TypeScript", "Traveling to Dominica")
+## API Reference (FastMCP Tools)
 
-#### Observation Formats
+### Core, Unified CRUD
 
-```json
-{
-  "entity_name": "John_Smith",
-  "observations": [
-    // Simple string (defaults to long-term)
-    "Likes coffee",
-    
-    // Temporal object with durability
-    {
-      "content": "Currently learning TypeScript",
-      "durability": "temporary"
-    },
-    
-    // Permanent fact
-    {
-      "content": "Is a software engineer",
-      "durability": "permanent"
-    }
-  ]
-}
-```
+#### create_entry
 
-## API Reference
+Add observations, entities, or relations.
 
-### Core Tools
+- Request: `CreateEntryRequest`
+- Fields:
+  - `entry_type`: one of `"observation" | "entity" | "relation"`
+  - `data`: list of the appropriate objects for the chosen type
 
-#### **create_entities**
-
-Create multiple new entities in the knowledge graph.
-
-**Input**: `entities` (array of objects)
-
-- `name` (string): Entity identifier
-- `entity_type` (string): Type classification  
-- `observations` (string[]): Associated observations
-
-**Behavior**: Ignores entities with existing names
-
-#### **create_relations**
-
-Create multiple new relations between entities.
-
-**Input**: `relations` (array of objects)
-
-- `from` (string): Source entity name
-- `to` (string): Target entity name
-- `relation_type` (string): Relationship type in active voice
-
-**Behavior**: Skips duplicate relations
-
-#### **add_observations** ⭐ Enhanced
-
-Add observations with optional temporal metadata.
-
-**Input**: `observations` (array of objects)
-
-- `entity_name` (string): Target entity
-- `contents` (array): Mix of strings and temporal objects
-
-**Content formats**:
-
-```python
-# Simple strings (default to long-term)
-["Likes coffee", "Uses Windows PC"]
-
-# Temporal objects with durability
-[
-  { "content": "Is a software engineer", "durability": "permanent" },
-  { "content": "Learning TypeScript", "durability": "temporary" },
-  "Also likes tea"  # Mixed formats work together
-]
-```
-
-**Returns**: Added observations with full temporal metadata
-
-### Temporal Management Tools
-
-#### **cleanup_outdated_observations** 🆕
-
-Automatically remove observations that have exceeded their durability timeframe.
-
-**Logic**:
-
-- `permanent`: Never removed
-- `long-term`: Removed after 24 months
-- `short-term`: Removed after 6 months  
-- `temporary`: Removed after 1 month
-
-**Returns**: Summary of entities processed and observations removed
-
-#### **get_observations_by_durability** 🆕
-
-Retrieve observations grouped by durability category.
-
-**Input**: `entity_name` (string)
-
-**Returns**: Object with arrays for each durability level:
+Examples:
 
 ```json
-{
-  "permanent": [...],
-  "longTerm": [...], 
-  "shortTerm": [...],
-  "temporary": [...]
-}
+{ "entry_type": "entity", "data": [
+  { "name": "Dr_Smith", "entity_type": "person", "aliases": ["Doctor Smith"] }
+]}
 ```
 
-### Standard Tools
-
-#### **delete_entities**
-
-Remove entities and their relations.
-
-#### **delete_observations**  
-
-Remove specific observations from entities.
-
-#### **delete_relations**
-
-Remove specific relations from the graph.
-
-#### **read_graph**
-
-Read the entire knowledge graph.
-
-#### **search_nodes**
-
-Search across entity names, types, and observation content.
-
-#### **open_nodes**
-
-Retrieve specific nodes by name.
-
-## Usage Examples
-
-### Basic Operations
-
-```python
-# Create an entity
-create_entities([{
-  "name": "Dr_Smith",
-  "entity_type": "person", 
-  "observations": ["Works at City Hospital"]
-}])
-
-# Add temporal observations
-add_observations([{
-  "entity_name": "Dr_Smith",
-  "contents": [
-    { "content": "Is a cardiologist", "durability": "permanent" },
-    { "content": "Recently promoted to department head", "durability": "long-term" },
-    { "content": "Currently on vacation", "durability": "temporary" },
-    "Speaks three languages"  # Defaults to long-term
-  ]
-}])
+```json
+{ "entry_type": "relation", "data": [
+  { "from": "Dr_Smith", "to": "City_Hospital", "relation_type": "works_at" }
+]}
 ```
+
+```json
+{ "entry_type": "observation", "data": [
+  { "entityName": "Dr_Smith", "observation": [
+    { "content": "Currently on vacation", "durability": "temporary", "ts": null },
+    { "content": "Speaks three languages", "durability": "long-term", "ts": null }
+  ] }
+]}
+```
+
+Notes:
+- Entity lookups are alias-aware; you can use the entity's name or any alias.
+- Timestamps are added automatically; you may pass `"ts": null` for convenience.
+
+#### delete_entry
+
+Delete observations, entities, or relations.
+
+- Request: `DeleteEntryRequest`
+- Fields:
+  - `entry_type`: `"observation" | "entity" | "relation"`
+  - `data`:
+    - entities: `list[str]` of names or aliases
+    - observations: `list[DeleteObservationRequest]` with `{ entityName, observation: ["content to delete", ...] }`
+    - relations: `list[Relation]` with `{ from, to, relation_type }`
+
+This action is destructive and irreversible. Always confirm with the user before invoking.
+
+### Graph Operations
+
+- `read_graph()`: Returns full graph. Observations are sorted by newest first.
+- `search_nodes(query)`: Matches names, aliases, types, and observation content.
+- `open_nodes(entity_names)`: Returns only the requested nodes and their inter-relations (name or alias supported).
+- `merge_entities(newentity_name, entity_names)`: Merge multiple entities into a single entity. Combines observations (deduped), rewrites relations, and aggregates aliases. Prevents name/alias conflicts.
 
 ### Temporal Management
 
-```python
-# View observations by durability
-get_observations_by_durability("Dr_Smith")
+- `cleanup_outdated_observations()`
+  - permanent: never removed
+  - long-term: removed after > ~12 months
+  - short-term: removed after > ~3 months
+  - temporary: removed after > ~1 month
+  - Returns counts plus details of removed observations
 
-# Clean up outdated information
-cleanup_outdated_observations()
+- `get_observations_by_durability(entity_name)`: Returns groups `permanent`, `long_term`, `short_term`, `temporary`.
+
+## Usage Examples
+
+### Create entities, relations, and observations
+
+```json
+{ "entry_type": "entity", "data": [
+  { "name": "Dr_Smith", "entity_type": "person", "aliases": ["Doctor Smith"] }
+]}
 ```
 
-### Advanced Usage
+```json
+{ "entry_type": "relation", "data": [
+  { "from": "Dr_Smith", "to": "City_Hospital", "relation_type": "works_at" }
+]}
+```
 
-```python
-# Create relations
-create_relations([{
-  "from": "Dr_Smith",
-  "to": "City_Hospital", 
-  "relation_type": "works_at"
-}])
+```json
+{ "entry_type": "observation", "data": [
+  { "entityName": "Dr_Smith", "observation": [
+    { "content": "Is a cardiologist", "durability": "permanent", "ts": null },
+    { "content": "Recently promoted to department head", "durability": "long-term", "ts": null },
+    { "content": "Currently on vacation", "durability": "temporary", "ts": null }
+  ] }
+]}
+```
 
-# Search across all content
-search_nodes("cardiologist")
+### Temporal management
+
+```json
+{ "tool": "get_observations_by_durability", "params": { "entity_name": "Dr_Smith" } }
+```
+
+```json
+{ "tool": "cleanup_outdated_observations", "params": {} }
+```
+
+### Search and open
+
+```json
+{ "tool": "search_nodes", "params": { "query": "cardiologist" } }
+```
+
+```json
+{ "tool": "open_nodes", "params": { "entity_names": ["Dr_Smith", "City_Hospital"] } }
+```
+
+### Merge
+
+```json
+{ "tool": "merge_entities", "params": { "newentity_name": "John_Smith", "entity_names": ["John", "Johnny", "J. Smith"] } }
 ```
 
 ## Installation & Setup
 
-This MCP server is intended to be installed and run locally.
+This server is intended to run locally under FastMCP-compatible clients.
 
-1. Clone the repository
+1) Clone and install
 
 ```bash
 git clone https://www.github.com/study-flamingo/mcp-knowledge-graph.git
 cd mcp-knowledge-graph
-```
-
-2. Install dependencies
-
-```bash
 pip install -e .
 # or using uv (recommended)
 uv pip install -e .
 ```
 
-3. Set up inside your MCP Client of choice, for example:
-
-### Claude Desktop Integration
-
-Add to your `claude_desktop_config.json`:
+2) Configure your MCP client (Claude Desktop example)
 
 ```json
 {
   "mcpServers": {
     "memory": {
       "command": "python",
-      "args": ["-m", "mcp_knowledge_graph.server"],
+      "args": ["-m", "mcp_knowledge_graph.server", "--memory-path", "/absolute/path/to/memory.jsonl"],
       "env": {
-        "MEMORY_FILE_PATH": "/path/to/your/memory.json"
+        "IQ_TRANSPORT": "stdio",
+        "IQ_DEBUG": "false"
       }
     }
   }
 }
 ```
 
-Alternatively, if installed in your environment:
+Notes:
+- Default transport is `stdio`. You can also use `http` or `sse` by setting `IQ_TRANSPORT` (aliases like `streamable-http` are normalized to `http`).
+- Memory path may be provided via CLI `--memory-path` or environment `IQ_MEMORY_PATH`.
 
-```json
-{
-  "mcpServers": {
-    "memory": {
-      "command": "mcp-server-memory-temporal",
-      "args": ["--memory-path", "/path/to/your/memory.json"]
-    }
-  }
-}
+3) Optional: HTTP transport (for streamable clients)
+
+```bash
+IQ_TRANSPORT=http IQ_STREAMABLE_HTTP_PORT=8000 \
+python -m mcp_knowledge_graph.server --memory-path /absolute/path/to/memory.jsonl
 ```
 
-### Environment Variables
+### Configuration (env and CLI)
 
-- `MEMORY_FILE_PATH`: Custom path for memory storage (default: `memory.json`)
-    *Note: The memory file path can also be specified with a command line arg, for example: `python -m mcp_knowledge_graph.server --memory-path path/to/your/memory.json`*
+Env vars (with CLI equivalents):
+- `IQ_MEMORY_PATH` (or `--memory-path`): path to `memory.jsonl` (default: repo root `memory.jsonl`, fallback: `example.jsonl` if present)
+- `IQ_TRANSPORT` (or `--transport`): `stdio` | `http` | `sse`
+- `IQ_STREAMABLE_HTTP_PORT` (or `--port`): port for `http` transport (default: 8000)
+- `IQ_STREAMABLE_HTTP_HOST` (or `--http-host`)
+- `IQ_STREAMABLE_HTTP_PATH` (or `--http-path`)
+- `IQ_DEBUG` (or `--debug`): `true` enables verbose logging
 
 ### Migration
 
-If you were previously using the root project for this fork ([@shaneholloman/mcp-knowledge-graph](https://github.com/shaneholloman/mcp-knowledge-graph)), you may already have a robust memory file. Updating the old entries is not necessary, as this fork provides backwards compatibility - however if you would like to update your old memory file, the easiest way is to have your LLM manually update the `memory.jsonl` file, with using this project as context for the operation. You can do this with any MCP/LLM client capable of filesystem access (e.g., Cursor, Roo Code, Claude Code/Desktop, etc.).
+If you were using the original project, your JSONL files should work as long as entity and relation records are well-formed. Loader accepts nested `data` format and a flattened format; invalid lines are skipped with a warning. Saving uses the modern nested format.
 
 ## System Prompt for Temporal Memory
 
-Knowledge graph features and utilization are greatly improved by setting a quality system prompt. As a sample, here's an enhanced system prompt that leverages temporal features:
+Knowledge graph usage improves with a good system prompt. Example:
 
 ```markdown
 # Memory Tool Usage
@@ -350,111 +281,91 @@ If any new information was gathered during the interaction, update your memory u
 **Long-term**: Stable preferences, established systems, long-term goals
 - "Uses VS Code", "Enjoys long walks on the beach", "Prefers Python"
 
-**Short-term**: Current projects, temporary situations, 6-month goals
+**Short-term**: Current projects, temporary situations, 3-month goals
 - "Learning how to play the theremin", "Finishing their high school degree"
 
 **Temporary**: Immediate tasks, current states, monthly activities
 - "Currently working on memory server", "Traveling to Saturn next week"
 
-Use add_observations with appropriate durability categories for new information.
-Regularly run cleanup_outdated_observations to maintain data quality.
+Use `create_entry` with `entry_type="observation"` and appropriate durability when adding new information.
+Regularly run `cleanup_outdated_observations` to maintain data quality.
 ```
-
-Add this to the system prompt of your LLM. For example, on Claude Desktop:
-
-1. Create a new project or open an existing project
-2. In the project knowledge section, add the above to your Project Instructions.
 
 ## Data Format & Migration
 
 ### JSONL Storage Format
 
-The server uses JSONL (JSON Lines) format for efficient streaming and backward compatibility:
+The server writes JSONL lines using a nested `data` payload and accepts both nested and flattened forms when loading.
+
+Saved format:
 
 ```jsonl
-{"type":"entity","name":"Dr_Smith","entity_type":"person","observations":[...]}
-{"type":"relation","from":"Dr_Smith","to":"City_Hospital","relation_type":"works_at"}
+{"type":"entity","data":{"name":"Dr_Smith","entity_type":"person","observation":[{"contents":"Is a cardiologist","durability":"permanent","ts":"2025-01-01T00:00:00"}],"alias":["Doctor Smith"]}}
+{"type":"relation","data":{"from":"Dr_Smith","to":"City_Hospital","relation_type":"works_at"}}
 ```
 
 ### Backward Compatibility
 
-- Existing string observations are automatically converted to temporal format
-- Old JSONL files work without modification
-- Default durability is "long-term" for legacy data
+- Loader tolerates both nested (`{"type":"entity","data":{...}}`) and flattened (`{"type":"entity", ...}`) variants
+- Lines that are malformed are skipped with warnings rather than failing the entire load
 
 ## Development
 
-1. Clone the repository
-
-```bash
-git clone https://www.github.com/study-flamingo/mcp-knowledge-graph.git
-cd mcp-knowledge-graph
-```
-
-2. Install dependencies and set up development environment
+1) Install dev deps and sync
 
 ```bash
 pip install -e ".[dev]"
-# or using uv (recommended)
 uv sync
 ```
 
-3. Run tests
+2) Run tests
 
 ```bash
 pytest
-# or with coverage
 pytest --cov=mcp_knowledge_graph
 ```
 
+3) Visualize a graph (optional)
+
+```bash
+python -m mcp_knowledge_graph.visualize --input memory.jsonl --output graph.html --title "Knowledge Graph"
+```
+
+Open `graph.html` to explore nodes, aliases, observations, and relations with an interactive D3 view.
+
 ## Performance & Scalability
 
-- **Automatic normalization** of legacy string observations
-- **Efficient search** across mixed observation formats  
-- **Smart caching** for frequently accessed data
+- **Efficient search** across names, aliases, types, and observation content  
 - **Incremental cleanup** of outdated observations
-- **Optimized JSON storage** for better parsing performance
+- **Optimized JSONL storage**
 
 ## Python Features Demonstrated
 
-This project showcases modern Python patterns:
-
-- **Pydantic models** for type safety and validation
-- **Union types** for backward compatibility  
-- **Optional properties** with defaults
-- **Enum classes** for durability categories
-- **Type hints** throughout the codebase
-- **Async/await** for non-blocking operations
-- **Context managers** for resource management
+- **FastMCP 2.11** server tools
+- **Pydantic** models with field aliases
+- **Enums** for durability
+- **Type hints** throughout
+- **Async/await** where appropriate
 
 ## Contributing
 
-This is a fork of the original Anthropic memory server with temporal enhancements. Key improvements:
+Key improvements over the original baseline:
 
-1. **Temporal observation system** with durability categorization
-2. **Enhanced API design** with unified observation handling
-3. **Automatic cleanup** of outdated information
-4. **Improved TypeScript architecture** with better type safety
-5. **Comprehensive documentation** and examples
+1) Temporal observation system with durability categorization and timestamps
+2) Unified CRUD via `create_entry`/`delete_entry`
+3) Alias-aware entity resolution and search
+4) Entity merge with relation rewrite and alias aggregation
+5) Robust JSONL reader and safer persistence
 
 ## Changelog
 
-### v0.7.0 - Temporal Observations Release
+### Recent
 
-- ✨ Added temporal observation support with durability categories
-- ✨ Implemented automatic cleanup of outdated observations  
-- ✨ Enhanced `add_observations` to support mixed formats
-- ✨ Added `get_observations_by_durability` for categorized viewing
-- ✨ Added `cleanup_outdated_observations` for maintenance
-- 🔄 Maintained full backward compatibility with string observations
-- 🏗️ Improved TypeScript interfaces and type safety
-- 📚 Comprehensive documentation updates
-
-### v0.6.3 - Base Version
-
-- 🏗️ Original Anthropic memory server implementation
-- 📝 Basic entity/relation/observation CRUD operations  
-- 🔍 Simple string-based search functionality
+- ✨ Temporal observations with durability + timestamps
+- ✨ Unified tools: `create_entry`, `delete_entry`
+- ✨ `merge_entities` tool for dedupe/consolidation
+- ✨ Alias-aware operations across tools
+- 🔄 Backward-friendly JSONL loading (nested and flattened)
 
 ## License
 
