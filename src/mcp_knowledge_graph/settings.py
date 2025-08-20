@@ -15,7 +15,7 @@ from __future__ import annotations
 import argparse
 import os
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 # Optionally load .env if available
 try:
@@ -38,7 +38,6 @@ TRANSPORT_ENUM: dict[str, Transport] = {
     "streamableHttp": "http",
 }
 
-
 DEFAULT_PORT: int = 8000
 
 
@@ -53,6 +52,9 @@ class IQSettings:
         streamable_http_path: Optional HTTP path
         memory_path: Absolute path to memory JSONL file
         project_root: Resolved project root path
+        supabase_url: Supabase project URL
+        supabase_key: Supabase anon or service role key with read access
+        supabase_table: Name of the table to query
     """
 
     def __init__(
@@ -61,10 +63,13 @@ class IQSettings:
         debug: bool,
         transport: Transport,
         port: int,
-        streamable_http_host: Optional[str],
-        streamable_http_path: Optional[str],
+        streamable_http_host: str | None,
+        streamable_http_path: str | None,
         memory_path: str,
         project_root: Path,
+        supabase_url: str,
+        supabase_key: str,
+        supabase_table: str,
     ) -> None:
         self.debug = bool(debug)
         self.transport = transport
@@ -73,6 +78,9 @@ class IQSettings:
         self.streamable_http_path = streamable_http_path
         self.memory_path = str(memory_path)
         self.project_root = project_root
+        self.supabase_url = supabase_url
+        self.supabase_key = supabase_key
+        self.supabase_table = supabase_table
 
     # ---------- Construction ----------
     @classmethod
@@ -89,23 +97,21 @@ class IQSettings:
             else:
                 load_dotenv(verbose=False)
 
-        # CLI args (kept minimal and backwards-compatible)
+        # CLI args > Env vars > Defaults
         parser = argparse.ArgumentParser(add_help=False)
         parser.add_argument("--memory-path", type=str)
         parser.add_argument("--debug", action="store_true", default=None)
         parser.add_argument("--transport", type=str)
         parser.add_argument("--port", type=int)
-        # Accept optional host/path for completeness (env still supported)
         parser.add_argument("--http-host", type=str)
         parser.add_argument("--http-path", type=str)
         args, _ = parser.parse_known_args()
 
         # Resolve project root (repo root)
-        project_root = Path(__file__).resolve().parents[2]
+        project_root: Path = Path(__file__).resolve().parents[2]
 
         # Debug
-        debug_env = os.getenv("IQ_DEBUG", "false").lower() == "true"
-        debug = bool(args.debug) if args.debug is not None else debug_env
+        debug: bool = args.debug or os.environ.get("IQ_DEBUG", "false").lower() == "true"
 
         # Transport
         transport_raw = (args.transport or os.getenv("IQ_TRANSPORT", "stdio")).strip().lower()
@@ -115,37 +121,31 @@ class IQSettings:
         transport: Transport = TRANSPORT_ENUM[transport_raw]
 
         # Port/Host/Path for HTTP
-        port = (
-            int(args.port)
-            if args.port is not None
-            else int(os.getenv("IQ_STREAMABLE_HTTP_PORT", DEFAULT_PORT))
-        )
+        http_port = (int(args.port) or os.environ.get("IQ_STREAMABLE_HTTP_PORT", DEFAULT_PORT))
         http_host = args.http_host or os.getenv("IQ_STREAMABLE_HTTP_HOST")
         http_path = args.http_path or os.getenv("IQ_STREAMABLE_HTTP_PATH")
 
         # Memory path precedence: CLI > env > default(project_root/memory.jsonl) > example.jsonl
-        default_memory = project_root / "memory.jsonl"
-        fallback_example = project_root / "example.jsonl"
+        default_memory_path = project_root / "memory.jsonl"
 
-        memory_path_input = args.memory_path or os.getenv("IQ_MEMORY_PATH")
-        if memory_path_input:
-            memory_path = cls._resolve_memory_path(project_root, memory_path_input)
-        else:
-            if default_memory.exists():
-                memory_path = default_memory
-            elif fallback_example.exists():
-                memory_path = fallback_example
-            else:
-                memory_path = default_memory
+        memory_path_input = args.memory_path or os.getenv("IQ_MEMORY_PATH", "../../memory.jsonl")
+        memory_path = Path(memory_path_input).resolve()
+
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_KEY")
+        supabase_table = os.getenv("SUPABASE_TABLE")
 
         return cls(
             debug=debug,
             transport=transport,
-            port=port,
+            port=http_port,
             streamable_http_host=http_host,
             streamable_http_path=http_path,
             memory_path=str(memory_path),
             project_root=project_root,
+            supabase_url=supabase_url,
+            supabase_key=supabase_key,
+            supabase_table=supabase_table,
         )
 
     # ---------- Helpers ----------
@@ -155,15 +155,6 @@ class IQSettings:
         if candidate.is_absolute():
             return candidate
         return project_root / candidate
-
-    def __repr__(self) -> str:  # pragma: no cover - debug output helper
-        return (
-            "Settings("
-            f"debug={self.debug}, transport={self.transport}, port={self.port}, "
-            f"http_host={self.streamable_http_host!r}, http_path={self.streamable_http_path!r}, "
-            f"memory_path={self.memory_path}, project_root={self.project_root}"
-            ")"
-        )
 
 
 settings = IQSettings.load()

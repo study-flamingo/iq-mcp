@@ -18,6 +18,7 @@ from .models import (
     DeleteEntryRequest,
 )
 from .settings import settings
+from src.iq_notify.notify import supabase, EmailSummary
 
 import datetime
 import sys
@@ -232,6 +233,13 @@ async def merge_entities(
     except Exception as e:
         raise ToolError(f"Failed to merge entities: {e}")
 
+@mcp.tool
+async def get_email_update() -> list[EmailSummary]:
+    """Get new email summaries from Supabase."""
+    return await supabase.get_new_email_summaries()
+
+
+#### Main application entry point ####
 
 async def start_server():
     """Common entry point for the MCP server."""
