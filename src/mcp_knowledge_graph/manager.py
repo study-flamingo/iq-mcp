@@ -27,6 +27,7 @@ from .models import (
 
 logger = logging.getLogger("iq-mcp")
 
+
 class KnowledgeGraphManager:
     """
     Core manager for knowledge graph operations with temporal features.
@@ -76,7 +77,7 @@ class KnowledgeGraphManager:
         try:
             if not timestamp:
                 return "unknown age"
-            
+
             obs_date = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
             age_days = (datetime.now() - obs_date).days
             return f"{age_days} days old"
@@ -119,11 +120,11 @@ class KnowledgeGraphManager:
         """
         try:
             now = datetime.now()
-            
+
             # If the observation has no timestamp, add one
             if not obs.timestamp:
                 obs.timestamp = now.isoformat()
-            
+
             obs_date = datetime.fromisoformat(obs.timestamp.replace("Z", "+00:00"))
             days_old = (now - obs_date).days
             months_old = days_old / 30.0
@@ -150,11 +151,12 @@ class KnowledgeGraphManager:
             KnowledgeGraph loaded from file, or empty graph if file doesn't exist
         """
         if not self.memory_file_path.exists():
-            logger.warning(f"⛔ Memory file not found at {self.memory_file_path}! Returning empty graph.")
+            logger.warning(
+                f"⛔ Memory file not found at {self.memory_file_path}! Returning empty graph."
+            )
             return KnowledgeGraph()
         else:
             logger.info(f"📈 Loaded graph from {self.memory_file_path}")
-
 
         try:
             entities = []
@@ -205,7 +207,9 @@ class KnowledgeGraphManager:
                             continue
                     except (json.JSONDecodeError, ValueError, TypeError) as e:
                         # Skip invalid lines but continue processing
-                        logger.warning(f"Warning: Skipping invalid line in {self.memory_file_path}: {e}")
+                        logger.warning(
+                            f"Warning: Skipping invalid line in {self.memory_file_path}: {e}"
+                        )
                         continue
 
             return KnowledgeGraph(entities=entities, relations=relations)
@@ -223,7 +227,9 @@ class KnowledgeGraphManager:
         """
         # Clean up outdated observations on each save
         r = await self.cleanup_outdated_observations()
-        logger.debug(f"🧹 Cleaned up {r.observations_removed_count} outdated observations from {r.entities_processed_count} entities")
+        logger.debug(
+            f"🧹 Cleaned up {r.observations_removed_count} outdated observations from {r.entities_processed_count} entities"
+        )
 
         try:
             lines = []
@@ -295,7 +301,9 @@ class KnowledgeGraphManager:
         for rel in relations:
             from_c = self._canonicalize_entity_name(graph, rel.from_entity)
             to_c = self._canonicalize_entity_name(graph, rel.to_entity)
-            canonicalized.append(Relation(from_entity=from_c, to_entity=to_c, relation_type=rel.relation_type))
+            canonicalized.append(
+                Relation(from_entity=from_c, to_entity=to_c, relation_type=rel.relation_type)
+            )
 
         # Create set of existing relations for duplicate checking (with canonical names)
         existing_relations = {
@@ -313,7 +321,7 @@ class KnowledgeGraphManager:
         await self._save_graph(graph)
         return new_relations
 
-    async def _apply_observations(
+    async def apply_observations(
         self, requests: list[ObservationRequest]
     ) -> list[AddObservationResult]:
         """
@@ -435,6 +443,9 @@ class KnowledgeGraphManager:
         Args:
             entity_names: list of entity names to delete
         """
+        if not entity_names:
+            raise ValueError("No entities deleted - no data provided!")
+
         graph = await self._load_graph()
         # Resolve identifiers to canonical entity names
         resolved_names: set[str] = set()
@@ -442,16 +453,18 @@ class KnowledgeGraphManager:
             entity = self._get_entity_by_name_or_alias(graph, ident)
             if entity:
                 resolved_names.add(entity.name)
-        entity_names_set = resolved_names
+
+        if not resolved_names:
+            logger.warning("No entities deleted - no valid entities provided in data")
 
         # Remove entities
-        graph.entities = [e for e in graph.entities if e.name not in entity_names_set]
+        graph.entities = [e for e in graph.entities if e.name not in resolved_names]
 
         # Remove relations involving deleted entities
         graph.relations = [
             r
             for r in graph.relations
-            if r.from_entity not in entity_names_set and r.to_entity not in entity_names_set
+            if r.from_entity not in resolved_names and r.to_entity not in resolved_names
         ]
 
         await self._save_graph(graph)
@@ -643,7 +656,10 @@ class KnowledgeGraphManager:
                 if e.name in names_in_merge_set:
                     continue
                 try:
-                    if any((a or "").strip().lower() == new_entity_name.strip().lower() for a in e.aliases):
+                    if any(
+                        (a or "").strip().lower() == new_entity_name.strip().lower()
+                        for a in e.aliases
+                    ):
                         conflict_entity = e
                         break
                 except Exception:
@@ -701,7 +717,11 @@ class KnowledgeGraphManager:
                 merged_aliases.add(ent.name)
             try:
                 for a in ent.aliases:
-                    if isinstance(a, str) and a.strip() and a.strip().lower() != new_entity_name.strip().lower():
+                    if (
+                        isinstance(a, str)
+                        and a.strip()
+                        and a.strip().lower() != new_entity_name.strip().lower()
+                    ):
                         merged_aliases.add(a)
             except Exception:
                 pass
