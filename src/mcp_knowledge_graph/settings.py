@@ -23,6 +23,8 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     load_dotenv = None  # type: ignore
 
+DEFAULT_MEMORY_PATH = Path(__name__).parent.parent / "memory.jsonl"
+
 
 Transport = Literal["stdio", "sse", "http"]
 
@@ -126,9 +128,8 @@ class IQSettings:
         http_path = args.http_path or os.getenv("IQ_STREAMABLE_HTTP_PATH")
 
         # Memory path precedence: CLI > env > default(project_root/memory.jsonl) > example.jsonl
-        default_memory_path = project_root / "memory.jsonl"
 
-        memory_path_input = args.memory_path or os.getenv("IQ_MEMORY_PATH", "../../memory.jsonl")
+        memory_path_input = args.memory_path or os.getenv("IQ_MEMORY_PATH", DEFAULT_MEMORY_PATH)
         memory_path = Path(memory_path_input).resolve()
 
         supabase_url = os.getenv("SUPABASE_URL")

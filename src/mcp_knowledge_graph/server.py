@@ -18,7 +18,6 @@ from .models import (
     DeleteEntryRequest,
 )
 from .settings import settings
-from src.iq_notify.notify import supabase, EmailSummary
 
 import datetime
 import sys
@@ -27,6 +26,12 @@ import sys
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("iq-mcp")
 
+try:
+    from .notify import supabase, EmailSummary
+except ImportError:
+    logger.warning("Error starting notification module: Supabase not found - install with `uv pip install supabase`")
+    supabase = None
+    EmailSummary = None
 
 # Load settings once and configure logging level accordingly
 

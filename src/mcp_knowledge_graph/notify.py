@@ -2,12 +2,12 @@ import json
 import os
 import sys
 import asyncio
+from dataclasses import dataclass
 from typing import Any
 from pydantic import BaseModel
 from supabase import create_client, Client
 
-from . import get_unreviewed_email_summaries
-
+@dataclass
 class EmailSummary(BaseModel):
     """Object representing an email summary from Supabase."""
     message_id: str
@@ -18,6 +18,12 @@ class EmailSummary(BaseModel):
     subject: str
     summary: str
     links: list[dict[str, Any]]
+
+@dataclass
+class SupabaseSettings(BaseModel):
+    url: str
+    key: str
+    table: str = "emailSummaries"
 
 class SupabaseClient(BaseModel):
     """A single-purpose client for the Supabase database. Returns new email summaries that have not been reviewed.
@@ -32,22 +38,15 @@ class SupabaseClient(BaseModel):
         - SUPABASE_KEY=<key>
         - SUPABASE_TABLE=<table>
     """
-    def __init__(self, supabase_url: str, supabase_key: str, supabase_table: str = "emailSummaries"):
-        if not supabase_url or not supabase_key:
-            supabase_url = os.environ.get("SUPABASE_URL")
-            supabase_key = os.environ.get("SUPABASE_KEY")
-            if not supabase_url or not supabase_key:
-                raise ValueError("Missing SUPABASE_URL or SUPABASE_KEY env vars!")
-
-        self._supabase_url = supabase_url
-        self._supabase_key = supabase_key
-        self._supabase_table = supabase_table
+    def __init__(self, settings: SupabaseSettings):
+        super().__init__()
+        self.settings = settings
         self.client = self._get_client()
         
     def _get_client(self) -> Client:
         if not self.client:
             # If client is missing for some reason, create it
-            self.client = create_client(self._supabase_url, self._supabase_key)
+            self.client = create_client(self.settings.url, self.settings.key)
         return self.client
 
     async def get_new_email_summaries(self) -> list[EmailSummary]:
@@ -57,7 +56,7 @@ class SupabaseClient(BaseModel):
         - List of summarized email objects (EmailSummary objects).
         """
 
-        query = self.client.table(self._supabase_table).select("*").eq("reviewed", False)
+        query = self.client.table(self.settings.table).select("*").eq("reviewed", False)
 
         try:
             response = await query.execute()
@@ -77,8 +76,9 @@ class SupabaseClient(BaseModel):
 url = os.environ.get("SUPABASE_URL")
 key = os.environ.get("SUPABASE_KEY")
 table = os.environ.get("SUPABASE_TABLE")
+supabase_settings = SupabaseSettings(url, key, table)
 
-supabase = SupabaseClient(supabase_url, supabase_key, supabase_table)
+supabase = SupabaseClient(supabase_settings)
 
 __all__ = [
     "supabase",
