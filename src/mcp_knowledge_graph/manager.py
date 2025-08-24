@@ -7,7 +7,7 @@ including CRUD operations, temporal observation handling, and smart cleanup.
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from pathlib import Path
 
@@ -22,6 +22,9 @@ from .models import (
     CleanupResult,
     DurabilityGroupedObservations,
     DurabilityType,
+    CreateEntityResult,
+    CreateRelationResult,
+    UserIdentifier,
 )
 
 
@@ -72,14 +75,25 @@ class KnowledgeGraphManager:
         entity = self._get_entity_by_name_or_alias(graph, identifier)
         return entity.name if entity else identifier
 
-    def _format_observation_age(self, timestamp: str | None) -> str:
-        """Return a human-friendly age string for an ISO timestamp; fallback to 'unknown age'."""
+    def _format_observation_age(self, timestamp: str | datetime | None) -> str:
+        """Return a human-friendly age string for a timestamp; fallback to 'unknown age'."""
         try:
             if not timestamp:
                 return "unknown age"
 
-            obs_date = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-            age_days = (datetime.now() - obs_date).days
+            if isinstance(timestamp, str):
+                obs_date = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+            else:
+                obs_date = timestamp
+
+            # Normalize to timezone-aware UTC
+            if obs_date.tzinfo is None:
+                obs_date = obs_date.replace(tzinfo=timezone.utc)
+            else:
+                obs_date = obs_date.astimezone(timezone.utc)
+
+            now = datetime.now(timezone.utc)
+            age_days = (now - obs_date).days
             return f"{age_days} days old"
         except Exception:
             return "unknown age"
@@ -119,13 +133,27 @@ class KnowledgeGraphManager:
             True if the observation should be considered outdated
         """
         try:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
 
             # If the observation has no timestamp, add one
             if not obs.timestamp:
-                obs.timestamp = now.isoformat()
+                # Normalize missing timestamp to an ISO UTC string
+                obs.timestamp = now.isoformat().replace("+00:00", "Z")
+                # This observation didn't have a timestamp, but now it does, so assume it's not outdated
+                return False
 
-            obs_date = datetime.fromisoformat(obs.timestamp.replace("Z", "+00:00"))
+            obs_date_any = obs.timestamp
+            if isinstance(obs_date_any, str):
+                obs_date = datetime.fromisoformat(obs_date_any.replace("Z", "+00:00"))
+            else:
+                obs_date = obs_date_any
+
+            # Ensure timezone-aware UTC for safe arithmetic
+            if obs_date.tzinfo is None:
+                obs_date = obs_date.replace(tzinfo=timezone.utc)
+            else:
+                obs_date = obs_date.astimezone(timezone.utc)
+
             days_old = (now - obs_date).days
             months_old = days_old / 30.0
 
@@ -139,11 +167,11 @@ class KnowledgeGraphManager:
                 return months_old > 1  # 1+ month old
             else:
                 return False
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, TypeError):
             # If timestamp parsing fails, assume not outdated
             return False
 
-    async def _load_graph(self) -> KnowledgeGraph:
+    async def _load_graph(self) -> tuple[KnowledgeGraph, bool]:
         """
         Load the knowledge graph from JSONL storage.
 
@@ -158,7 +186,9 @@ class KnowledgeGraphManager:
         else:
             logger.info(f"📈 Loaded graph from {self.memory_file_path}")
 
+        user_info_missing: bool = False
         try:
+            user_info: UserIdentifier | None = None
             entities = []
             relations = []
 
@@ -171,36 +201,40 @@ class KnowledgeGraphManager:
                     try:
                         item = json.loads(line)
 
-                        # Support both formats:
-                        # 1) Nested: {"type":"entity","data":{...}}
-                        # 2) Flattened: {"type":"entity", ...payload fields...}
-                        # 3) Legacy fallback without type (infer from keys)
                         item_type = item.get("type")
 
                         payload: dict | None = None
-                        if item_type in ("entity", "relation"):
+                        if item_type in ("entity", "relation", "user_info"):
                             if isinstance(item.get("data"), dict):
                                 payload = item["data"]
+                                if not payload:
+                                    raise logger.error(f"Invalid payload: {item}")
                             else:
-                                # Use all keys except 'type' as payload for flattened format
-                                payload = {k: v for k, v in item.items() if k != "type"}
-                        else:
-                            # Attempt legacy inference without explicit type
-                            if {"name", "entity_type"}.issubset(item.keys()):
-                                item_type = "entity"
-                                payload = item
-                            elif {"from", "to", "relation_type"}.issubset(item.keys()):
-                                item_type = "relation"
-                                payload = item
+                                raise logger.error(f"{item} has invalid item type: {item_type}")
 
                         if item_type == "entity" and isinstance(payload, dict):
                             entity = Entity(**payload)
-
                             entities.append(entity)
+
                         elif item_type == "relation" and isinstance(payload, dict):
                             relations.append(Relation(**payload))
+
+                        elif item_type == "user_info" and isinstance(payload, dict):
+                            user_info_missing = (
+                                payload.get("preferred_name") == "default_user" 
+                                or payload.get("preferred_name") == "__default_user__"
+                                or payload.get("first_name") == "default_user"
+                                or payload.get("first_name") == "__default_user__"
+                            )
+                            if not user_info_missing:
+                                try:
+                                    user_info = UserIdentifier(**payload)
+                                except Exception as e:
+                                    raise RuntimeError(f"Error parsing user info from memory file: {e}")
+                            logger.debug(f"Loaded user info: {payload}")
+
                         else:
-                            # Unrecognized line; skip but continue
+                            # Unrecognized line; skip with warning but continue
                             logger.warning(
                                 f"Warning: Skipping unrecognized line in {self.memory_file_path}: Missing or invalid type/payload"
                             )
@@ -212,47 +246,73 @@ class KnowledgeGraphManager:
                         )
                         continue
 
-            return KnowledgeGraph(entities=entities, relations=relations)
+            if not user_info:
+                logger.warning("No user info found in memory file! Initializing with default user info.")
+                user_info = UserIdentifier.from_default()
+                user_info_missing = True
+
+            logger.info(f"💾 Loaded {len(entities)} entities and {len(relations)} relations from memory file")
+            return KnowledgeGraph(user_info=user_info, entities=entities, relations=relations), user_info_missing
 
         except Exception as e:
-            logger.error(f"Error loading graph: {e}")
-            return KnowledgeGraph()
+            raise RuntimeError(f"Error loading graph: {e}")
 
-    async def _save_graph(self, graph: KnowledgeGraph) -> None:
+    async def _save_graph(self, graph: KnowledgeGraph, test: bool = False) -> None:
         """
         Save the knowledge graph to JSONL storage.
 
         Args:
             graph: The knowledge graph to save
+
+        For information on the format of the graph, see the README.md file.
         """
-        # Clean up outdated observations on each save
-        r = await self.cleanup_outdated_observations()
-        logger.debug(
-            f"🧹 Cleaned up {r.observations_removed_count} outdated observations from {r.entities_processed_count} entities"
-        )
+        # Clean up outdated observations on each save (idempotent and safe)
+        try:
+            r = await self.cleanup_outdated_observations()
+            logger.debug(
+                f"🧹 Cleaned up {r.observations_removed_count} outdated observations from {r.entities_processed_count} entities"
+            )
+        except Exception as e:
+            # Do not block saving if cleanup fails; log and continue
+            logger.warning(f"Cleanup failed prior to save: {e}")
 
         try:
             lines = []
 
+            # Save user info
+            if graph.user_info:
+                user_info_payload = graph.user_info.model_dump()
+                record = {"type": "user_info", "data": user_info_payload}
+                lines.append(json.dumps(record, separators=(",", ":")))
+            else:
+                # If for some reason the user info is not set, save with default info
+                user_info_payload = UserIdentifier.from_default().model_dump()
+                record = {"type": "user_info", "data": user_info_payload}
+                lines.append(json.dumps(record, separators=(",", ":")))
+
             # Save entities
             for entity in graph.entities:
-                entity_payload = entity.dict(by_alias=True)
+                entity_payload = entity.model_dump()
                 record = {"type": "entity", "data": entity_payload}
                 lines.append(json.dumps(record, separators=(",", ":")))
 
             # Save relations
             for relation in graph.relations:
-                relation_payload = relation.dict(by_alias=True)
+                relation_payload = relation.model_dump()
                 record = {"type": "relation", "data": relation_payload}
                 lines.append(json.dumps(record, separators=(",", ":")))
 
-            with open(self.memory_file_path, "w", encoding="utf-8") as f:
+            if test:
+                memory_file_path = self.memory_file_path.with_suffix("_test.jsonl")
+            else:
+                memory_file_path = self.memory_file_path
+            with open(memory_file_path, "w", encoding="utf-8") as f:
                 f.write("\n".join(lines))
 
         except Exception as e:
             raise RuntimeError(f"Failed to save graph: {e}")
 
-    async def create_entities(self, entities: list[Entity]) -> list[Entity]:
+    async def create_entities(self, entities: list[Entity]) -> CreateEntityResult:
         """
         Create multiple new entities in the knowledge graph.
 
@@ -260,9 +320,9 @@ class KnowledgeGraphManager:
             entities: list of entities to create
 
         Returns:
-            list of entities that were actually created (excludes existing names)
+            CreateEntityResult containing the entities that were actually created (excludes existing names)
         """
-        graph = await self._load_graph()
+        graph, _ = await self._load_graph()
         existing_names = {entity.name for entity in graph.entities}
         existing_aliases: set[str] = set()
         for entity in graph.entities:
@@ -284,7 +344,7 @@ class KnowledgeGraphManager:
         await self._save_graph(graph)
         return new_entities
 
-    async def create_relations(self, relations: list[Relation]) -> list[Relation]:
+    async def create_relations(self, relations: list[Relation]) -> CreateRelationResult:
         """
         Create multiple new relations between entities.
 
@@ -294,7 +354,7 @@ class KnowledgeGraphManager:
         Returns:
             list of relations that were actually created (excludes duplicates)
         """
-        graph = await self._load_graph()
+        graph, _ = await self._load_graph()
 
         # Canonicalize endpoints to entity names if aliases provided
         canonicalized: list[Relation] = []
@@ -336,7 +396,7 @@ class KnowledgeGraphManager:
         Raises:
             ValueError: If an entity is not found
         """
-        graph = await self._load_graph()
+        graph, _ = await self._load_graph()
         results: list[AddObservationResult] = []
 
         # Track errors, while allowing the tool to continue processing other requests
@@ -380,7 +440,7 @@ class KnowledgeGraphManager:
         Returns:
             CleanupResult with details of what was removed
         """
-        graph = await self._load_graph()
+        graph, _ = await self._load_graph()
         total_removed = 0
         removed_details = []
 
@@ -428,7 +488,7 @@ class KnowledgeGraphManager:
         Raises:
             ValueError: If the entity is not found
         """
-        graph = await self._load_graph()
+        graph, _ = await self._load_graph()
         entity = self._get_entity_by_name_or_alias(graph, entity_name)
 
         if entity is None:
@@ -446,7 +506,7 @@ class KnowledgeGraphManager:
         if not entity_names:
             raise ValueError("No entities deleted - no data provided!")
 
-        graph = await self._load_graph()
+        graph, _ = await self._load_graph()
         # Resolve identifiers to canonical entity names
         resolved_names: set[str] = set()
         for ident in entity_names:
@@ -476,7 +536,7 @@ class KnowledgeGraphManager:
         Args:
             deletions: list of observation deletion requests
         """
-        graph = await self._load_graph()
+        graph, _ = await self._load_graph()
 
         for deletion in deletions:
             entity = self._get_entity_by_name_or_alias(graph, deletion.entity_name)
@@ -498,7 +558,7 @@ class KnowledgeGraphManager:
         Args:
             relations: list of relations to delete
         """
-        graph = await self._load_graph()
+        graph, _ = await self._load_graph()
 
         # Canonicalize relation endpoints before building deletion set
         canonical_to_delete = {
@@ -519,14 +579,15 @@ class KnowledgeGraphManager:
 
         await self._save_graph(graph)
 
-    async def read_graph(self) -> KnowledgeGraph:
+    async def read_graph(self) -> tuple[KnowledgeGraph, bool]:
         """
         Read the entire knowledge graph.
 
         Returns:
             The complete knowledge graph
         """
-        return await self._load_graph()
+        graph, user_info_missing = await self._load_graph()
+        return graph, user_info_missing
 
     async def search_nodes(self, query: str) -> KnowledgeGraph:
         """
@@ -737,3 +798,12 @@ class KnowledgeGraphManager:
 
         await self._save_graph(graph)
         return merged_entity
+
+    async def update_user_info(self, user_info: UserIdentifier) -> UserIdentifier:
+        """
+        Update the user's identifying information in the graph.
+        """
+        graph, _ = await self._load_graph()
+        graph.user_info = user_info
+        await self._save_graph(graph)
+        return user_info

@@ -1,14 +1,15 @@
-import json
 import os
-import sys
 import asyncio
 from dataclasses import dataclass
 from typing import Any
-from pydantic import BaseModel
 from supabase import create_client, Client
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 @dataclass
-class EmailSummary(BaseModel):
+class EmailSummary():
     """Object representing an email summary from Supabase."""
     message_id: str
     thread_id: str
@@ -20,12 +21,12 @@ class EmailSummary(BaseModel):
     links: list[dict[str, Any]]
 
 @dataclass
-class SupabaseSettings(BaseModel):
+class SupabaseSettings():
     url: str
     key: str
     table: str = "emailSummaries"
 
-class SupabaseClient(BaseModel):
+class SupabaseClient():
     """A single-purpose client for the Supabase database. Returns new email summaries that have not been reviewed.
     
     Args:
@@ -44,9 +45,7 @@ class SupabaseClient(BaseModel):
         self.client = self._get_client()
         
     def _get_client(self) -> Client:
-        if not self.client:
-            # If client is missing for some reason, create it
-            self.client = create_client(self.settings.url, self.settings.key)
+        self.client = create_client(self.settings.url, self.settings.key)
         return self.client
 
     async def get_new_email_summaries(self) -> list[EmailSummary]:
@@ -83,4 +82,6 @@ supabase = SupabaseClient(supabase_settings)
 __all__ = [
     "supabase",
     "EmailSummary",
+    "SupabaseSettings",
+    "SupabaseClient",
 ]

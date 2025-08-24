@@ -295,9 +295,15 @@ Regularly run `cleanup_outdated_observations` to maintain data quality.
 
 ### JSONL Storage Format
 
-The server writes JSONL lines using a nested `data` payload and accepts both nested and flattened forms when loading.
+IQ_MCP stores data in a JSONL file. Entities and Relations are discrete objects and tie Entities together.
 
-Saved format:
+Information about the user is stored in the `default_user` object. Within the file is an identifier that provides the user's
+real name, and several possible variations (nickname, etc.).
+
+Save file format:
+
+  - `__default_user__` identifier 
+
 
 ```jsonl
 {"type":"entity","data":{"name":"Dr_Smith","entity_type":"person","observation":[{"contents":"Is a cardiologist","durability":"permanent","ts":"2025-01-01T00:00:00"}],"alias":["Doctor Smith"]}}

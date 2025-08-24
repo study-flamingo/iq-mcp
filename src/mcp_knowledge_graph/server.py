@@ -6,20 +6,27 @@ knowledge graph operations as tools for LLM integration using FastMCP 2.11.
 """
 
 import asyncio
+import json
 import logging
 from fastmcp import FastMCP
 from pydantic import Field
 from typing import Any
 from fastmcp.exceptions import ToolError, ValidationError
+# Keep datetime import if needed later; ensure we don't use naive datetimes
 
 from .manager import KnowledgeGraphManager
 from .models import (
     CreateEntryRequest,
     DeleteEntryRequest,
-)
+    AddObservationResult,
+    CreateEntityResult,
+    CreateRelationResult,
+    CleanupResult,
+    KnowledgeGraph,
+    UserIdentifier,
+ )
 from .settings import settings
 
-import datetime
 import sys
 
 # Configure logging
@@ -45,40 +52,61 @@ mcp = FastMCP(name="iq-mcp", version="0.1.0")
 
 
 @mcp.tool
-async def create_entry(request: CreateEntryRequest) -> list[dict[str, Any]]:
+async def create_entry(request: CreateEntryRequest) -> str:
     """Add entities, observations, or relations to the knowledge graph.
 
     'data' must be a list of the appropriate object for each entry_type:
 
-    - observation: [{'entity_name': 'entity_name_or_alias', 'content': [...]}]
-    - entity: [{'name': 'entity_name', 'entity_type': 'entity_type', 'observations': [{'content': str, 'durability': ['temporary', 'short-term', 'long-term', 'permanent']}], 'aliases': ['alt1', 'alt2', ...]}]
-    - relation: [{'from': 'entity_name_or_alias', 'to': 'entity_name_or_alias', 'relation_type': 'relation_type'}]
+    ## Adding Entities
+    'data' must be a list of Entities:
+      - name: entity_name
+      - entity_type: entity_type
+      - observations: list of Observations
+        - content: str
+        - durability: Literal['temporary', 'short-term', 'long-term', 'permanent']
+      - aliases: list of str (optional)
+      - icon: Emoji to represent the entity (optional)
+
+    ## Adding Observations
+    'data' must be a list of Observations:
+      - entity_name: entity_name
+      - content: str
+
+    ## Adding Relations
+    'data' must be a list of Relations:
+      - from: entity_name
+      - to: entity_name
+      - relation_type: relation_type
 
     Aliases are resolved to canonical entity names by the manager.
     """
     entry_type = request.entry_type
     data = request.data
-
     try:
         if entry_type == "observation":
-            result = await manager.apply_observations(data)  # type: ignore[arg-type]
-            return [r.model_dump() for r in result]
+            observation_result: [AddObservationResult] = await manager.apply_observations(data)
+            result = ""
+            for r in observation_result:
+                result += str(r) + "\n"
+
         elif entry_type == "entity":
-            result = await manager.create_entities(data)  # type: ignore[arg-type]
-            logger.debug("🛠️ Tool invoked: create_entry(kind=entity)")
-            return [e.model_dump(by_alias=True) for e in result]
+            entity_result: CreateEntityResult = await manager.create_entities(data)
+            result = str(entity_result)
+
         elif entry_type == "relation":
-            result = await manager.create_relations(data)  # type: ignore[arg-type]
-            logger.debug("🛠️ Tool invoked: create_entry")
-            return [r.model_dump(by_alias=True) for r in result]
+            relation_result: CreateRelationResult = await manager.create_relations(data)
+            result = str(relation_result)
+
         else:
-            return []
+            raise ValueError(f"Invalid entry type: {entry_type}")
+
     except Exception as e:
         raise ToolError(f"Failed to create entry: {e}")
-
+    
+    return result
 
 @mcp.tool
-async def cleanup_outdated_observations() -> dict[str, Any]:
+async def cleanup_outdated_observations() -> str:
     """Remove observations that are likely outdated based on their durability and age.
 
     Returns:
@@ -86,8 +114,7 @@ async def cleanup_outdated_observations() -> dict[str, Any]:
     """
     try:
         result = await manager.cleanup_outdated_observations()
-        logger.debug("🛠️ Tool invoked: cleanup_outdated_observations")
-        return result.model_dump()
+        return str(result)
     except Exception as e:
         raise ToolError(f"Failed to cleanup observations: {e}")
 
@@ -95,7 +122,7 @@ async def cleanup_outdated_observations() -> dict[str, Any]:
 @mcp.tool
 async def get_observations_by_durability(
     entity_name: str = Field(description="The name or alias of the entity to get observations for"),
-) -> dict[str, Any]:
+) -> str:
     """Get observations for an entity grouped by their durability type.
 
     Args:
@@ -106,8 +133,7 @@ async def get_observations_by_durability(
     """
     try:
         result = await manager.get_observations_by_durability(entity_name)
-        logger.debug("🛠️ Tool invoked: get_observations_by_durability")
-        return result.model_dump()
+        return str(result)
     except Exception as e:
         raise ToolError(f"Failed to get observations: {e}")
 
@@ -116,9 +142,9 @@ async def get_observations_by_durability(
 async def delete_entry(request: DeleteEntryRequest) -> str:
     """Unified deletion tool for observations, entities, and relations. Data must be a list of the appropriate object for each entry_type:
 
-    - entry_type = 'entity': list of entity names or aliases
-    - entry_type = 'observation': [{entity_name_or_alias, [observation content]}]
-    - entry_type = 'relation': [{from_entity(name or alias), to_entity(name or alias), relation_type}]
+    - 'entity': list of entity names or aliases
+    - 'observation': [{entity_name_or_alias, [observation content]}]
+    - 'relation': [{from_entity(name or alias), to_entity(name or alias), relation_type}]
 
     ***CRITICAL: THIS ACTION IS DESTRUCTIVE AND IRREVERSIBLE - ENSURE THAT THE USER CONSENTS PRIOR TO EXECUTION!!!***
     """
@@ -148,32 +174,160 @@ async def delete_entry(request: DeleteEntryRequest) -> str:
 
 
 @mcp.tool
-async def read_graph() -> dict[str, Any]:
+async def read_graph() -> str:
     """Read the entire knowledge graph.
 
     Returns:
-        Complete knowledge graph data in JSON format
+        Complete knowledge graph data in JSON format, and a boolean indicating if user info is missing
     """
-    logger.debug("🛠️ Tool invoked: read_graph")
     try:
-        result = await manager.read_graph()
+        graph, user_info_missing = await manager.read_graph()
 
         # Sort observations within each entity by timestamp (descending)
-        def _obs_ts(obs_ts: str | None) -> datetime:
-            try:
-                if not obs_ts:
-                    return datetime.min
-                return datetime.fromisoformat(obs_ts.replace("Z", "+00:00"))
-            except Exception:
-                return datetime.min
+        # def _obs_ts(obs_ts: str | None) -> datetime:
+        #     try:
+        #         if not obs_ts:
+        #             return datetime.min
+        #         return datetime.fromisoformat(obs_ts.replace("Z", "+00:00"))
+        #     except Exception:
+        #         return datetime.min
 
-        for entity in result.entities:
-            entity.observations.sort(key=lambda o: _obs_ts(o.timestamp), reverse=True)
+        # for entity in result.entities:
+        #     entity.observations.sort(key=lambda o: _obs_ts(o.timestamp), reverse=True)
 
-        return result.model_dump(by_alias=True)
+        # Compose a sensible display name for the user, based on available data and preferences
+        user_name: str = ""
+
+        if graph.user_info.preferred_name:
+            user_name = graph.user_info.preferred_name
+        elif graph.user_info.nickname:
+            user_name = graph.user_info.nickname
+        elif graph.user_info.names[0]:
+            user_name = graph.user_info.names[0]
+        elif graph.user_info.last_name:
+            user_name = graph.user_info.first_name + " " + graph.user_info.last_name
+        elif graph.user_info.first_name:
+            user_name = graph.user_info.first_name
+        else:
+            user_name = "default_user"
+            user_info_missing: bool = True
+        
+        display_graph = graph.model_copy()
+
+        # Replace the default user with the user's preferred name
+        for e in display_graph.entities:
+            if e.name == "default_user" or e.name == "__default_user__":
+                e.name = user_name
+        
+        results: list[str] = [str(display_graph)]
+        if user_info_missing:
+            results.append("""
+**ALERT**: User info is missing from the graph!
+
+Ask the user to provide identifying information:
+    - Preferred name: str (optional)
+    - First name: str (required)
+    - Pronouns: str (optional)
+    - Nickname: str (optional)
+    - Middle name(s): list[str] (optional)
+    - Last name: str (optional)
+    - Prefixes: list[str] (optional) (e.g. "Mr.", "Dr.", "Ms.", "Mrs.")
+    - Suffixes: list[str] (optional) (e.g. "Ph.D.", "M.D.", "D.D.S.","J.D.")
+    - Email address(es): list[str] (optional)
+
+Example prompt to request user information:
+    "It looks like I'm missing some basic information about you! Knowing a few basic things helps me keep my memory organized. If you don't mind, could you give me your full or preferred name? A nickname is fine too! You can also provide your pronouns, prefixes, suffixes, and email addresses if you'd like, though they are not required. The more data the better!"
+
+The user will probably provide this information in a natural-language format. For example:
+    "My name is Dr. John Alexander Robert Doe Jr., M.D., AKA 'John Doe', but you can
+    call me 'John'. My pronouns are he/him. My email address is john.doe@example.com,
+    but my work email is john.doe@work.com."
+
+From this response, you would extract the following information:
+    - First name: "John"
+    - Middle name(s): "Alexander", "Robert"
+    - Last name: "Doe"
+    - Preferred name: "John"
+    - Pronouns: "he/him"
+    - Nickname: "John Doe"
+    - Prefixes: "Dr."
+    - Suffixes: "Jr.", "M.D."
+    - Email address(es): "john.doe@example.com", "john.doe@work.com"
+
+Then, use the update_user_info tool to update the graph with the user's identifying information.""")
+        result = "\n\n".join(results)
+        return result
     except Exception as e:
         raise ToolError(f"Failed to read graph: {e}")
 
+@mcp.tool
+async def update_user_info(user_info: UserIdentifier) -> str:
+    """
+    Update the user's identifying information in the graph. This tool should be rarely called, and
+    only if it appears that the user's identifying information is missing or incorrect, or if the
+    user specifically requests to do so.
+    
+    Args:
+      - preferred_name: The preferred name of the user. Preferred name is prioritized over other
+        names for the user. If not provided, one will be selected from the other provided names in
+        the following fallback order:
+          1. Nickname
+          2. Prefix + First name
+          3. First name
+          4. Last name
+      - first_name: The given name of the user
+      - middle_names: The middle names of the user
+      - last_name: The family name of the user
+      - pronouns: The pronouns of the user
+      - nickname: The nickname of the user
+      - prefixes: The prefixes of the user
+      - suffixes: The suffixes of the user
+      - emails: The email addresses of the user
+
+      * One of the following MUST be provided: preferred_name, first_name, last_name, or nickname
+
+    Returns:
+        On success, the updated user info.
+        On failure, an error message.
+
+    Example user response:
+        "My name is Dr. John Alexander Robert Doe Jr., M.D., AKA 'John Doe', but you can
+        call me John. My pronouns are he/him. My email address is john.doe@example.com,
+        but my work email is john.doe@work.com."
+
+    From this response, you would extract the following information:
+        - Preferred name: "John"
+        - First name: "John"
+        - Middle name(s): "Alexander", "Robert"
+        - Last name: "Doe"
+        - Pronouns: "he/him"
+        - Nickname: "John Doe"
+        - Prefixes: "Dr."
+        - Suffixes: "Jr.", "M.D."
+        - Email address(es): "john.doe@example.com", "john.doe@work.com"
+    """
+    if not user_info.preferred_name and not user_info.first_name and not user_info.nickname and not user_info.last_name:
+        raise ValueError("Either a preferred name, first name, last name, or nickname are required")
+    
+    # Strip whitespace from all fields
+    try:
+        user_info.preferred_name = user_info.preferred_name.strip()
+        user_info.first_name = user_info.first_name.strip()
+        user_info.last_name = user_info.last_name.strip()
+        user_info.middle_names = [name.strip() for name in user_info.middle_names]
+        user_info.pronouns = user_info.pronouns.strip()
+        user_info.nickname = user_info.nickname.strip()
+        user_info.prefixes = [name.strip() for name in user_info.prefixes]
+        user_info.suffixes = [name.strip() for name in user_info.suffixes]
+        user_info.emails = [email.strip() for email in user_info.emails]
+    except Exception as e:
+        logger.warning(f"User info validation warning: {e}")
+
+    try:
+        result = await manager.update_user_info(user_info)
+        return str(result)
+    except Exception as e:
+        raise ToolError(f"Failed to update user info: {e}")
 
 @mcp.tool
 async def search_nodes(
@@ -191,7 +345,6 @@ async def search_nodes(
     """
     try:
         result = await manager.search_nodes(query)
-        logger.debug("🛠️ Tool invoked: search_nodes")
         return result.model_dump(by_alias=True)
     except Exception as e:
         raise ToolError(f"Failed to search nodes: {e}")
@@ -201,17 +354,16 @@ async def search_nodes(
 async def open_nodes(
     entity_names: list[str] = Field(description="List of entity names or aliases to retrieve"),
 ) -> dict[str, Any]:
-    """Open specific nodes in the knowledge graph by their names.
+    """Open specific nodes (entities) in the knowledge graph by their names.
 
     Args:
         entity_names: List of entity names or aliases to retrieve
 
     Returns:
-        Retrieved node data
+        Retrieved node data - observations about the entity.
     """
     try:
         result = await manager.open_nodes(entity_names)
-        logger.debug("🛠️ Tool invoked: open_nodes")
         return result.model_dump(by_alias=True)
     except Exception as e:
         raise ToolError(f"Failed to open nodes: {e}")
@@ -233,7 +385,6 @@ async def merge_entities(
     try:
         names: list[str] = [entity_names] if isinstance(entity_names, str) else entity_names
         merged = await manager.merge_entities(newentity_name, names)
-        logger.debug("🛠️ Tool invoked: merge_entities")
         return merged.dict(by_alias=True)
     except Exception as e:
         raise ToolError(f"Failed to merge entities: {e}")
@@ -242,6 +393,30 @@ async def merge_entities(
 async def get_email_update() -> list[EmailSummary]:
     """Get new email summaries from Supabase."""
     return await supabase.get_new_email_summaries()
+
+if settings.debug:
+    @mcp.tool
+    async def DEBUG_save_graph() -> str:
+        """DEBUG TOOL: Test loading, and then immediately saving the graph."""
+        try:
+            graph, user_info_missing = await manager._load_graph()
+
+            if user_info_missing:
+                logger.warning("DEBUG TOOL ERROR: User info is missing from the graph! This is expected if the graph is empty.")
+
+            await manager._save_graph(graph)
+        except Exception as e:
+            raise ToolError(f"DEBUG TOOL ERROR: Failed to save graph: {e}")
+        return "✅ Graph saved successfully!"
+
+    @mcp.tool
+    async def DEBUG_read_user_info() -> str:
+        """DEBUG TOOL: Test reading the user info from the graph."""
+        try:
+            graph, user_info_missing = await manager._load_graph()
+            return str(graph.user_info)
+        except Exception as e:
+            raise ToolError(f"DEBUG TOOL ERROR: Failed to load graph: {e}")
 
 
 #### Main application entry point ####
@@ -269,9 +444,7 @@ async def start_server():
 
 def run_sync():
     """Synchronus entry point for the server."""
-    logger.debug("Running IQ-MCP from server.py")
     asyncio.run(start_server())
-
 
 if __name__ == "__main__":
     asyncio.run(start_server())

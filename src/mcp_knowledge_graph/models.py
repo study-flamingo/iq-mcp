@@ -5,9 +5,9 @@ This module defines all the data structures used throughout the knowledge graph,
 including entities, relations, and temporal observations with durability metadata.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from enum import Enum
 
 
@@ -31,7 +31,11 @@ class Observation(BaseModel):
     - timestamp(str): ISO date string when the observation was created
     - durability(DurabilityType): How long this observation is expected to remain relevant
     """
-
+    model_config = ConfigDict(
+        populate_by_name=True,
+        validate_by_alias=True,
+        validate_by_name=True,
+    )
     content: str = Field(
         ..., title="Observation content", description="The observation content", alias="contents"
     )
@@ -40,7 +44,7 @@ class Observation(BaseModel):
         title="Durability",
         description="How long this observation is expected to remain relevant",
     )
-    timestamp: str | None = Field(
+    timestamp: str | datetime | None = Field(
         ...,
         title="Timestamp",
         description="ISO date string when the observation was created",
@@ -51,9 +55,22 @@ class Observation(BaseModel):
     def add_timestamp(
         cls, content: str, durability: DurabilityType = DurabilityType.SHORT_TERM
     ) -> "Observation":
-        """Create a new timestamped observation from content and durability. The current datetime in ISO formatis used as the timestamp."""
-        return cls(content=content, timestamp=datetime.now().isoformat(), durability=durability)
+        """Create a new timestamped observation from content and durability. The current datetime in ISO format (UTC) is used as the timestamp."""
+        ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        return cls(content=content, timestamp=ts, durability=durability)
 
+    def __repr__(self):
+        return f"Observation(content={self.content}, timestamp={self.timestamp}, durability={self.durability})"
+
+    def __str__(self):
+        try:
+            if isinstance(self.timestamp, str):
+                ts_dt = datetime.fromisoformat(self.timestamp.replace("Z", "+00:00"))
+            else:
+                ts_dt = self.timestamp
+            return f"  - {self.content} ({ts_dt.strftime('%Y-%m-%d %H:%M')}, {self.durability.value})\n"
+        except Exception:
+            return f"  - {self.content} ({self.timestamp}, {self.durability.value})\n"
 
 class Entity(BaseModel):
     """
@@ -73,34 +90,46 @@ class Entity(BaseModel):
 
     Relations are stored in active voice and describe how entities interact or relate to each other.
     """
-
+    model_config = ConfigDict(
+        populate_by_name=True,
+        validate_by_alias=True,
+        validate_by_name=True,
+    )
     name: str = Field(
         ...,
         title="Entity name",
         description="Unique identifier for the entity",
-        alias="entity_name",
     )
     entity_type: str = Field(
         ...,
         title="Entity type",
         description="Type classification (e.g., 'person', 'organization', 'event')",
-        alias="entityType",
     )
     observations: list[Observation] = Field(
         default_factory=list,
         title="List of observations",
         description="Associated observations with content, durabiltiy, and timestamp",
-        alias="observation",
     )
     aliases: list[str] = Field(
         default_factory=list,
         title="Aliases",
         description="Alternative names for the entity that should resolve to this entity",
-        alias="alias",
+    )
+    icon: str | None = Field(
+        default="👤",
+        title="Icon",
+        description="Emoji used to represent the entity",
     )
 
-    class Config:
-        populate_by_name = True
+    def __repr__(self):
+        return f"Entity(name={self.name}, entity_type={self.entity_type}, observations={self.observations}, aliases={self.aliases}, icon={self.icon})"
+
+    def __str__(self):
+        if self.icon:
+            icon = f"{self.icon} "
+        else:
+            icon = ""
+        return f"**{icon}{self.name}** ({self.entity_type})"
 
 
 class Relation(BaseModel):
@@ -110,7 +139,11 @@ class Relation(BaseModel):
     Relations are stored in active voice and describe how entities
     interact or relate to each other.
     """
-
+    model_config = ConfigDict(
+        populate_by_name=True,
+        validate_by_alias=True,
+        validate_by_name=True,
+    )
     from_entity: str = Field(
         ..., title="From entity", description="Source entity name", alias="from"
     )
@@ -122,9 +155,214 @@ class Relation(BaseModel):
         alias="relationType",
     )
 
-    class Config:
-        populate_by_name = True
+    def __repr__(self):
+        return f"Relation(from_entity={self.from_entity}, to_entity={self.to_entity}, relation_type={self.relation_type})"
 
+    def __str__(self):
+        return f"{self.from_entity} {self.relation_type} {self.to_entity}"
+
+class UserIdentifier(BaseModel):
+    """
+    Identifier to pair the user with '__default_user__' in the knowledge graph.
+    
+    Fields:
+      - preferred_name: The preferred name of the user. Preferred name is prioritized over other
+        names for the user. If not provided, one will be selected from the other provided names in
+        the following fallback order:
+          1. Nickname
+          2. Prefix + First name
+          3. First name
+          4. Last name
+      - first_name: The given name of the user
+      - last_name: The family name of the user
+      - middle_names: The middle names of the user
+      - pronouns: The pronouns of the user
+      - nickname: The nickname of the user
+      - prefixes: The prefixes of the user
+      - suffixes: The suffixes of the user
+      - emails: The email addresses of the user
+      - base_name: The base name of the user - first, middle, and last name without any prefixes or suffixes. Organized as a list of strings with each part.
+      - names: Various full name forms for the user, depending on the provided information. Index 0 is the first, middle, and last name without any prefixes or suffixes.
+    """
+    model_config = ConfigDict(
+        populate_by_name=True,
+        validate_by_alias=True,
+        validate_by_name=True,
+    )
+    preferred_name: str | None = Field(
+        default=None,
+        title="Preferred name",
+        description="The preferred name of the user",
+        alias="preferredName"
+    )
+    first_name: str | None = Field(
+        default=None,
+        title="First name",
+        description="The given name of the user",
+        alias="firstName",
+    )
+    last_name: str | None = Field(
+        default=None,
+        title="Last name",
+        description="The family name of the user",
+        alias="lastName",
+    )
+    middle_names: list[str] | None = Field(
+        default=None,
+        title="Middle names",
+        description="The middle names of the user",
+        alias="middleNames",
+    )
+    pronouns: str | None = Field(
+        default=None,
+        title="Pronouns",
+        description="The pronouns of the user. Example: he/him, she/her, they/them, etc.",
+        alias="pronouns",
+    )
+    nickname: str | None = Field(
+        default=None,
+        title="Nickname",
+        description="The nickname of the user",
+    )
+    prefixes: list[str] | None = Field(
+        default=None,
+        title="Prefixes",
+        description="The prefixes of the user. Example: Mrs., Mr., Dr., Sgt., etc.",
+        alias="prefix",
+    )
+    suffixes: list[str] | None = Field(
+        default=None,
+        title="Suffixes",
+        description="The suffixes of the user. Example: Jr., Sr., II, III, etc.",
+        alias="suffix",
+    )
+    emails: list[str] | None = Field(
+        default=None,
+        title="Email",
+        description="The email of the user",
+        alias="email",
+    )
+    base_name: list[str] | None = Field(
+        default=None,
+        title="Base name",
+        description="The base name of the user - first, middle, and last name without any prefixes or suffixes. Organized as a list of strings with each part.",
+        alias="baseName",
+    )
+    names: list[str] = Field(
+        ...,
+        title="Full name",
+        description="Various full name forms for the user, depending on the provided information. Index 0 is the first, middle, and last name without any prefixes or suffixes.",
+        alias="fullName",
+    )
+
+    def __repr__(self):
+        return f"UserIdentifier(preferred_name={self.preferred_name}, first_name={self.first_name}, last_name={self.last_name}, middle_names={self.middle_names}, pronouns={self.pronouns}, nickname={self.nickname}, prefixes={self.prefixes}, suffixes={self.suffixes}, emails={self.emails}, base_name={self.base_name}, names={self.names})"
+
+    def __str__(self):
+        result_lines = []
+        
+        if self.nickname:
+            nick = f", AKA '{self.nickname}'"
+        else:
+            nick = ""
+        
+        result_lines.append(f"**{self.preferred_name}** ({self.names[0]}{nick})")
+        if self.pronouns:
+            result_lines.append(f"Pronouns: {self.pronouns}")
+        if self.prefixes:
+            result_lines.append(f"Prefixes: {', '.join(self.prefixes)}")
+        if self.suffixes:
+            result_lines.append(f"Suffixes: {', '.join(self.suffixes)}")
+        if self.emails:
+            result_lines.append(f"Email addresses: {', '.join(self.emails)}")
+        if len(self.names) > 1:
+            result_lines.append(f"May also go by:\n  - {'\n  - '.join(self.names[1:])}")
+        return "\n".join(result_lines)
+
+    @classmethod
+    def from_llm(
+        cls,
+        preferred_name: str = None,
+        first_name: str | None = None,
+        last_name: str | None = None,
+        middle_names: list[str] | None = None,
+        pronouns: str | None = None,
+        nickname: str | None = None,
+        prefixes: list[str] | None = None,
+        suffixes: list[str] | None = None,
+        emails: list[str] | None = None,
+        ) -> "UserIdentifier":
+        """Create a UserIdentifier from a LLM response."""
+        
+        # Compute the preferred name
+        if not preferred_name:
+            if nickname:
+                preferred_name = nickname
+            elif prefixes:
+                preferred_name = f"{prefixes[0]} {first_name}"
+            elif first_name:
+                preferred_name = first_name
+            elif last_name:
+                preferred_name = last_name
+            else:
+                raise ValueError("No suitable name provided for the user")
+        
+        # Compute the base name - first, middle, and last name without any prefixes or suffixes
+        base_name: str = first_name if first_name else ""
+        if last_name:
+            base_name += f" {last_name}"
+        if not base_name:
+            raise ValueError("No suitable name provided for the user")
+
+        # First index is first_name, last_name
+        full_names = [base_name]
+        # Next index is first_name, middle_names, last_name. Results in a duplicate if no middle names are provided.
+        if middle_names:
+            full_names.append(f"{first_name} {middle_names} {last_name}")
+        else:
+            full_names.append(f"{first_name} {last_name}")
+
+        if len(full_names) != 2:
+            raise ValueError("Unknown error occured during name computation")
+        # Add all possible prefix/suffix combinations on top of the base name of the user
+        for pfx in prefixes:
+            prefixed_name = f"{pfx} {base_name}"
+            full_names.append(prefixed_name)
+            if suffixes:
+                for sfx in suffixes:
+                    full_names.append(f"{prefixed_name}, {sfx}")
+
+        return cls(
+            first_name=first_name,
+            last_name=last_name,
+            middle_names=middle_names,
+            base_name=base_name,
+            preferred_name=preferred_name,
+            nickname=nickname,
+            prefixes=prefixes,
+            suffixes=suffixes,
+            pronouns=pronouns,
+            emails=emails,
+            names=full_names,
+            )
+
+    @classmethod
+    def from_default(cls) -> "UserIdentifier":
+        """Create a default UserIdentifier."""
+        return cls(
+            first_name="__default_user__",
+            last_name=None,
+            middle_names=None,
+            preferred_name=None,
+            pronouns=None,
+            nickname=None,
+            prefixes=None,
+            suffixes=None,
+            emails=None,
+            names=[
+                "__default_user__"
+            ],
+        )
 
 class KnowledgeGraph(BaseModel):
     """
@@ -162,17 +400,35 @@ class KnowledgeGraph(BaseModel):
     Entities are arbitrary and can represent anything, but ideally they represent a concrete object,
     person, event, or idea.
 
-
-
-
+    The knowledge graph also contains information about the user, including their real/preferred name, pronouns,
+    email addresses, and other information, provided by the user, throught the LLM. This information is optional,
+    but aids the LLM in better understanding the user and their preferences.
     """
 
+    user_info: UserIdentifier = Field(
+        ..., title="User info", description="Information about the user"
+    )
     entities: list[Entity] = Field(
         default_factory=list, title="Entities", description="All entities in the knowledge graph"
     )
     relations: list[Relation] = Field(
         default_factory=list, title="Relations", description="All relations between entities"
     )
+    def __repr__(self):
+        return f"KnowledgeGraph(entities={self.entities}, relations={self.relations}, user_info={self.user_info})"
+    
+    def __str__(self):
+        result = "🧠 You remember the following information about the user:\n"
+        result += f"{str(self.user_info)}\n"
+
+        result += f"\n👤 Entities: {len(self.entities)}\n"
+        for e in self.entities:
+            result += f"  {str(e)}\n"
+        result += f"\n🔗 Relations: {len(self.relations)}\n"
+        for r in self.relations:
+            result += f"  {str(r)}\n"
+        result += "\n"
+        return result
 
 
 class CleanupResult(BaseModel):
@@ -193,6 +449,12 @@ class CleanupResult(BaseModel):
         title="Removed observations",
         description="Details of removed observations",
     )
+
+    def __repr__(self):
+        return f"CleanupResult(entities_processed_count={self.entities_processed_count}, observations_removed_count={self.observations_removed_count}, removed_observations={self.removed_observations})"
+
+    def __str__(self):
+        return f"🧹 Cleaned up {self.entities_processed_count} entities and {self.observations_removed_count} observations\n"
 
 
 class DurabilityGroupedObservations(BaseModel):
@@ -219,6 +481,27 @@ class DurabilityGroupedObservations(BaseModel):
         description="Observations with durability type 'temporary'",
     )
 
+    def __repr__(self):
+        return f"DurabilityGroupedObservations(permanent={self.permanent}, long_term={self.long_term}, short_term={self.short_term}, temporary={self.temporary})"
+
+    def __str__(self):
+        obs = "🔍 Observations grouped by durability type\n\n🗿 Permanent:\n"
+        for o in self.permanent:
+            obs += f"  - {o}\n"
+        obs += "\n"
+        obs += "📅 Long-term (1+ years):\n"
+        for o in self.long_term:
+            obs += f"  - {o}\n"
+        obs += "\n"
+        obs += "⌛ Short-term (~3 months):\n"
+        for o in self.short_term:
+            obs += f"  - {o}\n"
+        obs += "\n"
+        obs += "🔥 Temporary (~1 month):\n"
+        for o in self.temporary:
+            obs += f"  - {o}\n"
+        obs += "\n"
+        return obs
 
 class ObservationRequest(BaseModel):
     """Request model for managing observations for an entity in the knowledge graph. Used for both addition and deletion."""
@@ -242,12 +525,17 @@ class ObservationRequest(BaseModel):
         alias="verify",
     )
 
-
 class AddObservationResult(BaseModel):
     """Result of adding observations to an entity."""
 
     entity_name: str = Field(
         ..., title="Entity name", description="The entity name that was updated", alias="entityName"
+    )
+    entity_icon: str | None = Field(
+        default=None,
+        title="Entity icon",
+        description="The icon of the entity that was updated",
+        alias="entityIcon",
     )
     added_observations: list[Observation] = Field(
         ...,
@@ -256,6 +544,19 @@ class AddObservationResult(BaseModel):
         alias="observation",
     )
 
+    def __repr__(self):
+        return f"AddObservationResult(entity_name={self.entity_name}, added_observations={self.added_observations})"
+
+    def __str__(self):
+        if self.entity_icon:
+            icon = f"{self.entity_icon} "
+        else:
+            icon = ""
+        obs = ""
+        for o in self.added_observations:
+            obs += f"  - {o}\n"
+        result = f"🧐 Added {len(self.added_observations)} observations to **{icon}{self.entity_name}**:\n{obs}"
+        return result
 
 class DeleteObservationRequest(BaseModel):
     """Request model for deleting observations from an entity."""
@@ -273,6 +574,11 @@ class DeleteObservationRequest(BaseModel):
         alias="observation",
     )
 
+    def __repr__(self):
+        return f"DeleteObservationRequest(entity_name={self.entity_name}, observations={self.observations})"
+
+    def __str__(self):
+        return f"🗑️ Removed {len(self.observations)} observations from **{self.entity_name}**\n"
 
 class DeleteEntryRequest(BaseModel):
     """Request model used to delete data from the knowledge graph.
@@ -296,7 +602,6 @@ class DeleteEntryRequest(BaseModel):
         - entry_type = 'relation': list of Relation objects
         """
     )
-
 
 class CreateEntryRequest(BaseModel):
     """Request model used to validate and add data to the knowledge graph.
@@ -323,3 +628,40 @@ class CreateEntryRequest(BaseModel):
         - relation: list of Relation objects
         """
     )
+
+class CreateEntityResult(BaseModel):
+    """Result of creating an entity."""
+    entities: list[Entity] = Field(
+        ...,
+        title="Entities",
+        description="The entities that were successfully created (excludes existing names)",
+        alias="entity",
+    )
+
+    def __repr__(self):
+        return f"CreateEntityResult(entities={self.entities})"
+
+    def __str__(self):
+        result = f"✨ Created {len(self.entities)} entities:\n"
+        for e in self.entities:
+            result += f"  {str(e)}\n"
+        return result
+
+class CreateRelationResult(BaseModel):
+    """Result of creating a relation."""
+    relations: list[Relation] = Field(
+        ...,
+        title="Relations",
+        description="The relations that were successfully created",
+        alias="relation",
+    )
+
+    def __repr__(self):
+        return f"CreateRelationResult(relations={self.relations})"
+
+    def __str__(self):
+        result = f"🤝 Created {len(self.relations)} relations:\n"
+        for r in self.relations:
+            result += f"  {str(r)}\n"
+        return result
+
