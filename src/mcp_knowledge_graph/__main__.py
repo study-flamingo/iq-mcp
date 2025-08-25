@@ -2,22 +2,15 @@
 Enhanced MCP server for knowledge graph memory.
 """
 
-import logging
 import asyncio
+from .settings import Settings as settings, Logger as logger
 from .server import start_server
-from .settings import settings
-
-# Default memory path constant
-DEFAULT_MEMORY_PATH = "./memory.json"
 
 
 def main():
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger("iq-mcp")
-    if settings.debug:
-        logger.setLevel(logging.DEBUG)
-
     try:
+        logger.info(f"Memory path: {settings.memory_path}")
+        logger.debug("🚀 Starting IQ-MCP server...")
         asyncio.run(start_server())
     except KeyboardInterrupt:
         logger.info("🛑 Received KeyboardInterrupt, shutting down...")

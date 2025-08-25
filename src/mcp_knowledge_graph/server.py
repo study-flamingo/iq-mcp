@@ -6,13 +6,10 @@ knowledge graph operations as tools for LLM integration using FastMCP 2.11.
 """
 
 import asyncio
-import json
-import logging
 from fastmcp import FastMCP
 from pydantic import Field
 from typing import Any
 from fastmcp.exceptions import ToolError, ValidationError
-# Keep datetime import if needed later; ensure we don't use naive datetimes
 
 from .manager import KnowledgeGraphManager
 from .models import (
@@ -25,13 +22,10 @@ from .models import (
     KnowledgeGraph,
     UserIdentifier,
  )
-from .settings import settings
+from .settings import Settings as settings, Logger as logger
+
 
 import sys
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("iq-mcp")
 
 try:
     from .notify import supabase, EmailSummary
@@ -84,7 +78,7 @@ async def create_entry(request: CreateEntryRequest) -> str:
     data = request.data
     try:
         if entry_type == "observation":
-            observation_result: [AddObservationResult] = await manager.apply_observations(data)
+            observation_result: list[AddObservationResult] = await manager.apply_observations(data)
             result = ""
             for r in observation_result:
                 result += str(r) + "\n"
@@ -196,67 +190,65 @@ async def read_graph() -> str:
         #     entity.observations.sort(key=lambda o: _obs_ts(o.timestamp), reverse=True)
 
         # Compose a sensible display name for the user, based on available data and preferences
-        user_name: str = ""
+        entities = graph.entities
+        relations = graph.relations
 
+        # Compose a sensible display name for the user, based on available data and preferences
         if graph.user_info.preferred_name:
-            user_name = graph.user_info.preferred_name
-        elif graph.user_info.nickname:
-            user_name = graph.user_info.nickname
-        elif graph.user_info.names[0]:
-            user_name = graph.user_info.names[0]
-        elif graph.user_info.last_name:
-            user_name = graph.user_info.first_name + " " + graph.user_info.last_name
-        elif graph.user_info.first_name:
-            user_name = graph.user_info.first_name
-        else:
+            preferred_name = graph.user_info.preferred_name
+        if graph.user_info.nickname:
+            nickname = graph.user_info.nickname
+        if graph.user_info.names:
+            names = graph.user_info.names
+        if graph.user_info.first_name:
+            first_name = graph.user_info.first_name
+        if graph.user_info.last_name:
+            last_name = graph.user_info.last_name
+        if not preferred_name and not nickname and not names and not first_name and not last_name:
             user_name = "default_user"
             user_info_missing: bool = True
+        else:
+            user_name = preferred_name or nickname or names[0] or first_name or last_name
+
+        result = "🧠 You remember the following information about the user:\n"
+        result += f"**{user_name}** ({names[0]})\n"
         
-        display_graph = graph.model_copy()
+        # Display entities
+        result += f"\n👤 Entities: {len(graph.entities)}\n"
+        for e in graph.entities:
+            i = ""
+            if e.icon:
+                i = f"{e.icon} "
+            result += f"  - {i}{e.name} ({e.entity_type})\n"
+        
+        # Display relations
+        result += f"\n🔗 Relations: {len(graph.relations)}\n"
+        for r in graph.relations:
+            result += f"  - {r.from_entity} -> {r.to_entity} ({r.relation_type})\n"
+        
 
         # Replace the default user with the user's preferred name
-        for e in display_graph.entities:
-            if e.name == "default_user" or e.name == "__default_user__":
+        for e in graph.entities:
+            if "default_user" in e.name.lower():
                 e.name = user_name
         
         results: list[str] = [str(display_graph)]
         if user_info_missing:
-            results.append("""
-**ALERT**: User info is missing from the graph!
-
-Ask the user to provide identifying information:
-    - Preferred name: str (optional)
-    - First name: str (required)
-    - Pronouns: str (optional)
-    - Nickname: str (optional)
-    - Middle name(s): list[str] (optional)
-    - Last name: str (optional)
-    - Prefixes: list[str] (optional) (e.g. "Mr.", "Dr.", "Ms.", "Mrs.")
-    - Suffixes: list[str] (optional) (e.g. "Ph.D.", "M.D.", "D.D.S.","J.D.")
-    - Email address(es): list[str] (optional)
-
-Example prompt to request user information:
-    "It looks like I'm missing some basic information about you! Knowing a few basic things helps me keep my memory organized. If you don't mind, could you give me your full or preferred name? A nickname is fine too! You can also provide your pronouns, prefixes, suffixes, and email addresses if you'd like, though they are not required. The more data the better!"
-
-The user will probably provide this information in a natural-language format. For example:
-    "My name is Dr. John Alexander Robert Doe Jr., M.D., AKA 'John Doe', but you can
-    call me 'John'. My pronouns are he/him. My email address is john.doe@example.com,
-    but my work email is john.doe@work.com."
-
-From this response, you would extract the following information:
-    - First name: "John"
-    - Middle name(s): "Alexander", "Robert"
-    - Last name: "Doe"
-    - Preferred name: "John"
-    - Pronouns: "he/him"
-    - Nickname: "John Doe"
-    - Prefixes: "Dr."
-    - Suffixes: "Jr.", "M.D."
-    - Email address(es): "john.doe@example.com", "john.doe@work.com"
-
-Then, use the update_user_info tool to update the graph with the user's identifying information.""")
+            results.append(''.join(["**ALERT**: User info is missing from the graph! Talk with the user, and ",
+                                    "use the update_user_info tool to update the graph with the user's ",
+                                    "identifying information."]))
         result = "\n\n".join(results)
+        
+
+        result += f"\n👤 Entities: {len(self.entities)}\n"
+        for e in self.entities:
+            result += f"  {str(e)}\n"
+        result += f"\n🔗 Relations: {len(self.relations)}\n"
+        for r in self.relations:
+            result += f"  {str(r)}\n"
+        result += "\n"
         return result
+    
     except Exception as e:
         raise ToolError(f"Failed to read graph: {e}")
 
@@ -409,14 +401,24 @@ if settings.debug:
             raise ToolError(f"DEBUG TOOL ERROR: Failed to save graph: {e}")
         return "✅ Graph saved successfully!"
 
-    @mcp.tool
-    async def DEBUG_read_user_info() -> str:
-        """DEBUG TOOL: Test reading the user info from the graph."""
-        try:
-            graph, user_info_missing = await manager._load_graph()
-            return str(graph.user_info)
-        except Exception as e:
-            raise ToolError(f"DEBUG TOOL ERROR: Failed to load graph: {e}")
+@mcp.tool
+async def read_user_info(observations: bool = False) -> str:
+    """Read the user info from the graph.
+    
+    Args:
+      - observations: Include observations related to the user in the response."""
+    try:
+        graph = await manager._load_graph()
+        if "default_user" in graph.user_info.preferred_name.lower():
+            return "It looks like the user info hasn't been set yet! Update the user info using the update_user_info tool."
+        
+        if observations:
+            observations = await manager.get_observations_by_entity(graph.user_info.preferred_name)
+            return f"User info: {graph.user_info}\n\nObservations: {observations}"
+        
+        return str(graph.user_info)
+    except Exception as e:
+        raise ToolError(f"DEBUG TOOL ERROR: Failed to load graph: {e}")
 
 
 #### Main application entry point ####
@@ -438,7 +440,7 @@ async def start_server():
     try:
         await mcp.run_async(transport=validated_transport, **transport_kwargs)
     except Exception as e:
-        print(f"Server error: {e}", file=sys.stderr)
+        logger.error(f"🛑 Critical server error: {e}")
         sys.exit(1)
 
 

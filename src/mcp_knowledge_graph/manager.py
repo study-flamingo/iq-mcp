@@ -10,6 +10,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from pathlib import Path
+from .settings import Settings as settings, Logger as logger
 
 from .models import (
     Entity,
@@ -26,9 +27,6 @@ from .models import (
     CreateRelationResult,
     UserIdentifier,
 )
-
-
-logger = logging.getLogger("iq-mcp")
 
 
 class KnowledgeGraphManager:
@@ -171,7 +169,7 @@ class KnowledgeGraphManager:
             # If timestamp parsing fails, assume not outdated
             return False
 
-    async def _load_graph(self) -> tuple[KnowledgeGraph, bool]:
+    async def _load_graph(self) -> KnowledgeGraph:
         """
         Load the knowledge graph from JSONL storage.
 
@@ -182,7 +180,7 @@ class KnowledgeGraphManager:
             logger.warning(
                 f"⛔ Memory file not found at {self.memory_file_path}! Returning empty graph."
             )
-            return KnowledgeGraph()
+            return KnowledgeGraph(), True
         else:
             logger.info(f"📈 Loaded graph from {self.memory_file_path}")
 
@@ -247,12 +245,12 @@ class KnowledgeGraphManager:
                         continue
 
             if not user_info:
-                logger.warning("No user info found in memory file! Initializing with default user info.")
+                logger.warning("No valid user info object found in memory file! Initializing new user info object with default user info.")
                 user_info = UserIdentifier.from_default()
                 user_info_missing = True
 
             logger.info(f"💾 Loaded {len(entities)} entities and {len(relations)} relations from memory file")
-            return KnowledgeGraph(user_info=user_info, entities=entities, relations=relations), user_info_missing
+            return KnowledgeGraph(user_info=user_info, entities=entities, relations=relations)
 
         except Exception as e:
             raise RuntimeError(f"Error loading graph: {e}")

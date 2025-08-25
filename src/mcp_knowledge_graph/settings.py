@@ -13,21 +13,16 @@ Precedence (highest first):
 from __future__ import annotations
 
 import logging
+
 import argparse
 import os
 from pathlib import Path
 from typing import Literal
+from dotenv import load_dotenv
 
 from .notify import SupabaseSettings
 
-logger = logging.getLogger("iq-mcp")
-
-
-# Optionally load .env if available
-try:
-    from dotenv import load_dotenv
-except Exception: 
-    load_dotenv = None
+logging.basicConfig(level=logging.INFO)
 
 DEFAULT_MEMORY_PATH = Path(__name__).parent.parent / "memory.jsonl"
 DEFAULT_PORT = 8000
@@ -88,22 +83,12 @@ class IQSettings:
         self.project_root = project_root
         self.no_emojis = no_emojis
         self.supabase = supabase_settings
-
+        
     # ---------- Construction ----------
     @classmethod
     def load(cls) -> "IQSettings":
-        """Create a Settings instance from CLI args, env, and defaults.
-
-        Precedence: CLI > env > defaults
-        """
-        # Load .env if available
-        env_path = os.getenv("IQ_ENV_PATH")
-        if load_dotenv:
-            if env_path and Path(env_path).exists():
-                load_dotenv(env_path, verbose=False)
-            else:
-                load_dotenv(verbose=False)
-
+        """Create a IQ-MCP Settings instance from CLI args, env, and defaults."""
+        
         # CLI args > Env vars > Defaults
         parser = argparse.ArgumentParser(add_help=False)
         parser.add_argument("--memory-path", type=str)
@@ -115,11 +100,30 @@ class IQSettings:
         parser.add_argument("--no-emojis", action="store_true", default=None)
         args, _ = parser.parse_known_args()
 
-        # Resolve project root (repo root)
-        project_root: Path = Path(__file__).resolve().parents[2]
+        # Create logger
+        logger = logging.getLogger("iq-mcp")
 
-        # Debug
+        # Debug mode
         debug: bool = args.debug or os.environ.get("IQ_DEBUG", "false").lower() == "true"
+        if debug:
+            # If debug is set, set the environment variable to true for other scripts to use
+            os.environ["IQ_DEBUG"] = "true"
+            logger.setLevel(logging.DEBUG)
+            logger.debug(f"🐞 Debug mode: {debug}")
+        
+        # Load .env if available
+        env_path = os.getenv("IQ_ENV_PATH")
+        
+        if env_path and Path(env_path).exists():
+            load_dotenv(env_path, verbose=False)
+            logger.debug(f"Loaded .env from {env_path}")
+        elif load_dotenv(verbose=False):
+            logger.debug("Loaded .env from current directory")
+        elif load_dotenv(DEFAULT_MEMORY_PATH):
+            logger.debug(f"Loaded .env from default memory path: {DEFAULT_MEMORY_PATH}")
+            
+        # Resolve project root (repo root)
+        project_root: Path = Path(__file__).parents[2].resolve()
 
         # Transport
         transport_raw = (args.transport or os.getenv("IQ_TRANSPORT", "stdio")).strip().lower()
@@ -168,13 +172,13 @@ class IQSettings:
             no_emojis=no_emojis,
         )
 
-    # ---------- Helpers ----------
-    @staticmethod
-    def _resolve_memory_path(project_root: Path, path_str: str) -> Path:
-        candidate = Path(path_str)
-        if candidate.is_absolute():
-            return candidate
-        return project_root / candidate
+    def get_logger(self) -> logging.Logger:
+        """Get the logger for the IQ-MCP server, configured by the settings object."""
+        logging.basicConfig(level=logging.DEBUG if self.debug else logging.INFO)
+        logger = logging.getLogger("iq-mcp")
+        logger.debug("Retrieved debug logger")
+        return logger
 
 
-settings = IQSettings.load()
+Settings = IQSettings.load()
+Logger = Settings.get_logger()
