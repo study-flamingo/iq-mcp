@@ -44,6 +44,116 @@ manager = KnowledgeGraphManager(settings.memory_path)
 # Create FastMCP server instance
 mcp = FastMCP(name="iq-mcp", version="0.1.0")
 
+@mcp.tool
+async def read_graph() -> str:
+    """Read the entire knowledge graph.
+
+    Returns:
+        Complete knowledge graph data in JSON format, and a boolean indicating if user info is missing
+    """
+    try:
+        graph = await manager.read_graph()
+
+        # Sort observations within each entity by timestamp (descending)
+        # def _obs_ts(obs_ts: str | None) -> datetime:
+        #     try:
+        #         if not obs_ts:
+        #             return datetime.min
+        #         return datetime.fromisoformat(obs_ts.replace("Z", "+00:00"))
+        #     except Exception:
+        #         return datetime.min
+
+        # for entity in result.entities:
+        #     entity.observations.sort(key=lambda o: _obs_ts(o.timestamp), reverse=True)
+
+        # Compose a sensible display name for the user, based on available data and preferences
+
+        user_name: str | None = None
+
+
+        last_name = graph.user_info.last_name or ""
+        first_name = graph.user_info.first_name or ""
+        nickname = graph.user_info.nickname or ""
+        names = graph.user_info.names or []
+        preferred_name = graph.user_info.preferred_name or ""
+
+        user_name = last_name or ""
+        user_name = first_name or ""
+        user_name = names[0] or ""
+        user_name = nickname or ""
+        user_name = preferred_name or ""
+        
+        # Ensure that the user's name is set
+        user_info_missing:bool = False
+        if not user_name:
+            raise ValueError("Some weird error happened when trying to determine the user's name, fix me!")
+        elif "default_user" in user_name.lower():
+            user_info_missing = True
+
+        middle_names = graph.user_info.middle_names or []
+        pronouns = graph.user_info.pronouns or ""
+        emails = graph.user_info.emails or []
+        prefixes = graph.user_info.prefixes or []
+        suffixes = graph.user_info.suffixes or []
+
+
+        # Start with printing the user's info
+        result = "🧠 You remember the following information about the user:\n"
+        result += f"**{user_name}** ({names[0]})\n"
+        if middle_names:
+            result += f"Middle name(s): {', '.join(middle_names)}\n"
+        if nickname and nickname != user_name:
+            result += f"Nickname: {nickname}\n"
+        if pronouns:
+            result += f"Pronouns: {pronouns}\n"
+        if emails:
+            result += f"Email addresses: {', '.join(emails)}\n"
+        if prefixes:
+            result += f"Prefixes: {', '.join(prefixes)}\n"
+        if suffixes:
+            result += f"Suffixes: {', '.join(suffixes)}\n"
+        if names[1:]:
+            result += "May also go by:\n"
+            for name in names[1:]:
+                result += f"  - {name}\n"
+
+        # Print entities
+        result += f"\n👤 You've made observations about {len(graph.entities)} entities:\n"
+        for e in graph.entities:
+            i = ""
+            if e.icon:
+                i = f"{e.icon} "
+            if "default_user" in e.name.lower():
+                entity_name = user_name
+            else:
+                entity_name = e.name
+            result += f"  - {i}{entity_name} ({e.entity_type})\n"
+        
+        # Print relations
+        result += f"\n🔗 You've learned about {len(graph.relations)} relations between these entities:\n"
+        for r in graph.relations:
+            if "default_user" in r.from_entity.lower():
+                from_entity = user_name
+            else:
+                from_entity = r.from_entity
+            if "default_user" in r.to_entity.lower():
+                to_entity = user_name
+            else:
+                to_entity = r.to_entity
+            result += f"  - {from_entity} {r.relation_type} {to_entity}\n"
+        
+        # If it looks like the default/dummy user info is still present, prompt the LLM to update the user's info
+        if user_info_missing:
+            info_missing_msg = ''.join(["**ALERT**: User info is missing from the graph! Talk with the user, and ",
+                                    "use the update_user_info tool to update the graph with the user's ",
+                                    "identifying information."])
+            result += info_missing_msg
+        
+        return result
+    
+    except Exception as e:
+        raise ToolError(f"Failed to read graph: {e}")
+
 
 @mcp.tool
 async def create_entry(request: CreateEntryRequest) -> str:
@@ -53,26 +163,48 @@ async def create_entry(request: CreateEntryRequest) -> str:
 
     ## Adding Entities
     'data' must be a list of Entities:
-      - name: entity_name
-      - entity_type: entity_type
-      - observations: list of Observations
-        - content: str
-        - durability: Literal['temporary', 'short-term', 'long-term', 'permanent']
+      - name: entity_name (required)
+      - entity_type: entity_type (required)
+      - observations: list of observations (required)
+        - content: str (required)
+        - durability: Literal['temporary', 'short-term', 'long-term', 'permanent'] (optional, defaults to 'short-term')
       - aliases: list of str (optional)
       - icon: Emoji to represent the entity (optional)
 
+    An entity should be created with at least one observation.
+
     ## Adding Observations
-    'data' must be a list of Observations:
-      - entity_name: entity_name
-      - content: str
+    'data' must be a list of observations:
+      - entity_name: entity_name (required)
+      - content: str (required)
+      - durability: Literal['temporary', 'short-term', 'long-term', 'permanent'] (optional, defaults to 'short-term')
+
+    Observation content must be in active voice, excule the 'from' entity, lowercase, and should be concise and to the point. Examples:
+      - "likes chicken"
+      - "enjoys long walks on the beach"
+      - "can ride a bike with no handlebars"
+      - "wants to be a movie star"
+      - "dropped out of college to pursue a career in underwater basket weaving"
+
+    Durability determines how long the observation is kept in the knowledge graph and should reflect
+    the expected amount of time the observation is relevant.
+      - 'temporary': The observation is only relevant for a short period of time (1 month)
+      - 'short-term': The observation is relevant for a few months (3 months).
+      - 'long-term': The observation is relevant for a few months to a year. (1 year)
+      - 'permanent': The observation is relevant for a very long time, or indefinitely. (never expires)
 
     ## Adding Relations
-    'data' must be a list of Relations:
+    'data' must be a list of relations:
       - from: entity_name
       - to: entity_name
       - relation_type: relation_type
 
-    Aliases are resolved to canonical entity names by the manager.
+    Relations must be in active voice, directional, and should be concise and to the point. Examples:
+      - <from_entity> "grew up during" <to_entity>
+      - <from_entity> "was a sandwich artist for 20 years at" <to_entity>
+      - <from_entity> "is going down a rabbit hole researching" <to_entity>
+      - <from_entity> "once went on a road trip with" <to_entity>
+      - <from_entity> "needs to send weekly reports to" <to_entity>
     """
     entry_type = request.entry_type
     data = request.data
@@ -167,90 +299,6 @@ async def delete_entry(request: DeleteEntryRequest) -> str:
         raise ToolError(f"Failed to delete entry: {e}")
 
 
-@mcp.tool
-async def read_graph() -> str:
-    """Read the entire knowledge graph.
-
-    Returns:
-        Complete knowledge graph data in JSON format, and a boolean indicating if user info is missing
-    """
-    try:
-        graph, user_info_missing = await manager.read_graph()
-
-        # Sort observations within each entity by timestamp (descending)
-        # def _obs_ts(obs_ts: str | None) -> datetime:
-        #     try:
-        #         if not obs_ts:
-        #             return datetime.min
-        #         return datetime.fromisoformat(obs_ts.replace("Z", "+00:00"))
-        #     except Exception:
-        #         return datetime.min
-
-        # for entity in result.entities:
-        #     entity.observations.sort(key=lambda o: _obs_ts(o.timestamp), reverse=True)
-
-        # Compose a sensible display name for the user, based on available data and preferences
-        entities = graph.entities
-        relations = graph.relations
-
-        # Compose a sensible display name for the user, based on available data and preferences
-        if graph.user_info.preferred_name:
-            preferred_name = graph.user_info.preferred_name
-        if graph.user_info.nickname:
-            nickname = graph.user_info.nickname
-        if graph.user_info.names:
-            names = graph.user_info.names
-        if graph.user_info.first_name:
-            first_name = graph.user_info.first_name
-        if graph.user_info.last_name:
-            last_name = graph.user_info.last_name
-        if not preferred_name and not nickname and not names and not first_name and not last_name:
-            user_name = "default_user"
-            user_info_missing: bool = True
-        else:
-            user_name = preferred_name or nickname or names[0] or first_name or last_name
-
-        result = "🧠 You remember the following information about the user:\n"
-        result += f"**{user_name}** ({names[0]})\n"
-        
-        # Display entities
-        result += f"\n👤 Entities: {len(graph.entities)}\n"
-        for e in graph.entities:
-            i = ""
-            if e.icon:
-                i = f"{e.icon} "
-            result += f"  - {i}{e.name} ({e.entity_type})\n"
-        
-        # Display relations
-        result += f"\n🔗 Relations: {len(graph.relations)}\n"
-        for r in graph.relations:
-            result += f"  - {r.from_entity} -> {r.to_entity} ({r.relation_type})\n"
-        
-
-        # Replace the default user with the user's preferred name
-        for e in graph.entities:
-            if "default_user" in e.name.lower():
-                e.name = user_name
-        
-        results: list[str] = [str(display_graph)]
-        if user_info_missing:
-            results.append(''.join(["**ALERT**: User info is missing from the graph! Talk with the user, and ",
-                                    "use the update_user_info tool to update the graph with the user's ",
-                                    "identifying information."]))
-        result = "\n\n".join(results)
-        
-
-        result += f"\n👤 Entities: {len(self.entities)}\n"
-        for e in self.entities:
-            result += f"  {str(e)}\n"
-        result += f"\n🔗 Relations: {len(self.relations)}\n"
-        for r in self.relations:
-            result += f"  {str(r)}\n"
-        result += "\n"
-        return result
-    
-    except Exception as e:
-        raise ToolError(f"Failed to read graph: {e}")
 
 @mcp.tool
 async def update_user_info(user_info: UserIdentifier) -> str:
@@ -260,9 +308,9 @@ async def update_user_info(user_info: UserIdentifier) -> str:
     user specifically requests to do so.
     
     Args:
-      - preferred_name: The preferred name of the user. Preferred name is prioritized over other
-        names for the user. If not provided, one will be selected from the other provided names in
-        the following fallback order:
+      - preferred_name: The preferred name of the user. (required)
+        Preferred name is prioritized over other names for the user. If not provided, one will be
+        selected from the other provided names in the following fallback order:
           1. Nickname
           2. Prefix + First name
           3. First name
@@ -337,7 +385,7 @@ async def search_nodes(
     """
     try:
         result = await manager.search_nodes(query)
-        return result.model_dump(by_alias=True)
+        return result.model_dump()
     except Exception as e:
         raise ToolError(f"Failed to search nodes: {e}")
 
@@ -356,14 +404,14 @@ async def open_nodes(
     """
     try:
         result = await manager.open_nodes(entity_names)
-        return result.model_dump(by_alias=True)
+        return result.model_dump()
     except Exception as e:
         raise ToolError(f"Failed to open nodes: {e}")
 
 
 @mcp.tool
 async def merge_entities(
-    newentity_name: str = Field(
+    new_entity_name: str = Field(
         description="Name of the new merged entity (must not conflict with an existing name or alias unless part of the merge)"
     ),
     entity_names: list[str] | str = Field(
@@ -376,8 +424,8 @@ async def merge_entities(
     """
     try:
         names: list[str] = [entity_names] if isinstance(entity_names, str) else entity_names
-        merged = await manager.merge_entities(newentity_name, names)
-        return merged.dict(by_alias=True)
+        merged = await manager.merge_entities(new_entity_name, names)
+        return merged.model_dump()
     except Exception as e:
         raise ToolError(f"Failed to merge entities: {e}")
 
@@ -391,11 +439,7 @@ if settings.debug:
     async def DEBUG_save_graph() -> str:
         """DEBUG TOOL: Test loading, and then immediately saving the graph."""
         try:
-            graph, user_info_missing = await manager._load_graph()
-
-            if user_info_missing:
-                logger.warning("DEBUG TOOL ERROR: User info is missing from the graph! This is expected if the graph is empty.")
-
+            graph = await manager._load_graph()
             await manager._save_graph(graph)
         except Exception as e:
             raise ToolError(f"DEBUG TOOL ERROR: Failed to save graph: {e}")

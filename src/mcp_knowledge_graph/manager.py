@@ -184,7 +184,6 @@ class KnowledgeGraphManager:
         else:
             logger.info(f"📈 Loaded graph from {self.memory_file_path}")
 
-        user_info_missing: bool = False
         try:
             user_info: UserIdentifier | None = None
             entities = []
@@ -218,18 +217,8 @@ class KnowledgeGraphManager:
                             relations.append(Relation(**payload))
 
                         elif item_type == "user_info" and isinstance(payload, dict):
-                            user_info_missing = (
-                                payload.get("preferred_name") == "default_user" 
-                                or payload.get("preferred_name") == "__default_user__"
-                                or payload.get("first_name") == "default_user"
-                                or payload.get("first_name") == "__default_user__"
-                            )
-                            if not user_info_missing:
-                                try:
-                                    user_info = UserIdentifier(**payload)
-                                except Exception as e:
-                                    raise RuntimeError(f"Error parsing user info from memory file: {e}")
-                            logger.debug(f"Loaded user info: {payload}")
+                            user_info = UserIdentifier(**payload)
+                            logger.debug(f"Loaded user info: {user_info}")
 
                         else:
                             # Unrecognized line; skip with warning but continue
@@ -247,7 +236,6 @@ class KnowledgeGraphManager:
             if not user_info:
                 logger.warning("No valid user info object found in memory file! Initializing new user info object with default user info.")
                 user_info = UserIdentifier.from_default()
-                user_info_missing = True
 
             logger.info(f"💾 Loaded {len(entities)} entities and {len(relations)} relations from memory file")
             return KnowledgeGraph(user_info=user_info, entities=entities, relations=relations)
@@ -577,15 +565,15 @@ class KnowledgeGraphManager:
 
         await self._save_graph(graph)
 
-    async def read_graph(self) -> tuple[KnowledgeGraph, bool]:
+    async def read_graph(self) -> KnowledgeGraph:
         """
         Read the entire knowledge graph.
 
         Returns:
             The complete knowledge graph
         """
-        graph, user_info_missing = await self._load_graph()
-        return graph, user_info_missing
+        graph = await self._load_graph()
+        return graph
 
     async def search_nodes(self, query: str) -> KnowledgeGraph:
         """
@@ -666,8 +654,7 @@ class KnowledgeGraphManager:
         """
         Merge multiple entities into a new entity with the provided name.
 
-        - Combines observations from all entities being merged, normalizing to
-          timestamped observations and deduplicating by content.
+        - Combines observations from all entities being merged
         - Rewrites relations so any relation pointing to one of the merged
           entities now points to the new entity.
         - Removes the original entities from the graph.
