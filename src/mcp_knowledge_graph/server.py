@@ -21,7 +21,7 @@ from .models import (
     CleanupResult,
     KnowledgeGraph,
     UserIdentifier,
- )
+)
 from .settings import Settings as settings, Logger as logger
 
 
@@ -30,7 +30,9 @@ import sys
 try:
     from .notify import supabase, EmailSummary
 except ImportError:
-    logger.warning("Error starting notification module: Supabase not found - install with `uv pip install supabase`")
+    logger.warning(
+        "Error starting notification module: Supabase not found - install with `uv pip install supabase`"
+    )
     supabase = None
     EmailSummary = None
 
@@ -46,9 +48,11 @@ mcp = FastMCP(name="iq-mcp", version="0.1.0")
 
 
 #### Helper functions ####
-async def _print_user_info(graph: KnowledgeGraph, include_observations: bool = False, include_relations: bool = False) -> str:
+async def _print_user_info(
+    graph: KnowledgeGraph, include_observations: bool = False, include_relations: bool = False
+) -> str:
     """Get the user's info from the knowledge graph and print to a string.
-    
+
     Args:
       - include_observations: Include observations related to the user in the response.
       - include_relations: Include relations related to the user in the response.
@@ -66,11 +70,13 @@ async def _print_user_info(graph: KnowledgeGraph, include_observations: bool = F
         user_name = names[0] or ""
         user_name = nickname or ""
         user_name = preferred_name or ""
-        
+
         # Ensure that the user's name is set
-        user_info_missing:bool = False
+        user_info_missing: bool = False
         if not user_name:
-            raise ValueError("Some weird error happened when trying to determine the user's name, fix me!")
+            raise ValueError(
+                "Some weird error happened when trying to determine the user's name, fix me!"
+            )
         elif "default_user" in user_name.lower():
             user_info_missing = True
 
@@ -105,9 +111,13 @@ async def _print_user_info(graph: KnowledgeGraph, include_observations: bool = F
 
         # If it looks like the default/dummy user info is still present, prompt the LLM to update the user's info
         if user_info_missing:
-            info_missing_msg = ''.join(["\n**ALERT**: User info is missing from the graph! Talk with the user, and ",
-                                    "use the update_user_info tool to update the graph with the user's ",
-                                    "identifying information.\n"])
+            info_missing_msg = "".join(
+                [
+                    "\n**ALERT**: User info is missing from the graph! Talk with the user, and ",
+                    "use the update_user_info tool to update the graph with the user's ",
+                    "identifying information.\n",
+                ]
+            )
             result += info_missing_msg
     except Exception as e:
         raise ToolError(f"Failed to print user info: {e}")
@@ -115,8 +125,11 @@ async def _print_user_info(graph: KnowledgeGraph, include_observations: bool = F
     # Print observations
     try:
         if include_observations:
-            user_entity = await manager.open_nodes("__default_user__")
-            result += f"\n🔍 Observations:\n"
+            lookup_result: KnowledgeGraph = await manager.open_nodes(
+                "__default_user__"
+            ) or await manager.open_nodes("default_user")
+            user_entity = lookup_result.entities[0]
+            result += "\n🔍 Observations:\n"
             for o in user_entity.observations:
                 result += f"  - {o.content} ({str(o.timestamp)}, {str(o.durability)})\n"
     except Exception as e:
@@ -126,7 +139,7 @@ async def _print_user_info(graph: KnowledgeGraph, include_observations: bool = F
     try:
         if include_relations:
             user_entity = await manager.open_nodes("__default_user__")
-            result += f"\n🔗 Relations:\n"
+            result += "\n🔗 Relations:\n"
             for r in user_entity.relations:
                 result += f"  - {r.from_entity} {r.relation_type} {r.to_entity}\n"
     except Exception as e:
@@ -135,9 +148,8 @@ async def _print_user_info(graph: KnowledgeGraph, include_observations: bool = F
     return result
 
 
-
 @mcp.tool
-async def read_graph() -> str:
+async def read_graph():
     """Read the entire knowledge graph.
 
     Returns:
@@ -146,54 +158,16 @@ async def read_graph() -> str:
     try:
         graph = await manager.read_graph()
 
-        # Compose a sensible display name for the user, based on available data and preferences
-        last_name = graph.user_info.last_name or ""
-        first_name = graph.user_info.first_name or ""
-        nickname = graph.user_info.nickname or ""
-        names = graph.user_info.names or []
-        preferred_name = graph.user_info.preferred_name or ""
+        result = await _print_user_info(graph)
+        user_name = (
+            graph.user_info.preferred_name
+            or graph.user_info.first_name
+            or graph.user_info.last_name
+            or graph.user_info.nickname
+            or ""
+        )
 
-        user_name = last_name or ""
-        user_name = first_name or ""
-        user_name = names[0] or ""
-        user_name = nickname or ""
-        user_name = preferred_name or ""
-        
-        # Ensure that the user's name is set
-        user_info_missing:bool = False
-        if not user_name:
-            raise ValueError("Some weird error happened when trying to determine the user's name, fix me!")
-        elif "default_user" in user_name.lower():
-            user_info_missing = True
-
-        middle_names = graph.user_info.middle_names or []
-        pronouns = graph.user_info.pronouns or ""
-        emails = graph.user_info.emails or []
-        prefixes = graph.user_info.prefixes or []
-        suffixes = graph.user_info.suffixes or []
-
-
-        # Start with printing the user's info
-        result = "🧠 You remember the following information about the user:\n"
-        result += f"**{user_name}** ({names[0]})\n"
-        if middle_names:
-            result += f"Middle name(s): {', '.join(middle_names)}\n"
-        if nickname and nickname != user_name:
-            result += f"Nickname: {nickname}\n"
-        if pronouns:
-            result += f"Pronouns: {pronouns}\n"
-        if emails:
-            result += f"Email addresses: {', '.join(emails)}\n"
-        if prefixes:
-            result += f"Prefixes: {', '.join(prefixes)}\n"
-        if suffixes:
-            result += f"Suffixes: {', '.join(suffixes)}\n"
-        if names[1:]:
-            result += "May also go by:\n"
-            for name in names[1:]:
-                result += f"  - {name}\n"
-
-        # Print entities
+        # Print all entities
         result += f"\n👤 You've made observations about {len(graph.entities)} entities:\n"
         for e in graph.entities:
             i = ""
@@ -204,9 +178,11 @@ async def read_graph() -> str:
             else:
                 entity_name = e.name
             result += f"  - {i}{entity_name} ({e.entity_type})\n"
-        
-        # Print relations
-        result += f"\n🔗 You've learned about {len(graph.relations)} relations between these entities:\n"
+
+        # Print all relations
+        result += (
+            f"\n🔗 You've learned about {len(graph.relations)} relations between these entities:\n"
+        )
         for r in graph.relations:
             if "default_user" in r.from_entity.lower():
                 from_entity = user_name
@@ -217,23 +193,17 @@ async def read_graph() -> str:
             else:
                 to_entity = r.to_entity
             result += f"  - {from_entity} {r.relation_type} {to_entity}\n"
-        
-        # If it looks like the default/dummy user info is still present, prompt the LLM to update the user's info
-        if user_info_missing:
-            info_missing_msg = ''.join(["**ALERT**: User info is missing from the graph! Talk with the user, and ",
-                                    "use the update_user_info tool to update the graph with the user's ",
-                                    "identifying information."])
-            result += info_missing_msg
-        
+
         return result
-    
+
     except Exception as e:
         raise ToolError(f"Failed to read graph: {e}")
 
+
 @mcp.tool
-async def read_user_info(include_observations: bool = False, include_relations: bool = False) -> str:
+async def read_user_info(include_observations: bool = False, include_relations: bool = False):
     """Read the user info from the graph.
-    
+
     Args:
       - include_observations: Include observations related to the user in the response.
       - include_relations: Include relations related to the user in the response.
@@ -242,14 +212,15 @@ async def read_user_info(include_observations: bool = False, include_relations: 
         graph = await manager.read_graph()
         if "default_user" in graph.user_info.model_dump().values():
             return "It looks like the user info hasn't been set yet! Update the user info using the update_user_info tool."
-        
-        return _print_user_info(graph, include_observations, include_relations)
+
+        result_str = await _print_user_info(graph, include_observations, include_relations)
+        return result_str
     except Exception as e:
         raise ToolError(f"Failed to read user info: {e}")
 
 
 @mcp.tool
-async def create_entry(request: CreateEntryRequest) -> str:
+async def create_entry(request: CreateEntryRequest):
     """Add entities, observations, or relations to the knowledge graph.
 
     'data' must be a list of the appropriate object for each entry_type:
@@ -321,8 +292,9 @@ async def create_entry(request: CreateEntryRequest) -> str:
 
     except Exception as e:
         raise ToolError(f"Failed to create entry: {e}")
-    
+
     return result
+
 
 @mcp.tool
 async def cleanup_outdated_observations() -> str:
@@ -392,14 +364,13 @@ async def delete_entry(request: DeleteEntryRequest) -> str:
         raise ToolError(f"Failed to delete entry: {e}")
 
 
-
 @mcp.tool
 async def update_user_info(user_info: UserIdentifier) -> str:
     """
     Update the user's identifying information in the graph. This tool should be rarely called, and
     only if it appears that the user's identifying information is missing or incorrect, or if the
     user specifically requests to do so.
-    
+
     Args:
       - preferred_name: The preferred name of the user. (required)
         Preferred name is prioritized over other names for the user. If not provided, one will be
@@ -439,9 +410,14 @@ async def update_user_info(user_info: UserIdentifier) -> str:
         - Suffixes: "Jr.", "M.D."
         - Email address(es): "john.doe@example.com", "john.doe@work.com"
     """
-    if not user_info.preferred_name and not user_info.first_name and not user_info.nickname and not user_info.last_name:
+    if (
+        not user_info.preferred_name
+        and not user_info.first_name
+        and not user_info.nickname
+        and not user_info.last_name
+    ):
         raise ValueError("Either a preferred name, first name, last name, or nickname are required")
-    
+
     # Strip whitespace from all fields
     try:
         user_info.preferred_name = user_info.preferred_name.strip()
@@ -461,6 +437,7 @@ async def update_user_info(user_info: UserIdentifier) -> str:
         return str(result)
     except Exception as e:
         raise ToolError(f"Failed to update user info: {e}")
+
 
 @mcp.tool
 async def search_nodes(
@@ -486,7 +463,7 @@ async def search_nodes(
 @mcp.tool
 async def open_nodes(
     entity_names: list[str] = Field(description="List of entity names or aliases to retrieve"),
-) -> dict[str, Any]:
+):
     """Open specific nodes (entities) in the knowledge graph by their names.
 
     Args:
@@ -497,7 +474,17 @@ async def open_nodes(
     """
     try:
         result = await manager.open_nodes(entity_names)
-        return result.model_dump()
+
+        # Print the result
+        result_str = ""
+        for e in result.entities:
+            result_str += f"Entity: {e.name} ({e.entity_type})\n"
+            result_str += "Observations:\n"
+            for o in e.observations:
+                result_str += f"  - {o.content} ({str(o.timestamp)}, {str(o.durability)})\n"
+            for r in e.relations:
+                result_str += f"  - {r.from_entity} {r.relation_type} {r.to_entity}\n"
+        return result_str
     except Exception as e:
         raise ToolError(f"Failed to open nodes: {e}")
 
@@ -522,12 +509,32 @@ async def merge_entities(
     except Exception as e:
         raise ToolError(f"Failed to merge entities: {e}")
 
+
 @mcp.tool
 async def get_email_update() -> list[EmailSummary]:
     """Get new email summaries from Supabase."""
-    return await supabase.get_new_email_summaries()
+    try:
+        response = await supabase.get_new_email_summaries()
+        if not response:
+            return "No new email summaries found!"
+        else:
+            result = ""
+            for summary in response:
+                result += f"Messsage ID: {summary.id}\n"
+                result += f"From: {summary.from_address} ({summary.from_name})\n"
+                result += f"Reply-To: {summary.reply_to}\n"
+                result += f"Timestamp: {summary.timestamp}\n"
+                result += f"Subject: {summary.subject}\n"
+                result += f"Summary: {summary.summary}\n"
+                result += f"Links: {'\n- '.join([link['url'] for link in summary.links])}"
+                result += "\n\n"
+            return result
+    except Exception as e:
+        raise ToolError(f"Failed to get email updates: {e}")
+
 
 if settings.debug:
+
     @mcp.tool
     async def DEBUG_save_graph() -> str:
         """DEBUG TOOL: Test loading, and then immediately saving the graph."""
@@ -539,8 +546,8 @@ if settings.debug:
         return "✅ Graph saved successfully!"
 
 
-
 #### Main application entry point ####
+
 
 async def start_server():
     """Common entry point for the MCP server."""
@@ -566,6 +573,7 @@ async def start_server():
 def run_sync():
     """Synchronus entry point for the server."""
     asyncio.run(start_server())
+
 
 if __name__ == "__main__":
     asyncio.run(start_server())

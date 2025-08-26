@@ -13,14 +13,13 @@ Precedence (highest first):
 from __future__ import annotations
 
 import logging
-
+from dataclasses import dataclass
 import argparse
 import os
 from pathlib import Path
 from typing import Literal
 from dotenv import load_dotenv
 
-from .notify import SupabaseSettings
 
 logging.basicConfig(level=logging.INFO)
 
@@ -42,6 +41,12 @@ TRANSPORT_ENUM: dict[str, Transport] = {
     "streamableHttp": "http",
 }
 
+
+@dataclass
+class SupabaseSettings:
+    url: str
+    key: str
+    table: str
 
 
 class IQSettings:
@@ -83,12 +88,12 @@ class IQSettings:
         self.project_root = project_root
         self.no_emojis = no_emojis
         self.supabase = supabase_settings
-        
+
     # ---------- Construction ----------
     @classmethod
     def load(cls) -> "IQSettings":
         """Create a IQ-MCP Settings instance from CLI args, env, and defaults."""
-        
+
         # CLI args > Env vars > Defaults
         parser = argparse.ArgumentParser(add_help=False)
         parser.add_argument("--memory-path", type=str)
@@ -110,10 +115,10 @@ class IQSettings:
             os.environ["IQ_DEBUG"] = "true"
             logger.setLevel(logging.DEBUG)
             logger.debug(f"🐞 Debug mode: {debug}")
-        
+
         # Load .env if available
         env_path = os.getenv("IQ_ENV_PATH")
-        
+
         if env_path and Path(env_path).exists():
             load_dotenv(env_path, verbose=False)
             logger.debug(f"Loaded .env from {env_path}")
@@ -121,7 +126,7 @@ class IQSettings:
             logger.debug("Loaded .env from current directory")
         elif load_dotenv(DEFAULT_MEMORY_PATH):
             logger.debug(f"Loaded .env from default memory path: {DEFAULT_MEMORY_PATH}")
-            
+
         # Resolve project root (repo root)
         project_root: Path = Path(__file__).parents[2].resolve()
 
@@ -133,7 +138,7 @@ class IQSettings:
         transport: Transport = TRANSPORT_ENUM[transport_raw]
 
         # Port/Host/Path for HTTP
-        http_port = (int(args.port) or os.environ.get("IQ_STREAMABLE_HTTP_PORT", DEFAULT_PORT))
+        http_port = int(args.port) or os.environ.get("IQ_STREAMABLE_HTTP_PORT", DEFAULT_PORT)
         http_host = args.http_host or os.getenv("IQ_STREAMABLE_HTTP_HOST")
         http_path = args.http_path or os.getenv("IQ_STREAMABLE_HTTP_PATH")
 
@@ -158,7 +163,6 @@ class IQSettings:
 
         # Disable emojis if desired
         no_emojis = args.no_emojis or os.getenv("IQ_NO_EMOJIS", "false").lower() == "true"
-
 
         return cls(
             debug=debug,
