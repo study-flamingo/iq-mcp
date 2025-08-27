@@ -620,9 +620,13 @@ class KnowledgeGraphManager:
             if r.from_entity in filtered_entity_names and r.to_entity in filtered_entity_names
         ]
 
-        return KnowledgeGraph(entities=filtered_entities, relations=filtered_relations)
+        return KnowledgeGraph(
+            user_info=graph.user_info,
+            entities=filtered_entities,
+            relations=filtered_relations,
+        )
 
-    async def open_nodes(self, names: list[str]) -> KnowledgeGraph:
+    async def open_nodes(self, names: list[str] | str) -> KnowledgeGraph:
         """
         Open specific nodes in the knowledge graph by their names.
 
@@ -634,8 +638,9 @@ class KnowledgeGraphManager:
         """
         graph = await self._load_graph()
         # Resolve identifiers to canonical names that exist in the graph
+        names_list: list[str] = [names] if isinstance(names, str) else names
         names_set: set[str] = set()
-        for ident in names:
+        for ident in names_list:
             entity = self._get_entity_by_name_or_alias(graph, ident)
             if entity:
                 names_set.add(entity.name)
@@ -648,7 +653,13 @@ class KnowledgeGraphManager:
             r for r in graph.relations if r.from_entity in names_set and r.to_entity in names_set
         ]
 
-        return KnowledgeGraph(entities=filtered_entities, relations=filtered_relations)
+        logger.debug(f"Filtered entities: {filtered_entities}")
+        logger.debug(f"Filtered relations: {filtered_relations}")
+        return KnowledgeGraph(
+            user_info=graph.user_info,
+            entities=filtered_entities,
+            relations=filtered_relations,
+        )
 
     async def merge_entities(self, new_entity_name: str, entity_names: list[str]) -> Entity:
         """

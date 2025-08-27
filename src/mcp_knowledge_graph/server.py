@@ -50,7 +50,7 @@ mcp = FastMCP(name="iq-mcp", version="0.1.0")
 #### Helper functions ####
 async def _print_user_info(
     graph: KnowledgeGraph, include_observations: bool = False, include_relations: bool = False
-) -> str:
+):
     """Get the user's info from the knowledge graph and print to a string.
 
     Args:
@@ -128,10 +128,12 @@ async def _print_user_info(
             lookup_result: KnowledgeGraph = await manager.open_nodes(
                 "__default_user__"
             ) or await manager.open_nodes("default_user")
+            if not lookup_result.entities:
+                raise ToolError("No entities found for names: __default_user__ or default_user")
             user_entity = lookup_result.entities[0]
             result += "\n🔍 Observations:\n"
             for o in user_entity.observations:
-                result += f"  - {o.content} ({str(o.timestamp)}, {str(o.durability)})\n"
+                result += f"  - {o.content} ({str(o.timestamp)}, {o.durability.value})\n"
     except Exception as e:
         raise ToolError(f"Failed to print observations: {e}")
 

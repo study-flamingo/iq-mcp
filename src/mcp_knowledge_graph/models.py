@@ -7,6 +7,7 @@ including entities, relations, and temporal observations with durability metadat
 
 from datetime import datetime, timezone
 from typing import Literal
+import uuid
 from pydantic import BaseModel, Field, ConfigDict
 from enum import Enum
 from .settings import Logger as logger
@@ -61,18 +62,6 @@ class Observation(BaseModel):
     def __repr__(self):
         return f"Observation(content={self.content}, timestamp={self.timestamp}, durability={self.durability})"
 
-    def __str__(self):
-        try:
-            if isinstance(self.timestamp, datetime):
-                ts_dt = self.timestamp
-            elif isinstance(self.timestamp, str):
-                ts_dt = datetime.fromisoformat(self.timestamp.replace("Z", "+00:00"))
-            else:
-                return f"  - {self.content} ({self.timestamp}, {self.durability.value})\n"
-            return f"  - {self.content} ({ts_dt.strftime('%Y-%m-%d %H:%M')}, {self.durability.value})\n"
-        except Exception:
-            return f"  - {self.content} ({self.timestamp}, {self.durability.value})\n"
-
 class Entity(BaseModel):
     """
     Primary nodes in the knowledge graph.
@@ -95,10 +84,16 @@ class Entity(BaseModel):
         populate_by_name=True,
         validate_by_name=True,
     )
+    id: str = Field(
+        ...,
+        default_factory=lambda: str(uuid.uuid4()),
+        title="Entity ID",
+        description="Unique identifier for the entity",
+    )
     name: str = Field(
         ...,
         title="Entity name",
-        description="Unique identifier for the entity",
+        description="The canonical name of the entity",
     )
     entity_type: str = Field(
         ...,
@@ -113,24 +108,16 @@ class Entity(BaseModel):
     aliases: list[str] = Field(
         default_factory=list,
         title="Aliases",
-        description="Alternative names for the entity that should resolve to this entity",
+        description="Alternative names for the entity",
     )
     icon: str | None = Field(
         default="👤",
         title="Icon",
-        description="Emoji used to represent the entity",
+        description="Emoji used to represent the entity in certain contexts",
     )
 
     def __repr__(self):
         return f"Entity(name={self.name}, entity_type={self.entity_type}, observations={self.observations}, aliases={self.aliases}, icon={self.icon})"
-
-    def __str__(self):
-        if self.icon:
-            icon = f"{self.icon} "
-        else:
-            icon = ""
-        return f"**{icon}{self.name}** ({self.entity_type})"
-
 
 class Relation(BaseModel):
     """
@@ -143,21 +130,28 @@ class Relation(BaseModel):
         populate_by_name=True,
         validate_by_name=True,
     )
-    from_entity: str = Field(
-        ..., title="From entity", description="Source entity name"
+    from_entity: str | None = Field(
+        ..., deprecated=True, title="From entity", description="Source entity name"
     )
-    to_entity: str = Field(..., title="To entity", description="Target entity name")
+    to_entity: str | None = Field(..., title="To entity", description="Target entity name")
     relation_type: str = Field(
         ...,
         title="Relation type",
         description="Relationship type in active voice. Example: (A) is really interested in (B)",
     )
+    from_id: str = Field(
+        ...,
+        title="From entity ID",
+        description="Unique identifier for the source entity",
+    )
+    to_id: str = Field(
+        ...,
+        title="To entity ID",
+        description="Unique identifier for the target entity",
+    )
 
     def __repr__(self):
         return f"Relation(from_entity={self.from_entity}, to_entity={self.to_entity}, relation_type={self.relation_type})"
-
-    def __str__(self):
-        return f"{self.from_entity} {self.relation_type} {self.to_entity}"
 
 class UserIdentifier(BaseModel):
     """
@@ -244,27 +238,6 @@ class UserIdentifier(BaseModel):
 
     def __repr__(self):
         return f"UserIdentifier(preferred_name={self.preferred_name}, first_name={self.first_name}, last_name={self.last_name}, middle_names={self.middle_names}, pronouns={self.pronouns}, nickname={self.nickname}, prefixes={self.prefixes}, suffixes={self.suffixes}, emails={self.emails}, base_name={self.base_name}, names={self.names})"
-
-    def __str__(self):
-        result_lines = []
-        
-        if self.nickname:
-            nick = f", AKA '{self.nickname}'"
-        else:
-            nick = ""
-        
-        result_lines.append(f"**{self.preferred_name}** ({self.names[0]}{nick})")
-        if self.pronouns:
-            result_lines.append(f"Pronouns: {self.pronouns}")
-        if self.prefixes:
-            result_lines.append(f"Prefixes: {', '.join(self.prefixes)}")
-        if self.suffixes:
-            result_lines.append(f"Suffixes: {', '.join(self.suffixes)}")
-        if self.emails:
-            result_lines.append(f"Email addresses: {', '.join(self.emails)}")
-        if len(self.names) > 1:
-            result_lines.append(f"May also go by:\n  - {'\n  - '.join(self.names[1:])}")
-        return "\n".join(result_lines)
 
     @classmethod
     def from_llm(
@@ -398,31 +371,22 @@ class KnowledgeGraph(BaseModel):
     email addresses, and other information, provided by the user, throught the LLM. This information is optional,
     but aids the LLM in better understanding the user and their preferences.
     """
-
+    model_config = ConfigDict(
+        populate_by_name=True,
+        validate_by_name=True,
+    )
     user_info: UserIdentifier = Field(
         ..., title="User info", description="Information about the user"
     )
-    entities: list[Entity] = Field(
-        default_factory=list, title="Entities", description="All entities in the knowledge graph"
+    entities: list[Entity] | None = Field(
+        default=None, title="Entities", description="All entities in the knowledge graph"
     )
-    relations: list[Relation] = Field(
-        default_factory=list, title="Relations", description="All relations between entities"
+    relations: list[Relation] | None = Field(
+        default=None, title="Relations", description="All relations between entities"
     )
     def __repr__(self):
         return f"KnowledgeGraph(entities={self.entities}, relations={self.relations}, user_info={self.user_info})"
     
-    def __str__(self):
-        result = "🧠 You remember the following information about the user:\n"
-        result += f"{str(self.user_info)}\n"
-
-        result += f"\n👤 Entities: {len(self.entities)}\n"
-        for e in self.entities:
-            result += f"  {str(e)}\n"
-        result += f"\n🔗 Relations: {len(self.relations)}\n"
-        for r in self.relations:
-            result += f"  {str(r)}\n"
-        result += "\n"
-        return result
 
     @classmethod
     def from_dict(cls, data: dict) -> "KnowledgeGraph":
@@ -472,10 +436,6 @@ class CleanupResult(BaseModel):
     def __repr__(self):
         return f"CleanupResult(entities_processed_count={self.entities_processed_count}, observations_removed_count={self.observations_removed_count}, removed_observations={self.removed_observations})"
 
-    def __str__(self):
-        return f"🧹 Cleaned up {self.entities_processed_count} entities and {self.observations_removed_count} observations\n"
-
-
 class DurabilityGroupedObservations(BaseModel):
     """Observations grouped by their durability type."""
 
@@ -502,25 +462,6 @@ class DurabilityGroupedObservations(BaseModel):
 
     def __repr__(self):
         return f"DurabilityGroupedObservations(permanent={self.permanent}, long_term={self.long_term}, short_term={self.short_term}, temporary={self.temporary})"
-
-    def __str__(self):
-        obs = "🔍 Observations grouped by durability type\n\n🗿 Permanent:\n"
-        for o in self.permanent:
-            obs += f"  - {o}\n"
-        obs += "\n"
-        obs += "📅 Long-term (1+ years):\n"
-        for o in self.long_term:
-            obs += f"  - {o}\n"
-        obs += "\n"
-        obs += "⌛ Short-term (~3 months):\n"
-        for o in self.short_term:
-            obs += f"  - {o}\n"
-        obs += "\n"
-        obs += "🔥 Temporary (~1 month):\n"
-        for o in self.temporary:
-            obs += f"  - {o}\n"
-        obs += "\n"
-        return obs
 
 class ObservationRequest(BaseModel):
     """Request model for managing observations for an entity in the knowledge graph. Used for both addition and deletion."""
@@ -561,16 +502,6 @@ class AddObservationResult(BaseModel):
     def __repr__(self):
         return f"AddObservationResult(entity_name={self.entity_name}, added_observations={self.added_observations})"
 
-    def __str__(self):
-        if self.entity_icon:
-            icon = f"{self.entity_icon} "
-        else:
-            icon = ""
-        obs = ""
-        for o in self.added_observations:
-            obs += f"  - {o}\n"
-        result = f"🧐 Added {len(self.added_observations)} observations to **{icon}{self.entity_name}**:\n{obs}"
-        return result
 
 class DeleteObservationRequest(BaseModel):
     """Request model for deleting observations from an entity."""
@@ -588,9 +519,6 @@ class DeleteObservationRequest(BaseModel):
 
     def __repr__(self):
         return f"DeleteObservationRequest(entity_name={self.entity_name}, observations={self.observations})"
-
-    def __str__(self):
-        return f"🗑️ Removed {len(self.observations)} observations from **{self.entity_name}**\n"
 
 class DeleteEntryRequest(BaseModel):
     """Request model used to delete data from the knowledge graph.
@@ -652,12 +580,6 @@ class CreateEntityResult(BaseModel):
     def __repr__(self):
         return f"CreateEntityResult(entities={self.entities})"
 
-    def __str__(self):
-        result = f"✨ Created {len(self.entities)} entities:\n"
-        for e in self.entities:
-            result += f"  {str(e)}\n"
-        return result
-
 class CreateRelationResult(BaseModel):
     """Result of creating a relation."""
     relations: list[Relation] = Field(
@@ -668,10 +590,4 @@ class CreateRelationResult(BaseModel):
 
     def __repr__(self):
         return f"CreateRelationResult(relations={self.relations})"
-
-    def __str__(self):
-        result = f"🤝 Created {len(self.relations)} relations:\n"
-        for r in self.relations:
-            result += f"  {str(r)}\n"
-        return result
 
