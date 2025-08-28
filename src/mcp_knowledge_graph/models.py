@@ -235,6 +235,11 @@ class UserIdentifier(BaseModel):
         title="Full name",
         description="Various full name forms for the user, depending on the provided information. Index 0 is the first, middle, and last name without any prefixes or suffixes.",
     )
+    linked_entity: Entity | None = Field(
+        default=None,
+        title="Linked entity",
+        description="The entity that is linked to the user. This is used to link the user to the entity that represents them in the knowledge graph.",
+    )
 
     def __repr__(self):
         return f"UserIdentifier(preferred_name={self.preferred_name}, first_name={self.first_name}, last_name={self.last_name}, middle_names={self.middle_names}, pronouns={self.pronouns}, nickname={self.nickname}, prefixes={self.prefixes}, suffixes={self.suffixes}, emails={self.emails}, base_name={self.base_name}, names={self.names})"
