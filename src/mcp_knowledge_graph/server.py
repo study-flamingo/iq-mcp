@@ -66,12 +66,18 @@ async def _print_user_info(
         names = graph.user_info.names or []
         preferred_name = graph.user_info.preferred_name or ""
         timezone = graph.user_info.timezone or "UTC"
+        linked_entity = graph.user_info.linked_entity or None
 
-        user_name = last_name or ""
-        user_name = first_name or ""
-        user_name = names[0] or ""
-        user_name = nickname or ""
-        user_name = preferred_name or ""
+        if linked_entity:
+            user_name = linked_entity.name
+        else:
+            logger.warning(f"No linked entity found for user {graph.user_info.preferred_name}, using fallback names")
+            user_name = last_name or ""
+            user_name = first_name or ""
+            user_name = names[0] or ""
+            user_name = nickname or ""
+            user_name = preferred_name or ""
+            user_info_unlinked = True
 
         # Ensure that the user's name is set
         user_info_missing: bool = False
@@ -87,6 +93,7 @@ async def _print_user_info(
         emails = graph.user_info.emails or []
         prefixes = graph.user_info.prefixes or []
         suffixes = graph.user_info.suffixes or []
+        
     except Exception as e:
         raise ToolError(f"Failed to load user info: {e}")
 
@@ -130,12 +137,19 @@ async def _print_user_info(
 
     # Print observations
     try:
+        
+        
+    except:
+        
+    # Fallback to old check if user_info isn't linked yet
+    try:
         if include_observations:
             lookup_result: KnowledgeGraph = await manager.open_nodes(
                 "__default_user__"
             ) or await manager.open_nodes("default_user")
             if not lookup_result.entities:
-                raise ToolError("No entities found for names: __default_user__ or default_user")
+                logger.warning("No entities found for names: __default_user__ or default_user")
+                return result
             user_entity = lookup_result.entities[0]
             result += (
                 "\n"

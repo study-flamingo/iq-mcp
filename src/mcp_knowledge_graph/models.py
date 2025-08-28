@@ -245,6 +245,11 @@ class UserIdentifier(BaseModel):
         title="Timezone",
         description="The timezone of the user. Example: 'America/New_York'",
     )
+    linked_entity: Entity | None = Field(
+        default=None,
+        title="Linked entity",
+        description="The entity that is linked to the user. This is used to link the user to the entity that represents them in the knowledge graph.",
+    )
 
     def __repr__(self):
         return f"UserIdentifier(preferred_name={self.preferred_name}, first_name={self.first_name}, last_name={self.last_name}, middle_names={self.middle_names}, pronouns={self.pronouns}, nickname={self.nickname}, prefixes={self.prefixes}, suffixes={self.suffixes}, emails={self.emails}, base_name={self.base_name}, names={self.names})"
