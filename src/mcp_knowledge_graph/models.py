@@ -33,13 +33,12 @@ class Observation(BaseModel):
     - timestamp(str): ISO date string when the observation was created
     - durability(DurabilityType): How long this observation is expected to remain relevant
     """
+
     model_config = ConfigDict(
         populate_by_name=True,
         validate_by_name=True,
     )
-    content: str = Field(
-        ..., title="Observation content", description="The observation content"
-    )
+    content: str = Field(..., title="Observation content", description="The observation content")
     durability: DurabilityType = Field(
         ...,
         title="Durability",
@@ -62,6 +61,7 @@ class Observation(BaseModel):
     def __repr__(self):
         return f"Observation(content={self.content}, timestamp={self.timestamp}, durability={self.durability})"
 
+
 class Entity(BaseModel):
     """
     Primary nodes in the knowledge graph.
@@ -80,6 +80,7 @@ class Entity(BaseModel):
 
     Relations are stored in active voice and describe how entities interact or relate to each other.
     """
+
     model_config = ConfigDict(
         populate_by_name=True,
         validate_by_name=True,
@@ -119,6 +120,7 @@ class Entity(BaseModel):
     def __repr__(self):
         return f"Entity(name={self.name}, entity_type={self.entity_type}, observations={self.observations}, aliases={self.aliases}, icon={self.icon})"
 
+
 class Relation(BaseModel):
     """
     Directed connections between entities.
@@ -126,6 +128,7 @@ class Relation(BaseModel):
     Relations are stored in active voice and describe how entities
     interact or relate to each other.
     """
+
     model_config = ConfigDict(
         populate_by_name=True,
         validate_by_name=True,
@@ -139,13 +142,13 @@ class Relation(BaseModel):
         title="Relation type",
         description="Relationship type in active voice. Example: (A) is really interested in (B)",
     )
-    from_id: str = Field(
-        ...,
+    from_id: str | None = Field(
+        default=None,
         title="From entity ID",
         description="Unique identifier for the source entity",
     )
-    to_id: str = Field(
-        ...,
+    to_id: str | None = Field(
+        default=None,
         title="To entity ID",
         description="Unique identifier for the target entity",
     )
@@ -153,10 +156,11 @@ class Relation(BaseModel):
     def __repr__(self):
         return f"Relation(from_entity={self.from_entity}, to_entity={self.to_entity}, relation_type={self.relation_type})"
 
+
 class UserIdentifier(BaseModel):
     """
     Identifier to pair the user with '__default_user__' in the knowledge graph.
-    
+
     Fields:
       - preferred_name: The preferred name of the user. Preferred name is prioritized over other
         names for the user. If not provided, one will be selected from the other provided names in
@@ -176,6 +180,7 @@ class UserIdentifier(BaseModel):
       - base_name: The base name of the user - first, middle, and last name without any prefixes or suffixes. Organized as a list of strings with each part.
       - names: Various full name forms for the user, depending on the provided information. Index 0 is the first, middle, and last name without any prefixes or suffixes.
     """
+
     linked_entity_id: str | None = Field(
         default=None,
         title="Linked entity ID",
@@ -240,11 +245,6 @@ class UserIdentifier(BaseModel):
         title="Full name",
         description="Various full name forms for the user, depending on the provided information. Index 0 is the first, middle, and last name without any prefixes or suffixes.",
     )
-    timezone: datetime.tzinfo = Field(
-        default=timezone.utc,
-        title="Timezone",
-        description="The timezone of the user. Example: 'America/New_York'",
-    )
     linked_entity: Entity | None = Field(
         default=None,
         title="Linked entity",
@@ -266,9 +266,9 @@ class UserIdentifier(BaseModel):
         prefixes: list[str] | None = None,
         suffixes: list[str] | None = None,
         emails: list[str] | None = None,
-        ) -> "UserIdentifier":
+    ) -> "UserIdentifier":
         """Create a UserIdentifier from a LLM response."""
-        
+
         # Compute the preferred name
         if not preferred_name:
             if nickname:
@@ -281,7 +281,7 @@ class UserIdentifier(BaseModel):
                 preferred_name = last_name
             else:
                 raise ValueError("No suitable name provided for the user")
-        
+
         # Compute the base name parts - first, middle(s), and last name without any prefixes or suffixes
         base_name_parts: list[str] = []
         if first_name:
@@ -326,7 +326,7 @@ class UserIdentifier(BaseModel):
             pronouns=pronouns,
             emails=emails,
             names=full_names,
-            )
+        )
 
     @classmethod
     def from_default(cls) -> "UserIdentifier":
@@ -341,10 +341,9 @@ class UserIdentifier(BaseModel):
             prefixes=None,
             suffixes=None,
             emails=None,
-            names=[
-                "__default_user__"
-            ],
+            names=["__default_user__"],
         )
+
 
 class KnowledgeGraph(BaseModel):
     """
@@ -386,6 +385,7 @@ class KnowledgeGraph(BaseModel):
     email addresses, and other information, provided by the user, throught the LLM. This information is optional,
     but aids the LLM in better understanding the user and their preferences.
     """
+
     model_config = ConfigDict(
         populate_by_name=True,
         validate_by_name=True,
@@ -399,9 +399,9 @@ class KnowledgeGraph(BaseModel):
     relations: list[Relation] | None = Field(
         default=None, title="Relations", description="All relations between entities"
     )
+
     def __repr__(self):
         return f"KnowledgeGraph(entities={self.entities}, relations={self.relations}, user_info={self.user_info})"
-    
 
     @classmethod
     def from_dict(cls, data: dict) -> "KnowledgeGraph":
@@ -409,22 +409,27 @@ class KnowledgeGraph(BaseModel):
         return cls(
             user_info=UserIdentifier(**data["user_info"]),
             entities=[Entity(**e) for e in data["entities"]],
-            relations=[Relation(**r) for r in data["relations"]])
+            relations=[Relation(**r) for r in data["relations"]],
+        )
 
     @classmethod
     def from_default(cls) -> "KnowledgeGraph":
         """Initialize the knowledge graph with default values."""
         return cls(
             user_info=UserIdentifier.from_default(),
-            entities=[Entity(
-                name="__default_user__",
-                entity_type="__default_user__",
-                observations=[Observation(
-                    content="**Is the user you are speaking to**",
-                    durability=DurabilityType.PERMANENT,
-                    timestamp=datetime.now().isoformat()
-                )]
-            )],
+            entities=[
+                Entity(
+                    name="__default_user__",
+                    entity_type="__default_user__",
+                    observations=[
+                        Observation(
+                            content="**Is the user you are speaking to**",
+                            durability=DurabilityType.PERMANENT,
+                            timestamp=datetime.now().isoformat(),
+                        )
+                    ],
+                )
+            ],
             relations=[],
         )
 
@@ -450,6 +455,7 @@ class CleanupResult(BaseModel):
 
     def __repr__(self):
         return f"CleanupResult(entities_processed_count={self.entities_processed_count}, observations_removed_count={self.observations_removed_count}, removed_observations={self.removed_observations})"
+
 
 class DurabilityGroupedObservations(BaseModel):
     """Observations grouped by their durability type."""
@@ -478,6 +484,7 @@ class DurabilityGroupedObservations(BaseModel):
     def __repr__(self):
         return f"DurabilityGroupedObservations(permanent={self.permanent}, long_term={self.long_term}, short_term={self.short_term}, temporary={self.temporary})"
 
+
 class ObservationRequest(BaseModel):
     """Request model for managing observations for an entity in the knowledge graph. Used for both addition and deletion."""
 
@@ -496,6 +503,7 @@ class ObservationRequest(BaseModel):
         title="Confirm",
         description="Optional confirmation property. Must be passed for certain sensitive operations. ***ALWAYS VERIFY WITH THE USER BEFORE SETTING TO TRUE*** Experimental.",
     )
+
 
 class AddObservationResult(BaseModel):
     """Result of adding observations to an entity."""
@@ -535,6 +543,7 @@ class DeleteObservationRequest(BaseModel):
     def __repr__(self):
         return f"DeleteObservationRequest(entity_name={self.entity_name}, observations={self.observations})"
 
+
 class DeleteEntryRequest(BaseModel):
     """Request model used to delete data from the knowledge graph.
 
@@ -557,6 +566,7 @@ class DeleteEntryRequest(BaseModel):
         - entry_type = 'relation': list of Relation objects
         """
     )
+
 
 class CreateEntryRequest(BaseModel):
     """Request model used to validate and add data to the knowledge graph.
@@ -584,8 +594,10 @@ class CreateEntryRequest(BaseModel):
         """
     )
 
+
 class CreateEntityResult(BaseModel):
     """Result of creating an entity."""
+
     entities: list[Entity] = Field(
         ...,
         title="Entities",
@@ -595,8 +607,10 @@ class CreateEntityResult(BaseModel):
     def __repr__(self):
         return f"CreateEntityResult(entities={self.entities})"
 
+
 class CreateRelationResult(BaseModel):
     """Result of creating a relation."""
+
     relations: list[Relation] = Field(
         ...,
         title="Relations",
@@ -605,4 +619,3 @@ class CreateRelationResult(BaseModel):
 
     def __repr__(self):
         return f"CreateRelationResult(relations={self.relations})"
-

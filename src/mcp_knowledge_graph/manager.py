@@ -234,10 +234,14 @@ class KnowledgeGraphManager:
                         continue
 
             if not user_info:
-                logger.warning("No valid user info object found in memory file! Initializing new user info object with default user info.")
+                logger.warning(
+                    "No valid user info object found in memory file! Initializing new user info object with default user info."
+                )
                 user_info = UserIdentifier.from_default()
 
-            logger.info(f"💾 Loaded {len(entities)} entities and {len(relations)} relations from memory file")
+            logger.info(
+                f"💾 Loaded {len(entities)} entities and {len(relations)} relations from memory file"
+            )
             return KnowledgeGraph(user_info=user_info, entities=entities, relations=relations)
 
         except Exception as e:
@@ -308,7 +312,7 @@ class KnowledgeGraphManager:
         Returns:
             CreateEntityResult containing the entities that were actually created (excludes existing names)
         """
-        graph, _ = await self._load_graph()
+        graph = await self._load_graph()
         existing_names = {entity.name for entity in graph.entities}
         existing_aliases: set[str] = set()
         for entity in graph.entities:
@@ -340,7 +344,7 @@ class KnowledgeGraphManager:
         Returns:
             list of relations that were actually created (excludes duplicates)
         """
-        graph, _ = await self._load_graph()
+        graph = await self._load_graph()
 
         # Canonicalize endpoints to entity names if aliases provided
         canonicalized: list[Relation] = []
@@ -382,7 +386,7 @@ class KnowledgeGraphManager:
         Raises:
             ValueError: If an entity is not found
         """
-        graph, _ = await self._load_graph()
+        graph = await self._load_graph()
         results: list[AddObservationResult] = []
 
         # Track errors, while allowing the tool to continue processing other requests
@@ -426,7 +430,7 @@ class KnowledgeGraphManager:
         Returns:
             CleanupResult with details of what was removed
         """
-        graph, _ = await self._load_graph()
+        graph = await self._load_graph()
         total_removed = 0
         removed_details = []
 
@@ -474,7 +478,7 @@ class KnowledgeGraphManager:
         Raises:
             ValueError: If the entity is not found
         """
-        graph, _ = await self._load_graph()
+        graph = await self._load_graph()
         entity = self._get_entity_by_name_or_alias(graph, entity_name)
 
         if entity is None:
@@ -492,7 +496,7 @@ class KnowledgeGraphManager:
         if not entity_names:
             raise ValueError("No entities deleted - no data provided!")
 
-        graph, _ = await self._load_graph()
+        graph = await self._load_graph()
         # Resolve identifiers to canonical entity names
         resolved_names: set[str] = set()
         for ident in entity_names:
@@ -522,7 +526,7 @@ class KnowledgeGraphManager:
         Args:
             deletions: list of observation deletion requests
         """
-        graph, _ = await self._load_graph()
+        graph = await self._load_graph()
 
         for deletion in deletions:
             entity = self._get_entity_by_name_or_alias(graph, deletion.entity_name)
@@ -544,7 +548,7 @@ class KnowledgeGraphManager:
         Args:
             relations: list of relations to delete
         """
-        graph, _ = await self._load_graph()
+        graph = await self._load_graph()
 
         # Canonicalize relation endpoints before building deletion set
         canonical_to_delete = {
@@ -799,7 +803,7 @@ class KnowledgeGraphManager:
         """
         Update the user's identifying information in the graph.
         """
-        graph, _ = await self._load_graph()
+        graph = await self._load_graph()
         graph.user_info = user_info
         await self._save_graph(graph)
         return user_info
