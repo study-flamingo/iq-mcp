@@ -45,7 +45,7 @@ class Observation(BaseModel):
         title="Durability",
         description="How long this observation is expected to remain relevant",
     )
-    timestamp: str | datetime | None = Field(
+    timestamp: datetime | None = Field(
         ...,
         title="Timestamp",
         description="ISO date string when the observation was created",
@@ -176,6 +176,11 @@ class UserIdentifier(BaseModel):
       - base_name: The base name of the user - first, middle, and last name without any prefixes or suffixes. Organized as a list of strings with each part.
       - names: Various full name forms for the user, depending on the provided information. Index 0 is the first, middle, and last name without any prefixes or suffixes.
     """
+    linked_entity_id: str | None = Field(
+        default=None,
+        title="Linked entity ID",
+        description="The ID of the entity that is linked to the user. This entity will be used to store observations about the user.",
+    )
     model_config = ConfigDict(
         populate_by_name=True,
         validate_by_name=True,
@@ -234,6 +239,11 @@ class UserIdentifier(BaseModel):
         ...,
         title="Full name",
         description="Various full name forms for the user, depending on the provided information. Index 0 is the first, middle, and last name without any prefixes or suffixes.",
+    )
+    timezone: datetime.tzinfo = Field(
+        default=timezone.utc,
+        title="Timezone",
+        description="The timezone of the user. Example: 'America/New_York'",
     )
 
     def __repr__(self):

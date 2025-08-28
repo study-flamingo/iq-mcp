@@ -6,6 +6,7 @@ knowledge graph operations as tools for LLM integration using FastMCP 2.11.
 """
 
 import asyncio
+from datetime import tzinfo
 from fastmcp import FastMCP
 from pydantic import Field
 from typing import Any
@@ -64,6 +65,7 @@ async def _print_user_info(
         nickname = graph.user_info.nickname or ""
         names = graph.user_info.names or []
         preferred_name = graph.user_info.preferred_name or ""
+        timezone = graph.user_info.timezone or "UTC"
 
         user_name = last_name or ""
         user_name = first_name or ""
@@ -90,7 +92,11 @@ async def _print_user_info(
 
     try:
         # Start with printing the user's info
-        result = "🧠 You remember the following information about the user:\n"
+        result = (
+            ""
+            if settings.no_emojis
+            else "🧠 "
+        ) + "You remember the following information about the user:\n"
         result += f"**{user_name}** ({names[0]})\n"
         if middle_names:
             result += f"Middle name(s): {', '.join(middle_names)}\n"
@@ -131,9 +137,15 @@ async def _print_user_info(
             if not lookup_result.entities:
                 raise ToolError("No entities found for names: __default_user__ or default_user")
             user_entity = lookup_result.entities[0]
-            result += "\n🔍 Observations:\n"
+            result += (
+                "\n"
+                if settings.no_emojis
+                else "\n🔍 "
+            ) + f"Observations (Timezone: {timezone}):\n"
             for o in user_entity.observations:
-                result += f"  - {o.content} ({str(o.timestamp)}, {o.durability.value})\n"
+
+                ts = o.timestamp.astimezone(tzinfo(timezone)).strftime("%Y-%m-%d %H:%M:%S")
+                result += f"  - {o.content} ({ts}, {o.durability.value})\n"
     except Exception as e:
         raise ToolError(f"Failed to print observations: {e}")
 
@@ -141,7 +153,11 @@ async def _print_user_info(
     try:
         if include_relations:
             user_entity = await manager.open_nodes("__default_user__")
-            result += "\n🔗 Relations:\n"
+            result += (
+                "\n"
+                if settings.no_emojis
+                else "\n🔗 "
+            ) + "Relations:\n"
             for r in user_entity.relations:
                 result += f"  - {r.from_entity} {r.relation_type} {r.to_entity}\n"
     except Exception as e:
