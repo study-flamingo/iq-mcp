@@ -34,6 +34,7 @@ Issues = "https://github.com/study-flamingo/mcp-server-memory-temporal/issues"
 [project.scripts]
 iq-mcp = "mcp_knowledge_graph.__main__:main"
 iq-mcp-visualize = "mcp_knowledge_graph.visualize:main"
+iq-mcp-init = "mcp_knowledge_graph.seed_memory:main"
 
 [tool.setuptools.package-dir]
 "" = "src"
