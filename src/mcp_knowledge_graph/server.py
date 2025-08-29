@@ -58,6 +58,7 @@ async def _print_user_info(
       - include_observations: Include observations related to the user in the response.
       - include_relations: Include relations related to the user in the response.
     """
+    logger.setLevel("DEBUG")
     try:
         # Compose a sensible display name for the user, based on available data and preferences
         last_name = graph.user_info.last_name or ""
@@ -65,19 +66,21 @@ async def _print_user_info(
         nickname = graph.user_info.nickname or ""
         names = graph.user_info.names or []
         preferred_name = graph.user_info.preferred_name or ""
-        timezone = graph.user_info.timezone or "UTC"
+        # timezone = graph.user_info.timezone or "UTC"
         linked_entity = graph.user_info.linked_entity or None
 
         if linked_entity:
             user_name = linked_entity.name
         else:
-            logger.warning(f"No linked entity found for user {graph.user_info.preferred_name}, using fallback names")
+            logger.warning(
+                f"No linked entity found for user {graph.user_info.preferred_name}, using fallback names"
+            )
             user_name = last_name or ""
             user_name = first_name or ""
             user_name = names[0] or ""
             user_name = nickname or ""
             user_name = preferred_name or ""
-            user_info_unlinked = True
+            # user_info_unlinked = True
 
         # Ensure that the user's name is set
         user_info_missing: bool = False
@@ -93,16 +96,14 @@ async def _print_user_info(
         emails = graph.user_info.emails or []
         prefixes = graph.user_info.prefixes or []
         suffixes = graph.user_info.suffixes or []
-        
+
     except Exception as e:
         raise ToolError(f"Failed to load user info: {e}")
 
     try:
         # Start with printing the user's info
         result = (
-            ""
-            if settings.no_emojis
-            else "🧠 "
+            "" if settings.no_emojis else "🧠 "
         ) + "You remember the following information about the user:\n"
         result += f"**{user_name}** ({names[0]})\n"
         if middle_names:
@@ -136,12 +137,13 @@ async def _print_user_info(
         raise ToolError(f"Failed to print user info: {e}")
 
     # Print observations
-    try:
-        
-        
-    except:
-        
-    # Fallback to old check if user_info isn't linked yet
+    # try:
+    # TODO: implement entity linkage from user_info
+
+    # except:
+
+    # soon-to-be-deprecated check if user_info isn't linked yet
+
     try:
         if include_observations:
             lookup_result: KnowledgeGraph = await manager.open_nodes(
@@ -151,14 +153,9 @@ async def _print_user_info(
                 logger.warning("No entities found for names: __default_user__ or default_user")
                 return result
             user_entity = lookup_result.entities[0]
-            result += (
-                "\n"
-                if settings.no_emojis
-                else "\n🔍 "
-            ) + f"Observations (Timezone: {timezone}):\n"
+            result += ("\n" if settings.no_emojis else "\n🔍 ") + "Observations (times in UTC):\n"
             for o in user_entity.observations:
-
-                ts = o.timestamp.astimezone(tzinfo(timezone)).strftime("%Y-%m-%d %H:%M:%S")
+                ts = o.timestamp.strftime("%Y-%m-%d %H:%M:%S")
                 result += f"  - {o.content} ({ts}, {o.durability.value})\n"
     except Exception as e:
         raise ToolError(f"Failed to print observations: {e}")
@@ -167,11 +164,7 @@ async def _print_user_info(
     try:
         if include_relations:
             user_entity = await manager.open_nodes("__default_user__")
-            result += (
-                "\n"
-                if settings.no_emojis
-                else "\n🔗 "
-            ) + "Relations:\n"
+            result += ("\n" if settings.no_emojis else "\n🔗 ") + "Relations:\n"
             for r in user_entity.relations:
                 result += f"  - {r.from_entity} {r.relation_type} {r.to_entity}\n"
     except Exception as e:
@@ -329,15 +322,23 @@ async def create_entry(request: CreateEntryRequest):
 
 
 @mcp.tool
-async def cleanup_outdated_observations() -> str:
+async def cleanup_outdated_observations():
     """Remove observations that are likely outdated based on their durability and age.
 
     Returns:
         Summary of cleanup operation
     """
     try:
-        result = await manager.cleanup_outdated_observations()
-        return str(result)
+        cleanup_result = await manager.cleanup_outdated_observations()
+        ent = cleanup_result.entities_processed_count
+        obs = cleanup_result.observations_removed_count
+        obs_detail = cleanup_result.removed_observations
+        result = (
+            "" if settings.no_emojis else "🧹 "
+        ) + f"Cleaned up {obs} observations from {ent} entities"
+        logger.info(result)
+        logger.debug(f"Removed observations: {obs_detail}")
+        return result
     except Exception as e:
         raise ToolError(f"Failed to cleanup observations: {e}")
 
