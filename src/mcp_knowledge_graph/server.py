@@ -29,10 +29,10 @@ from .settings import Settings as settings, Logger as logger
 import sys
 
 try:
-    from .notify import supabase, EmailSummary
-except ImportError:
+    from .supabase import supabase, EmailSummary
+except Exception as e:
     logger.warning(
-        "Error starting notification module: Supabase not found - install with `uv pip install supabase`"
+        "Supabase integration disabled: %s", e
     )
     supabase = None
     EmailSummary = None
@@ -295,6 +295,9 @@ async def create_entry(request: CreateEntryRequest):
       - <from_entity> "once went on a road trip with" <to_entity>
       - <from_entity> "needs to send weekly reports to" <to_entity>
     """
+    deprecated = True
+    logger.warning("This tool is deprecated and will be removed in a future version. Use the create_entities, create_relations, and apply_observations tools instead.")
+
     entry_type = request.entry_type
     data = request.data
     try:
@@ -546,22 +549,29 @@ async def merge_entities(
 @mcp.tool
 async def get_email_update() -> list[EmailSummary]:
     """Get new email summaries from Supabase."""
+    if supabase is None or not getattr(supabase, "enabled", False):
+        return "Supabase integration is not configured."
     try:
         response = await supabase.get_new_email_summaries()
         if not response:
             return "No new email summaries found!"
-        else:
-            result = ""
-            for summary in response:
-                result += f"Messsage ID: {summary.id}\n"
-                result += f"From: {summary.from_address} ({summary.from_name})\n"
-                result += f"Reply-To: {summary.reply_to}\n"
-                result += f"Timestamp: {summary.timestamp}\n"
-                result += f"Subject: {summary.subject}\n"
-                result += f"Summary: {summary.summary}\n"
-                result += f"Links: {'\n- '.join([link['url'] for link in summary.links])}"
-                result += "\n\n"
-            return result
+        result = ""
+        for summary in response:
+            result += f"Messsage ID: {summary.id}\n"
+            result += f"From: {summary.from_address} ({summary.from_name})\n"
+            result += f"Reply-To: {summary.reply_to}\n"
+            result += f"Timestamp: {summary.timestamp}\n"
+            result += f"Subject: {summary.subject}\n"
+            result += f"Summary: {summary.summary}\n"
+            try:
+                links_list = summary.links or []
+                links_str = "\n- ".join([str(link.get("url", link)) for link in links_list])
+                if links_str:
+                    result += f"Links: {links_str}"
+            except Exception:
+                pass
+            result += "\n\n"
+        return result
     except Exception as e:
         raise ToolError(f"Failed to get email updates: {e}")
 

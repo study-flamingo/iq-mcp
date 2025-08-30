@@ -28,7 +28,6 @@ from .models import (
     UserIdentifier,
 )
 
-
 class KnowledgeGraphManager:
     """
     Core manager for knowledge graph operations with temporal features.
@@ -48,6 +47,14 @@ class KnowledgeGraphManager:
         self.memory_file_path = Path(memory_file_path)
         # Ensure the directory exists
         self.memory_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    @classmethod
+    def from_settings(cls) -> "KnowledgeGraphManager":
+        """
+        Initialize the knowledge graph manager via the settings object.
+        """
+        # Uses the already-initialized settings object
+        return cls(settings.memory_file_path)
 
     # ---------- Alias helpers ----------
     def _get_entity_by_name_or_alias(self, graph: KnowledgeGraph, identifier: str) -> Entity | None:

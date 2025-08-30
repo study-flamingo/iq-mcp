@@ -44,10 +44,23 @@ TRANSPORT_ENUM: dict[str, Transport] = {
 
 @dataclass
 class SupabaseSettings:
+    """Supabase settings for the IQ-MCP server.
+
+    Attributes:
+        url: Supabase project URL
+        key: Supabase anon or service role key with read access
+        email_table: Name of the table to query for email summaries
+        entities_table: Name of the table to query for entities
+        relations_table: Name of the table to query for relations
+        user_table: Name of the table to query for user info
+    """
+
     url: str
     key: str
-    table: str
-
+    email_table: str | None = None
+    entities_table: str | None = None
+    relations_table: str | None = None
+    user_table: str | None = None
 
 class IQSettings:
     """IQ-MCP Application settings loaded from CLI and environment.
@@ -87,13 +100,25 @@ class IQSettings:
         self.streamable_http_path = streamable_http_path
         self.project_root = project_root
         self.no_emojis = no_emojis
-        self.supabase = supabase_settings
+        self.supabase_settings = supabase_settings
 
     # ---------- Construction ----------
     @classmethod
     def load(cls) -> "IQSettings":
-        """Create a IQ-MCP Settings instance from CLI args, env, and defaults."""
-
+        """
+        Create a IQ-MCP Settings instance from CLI args, env, and defaults.
+        
+        Properties:
+            debug (bool): Enables verbose logging when True
+            transport (Transport enum): Validated transport value ("stdio" | "sse" | "http")
+            port (int): Server port (used when transport is http)
+            streamable_http_host (str): Optional HTTP host
+            streamable_http_path (str): Optional HTTP path
+            memory_path (Path): Absolute path to memory JSONL file
+            project_root (Path): Resolved project root path
+            no_emojis (bool): Disable emojis in the output
+            supabase_settings (SupabaseSettings): Supabase settings
+        """
         # CLI args > Env vars > Defaults
         parser = argparse.ArgumentParser(add_help=False)
         parser.add_argument("--memory-path", type=str)
@@ -105,7 +130,7 @@ class IQSettings:
         parser.add_argument("--no-emojis", action="store_true", default=None)
         args, _ = parser.parse_known_args()
 
-        # Create logger
+        # Initialize logger
         logger = logging.getLogger("iq-mcp")
 
         # Debug mode
@@ -147,22 +172,42 @@ class IQSettings:
         memory_path_input = args.memory_path or os.getenv("IQ_MEMORY_PATH", DEFAULT_MEMORY_PATH)
         memory_path = Path(memory_path_input).resolve()
 
-        # Supabase, if notifications are enabled (optional)
+        # Disable emojis if desired
+        no_emojis = args.no_emojis or os.getenv("IQ_NO_EMOJIS", "false").lower() == "true"
+
+        # Supabase integration (pure configuration only; no clients created here)
         supabase_url = os.getenv("SUPABASE_URL")
         supabase_key = os.getenv("SUPABASE_KEY")
-        supabase_table = os.getenv("SUPABASE_TABLE")
-        if supabase_url and supabase_key and supabase_table:
+        supabase_email_table = os.getenv("SUPABASE_EMAIL_TABLE")
+        supabase_entities_table = os.getenv("SUPABASE_ENTITIES_TABLE")
+        supabase_relations_table = os.getenv("SUPABASE_RELATIONS_TABLE")
+        supabase_user_table = os.getenv("SUPABASE_USER_TABLE")
+        
+        # If no URL or key, skip Supabase configuration entirely
+        if not supabase_url or not supabase_key:
+            logger.warning("⚠️ No Supabase settings provided, skipping Supabase integration.")
+            supabase_settings = None
+        else:
+            # Fill in defaults if only URL and key are provided
+            supabase_email_table = supabase_email_table or "emailSummaries"
+            if not supabase_entities_table:
+                logger.warning("⚠️ No entity table name provided, defaulting to 'iqEntities'")
+                supabase_entities_table = "iqEntities"
+            if not supabase_relations_table:
+                logger.warning("⚠️ No relation table name provided, defaulting to 'iqRelations'")
+                supabase_relations_table = "iqRelations"
+            if not supabase_user_table:
+                logger.warning("⚠️ No user table name provided, defaulting to 'iqUsers'")
+                supabase_user_table = "iqUsers"
+
             supabase_settings = SupabaseSettings(
                 url=supabase_url,
                 key=supabase_key,
-                table=supabase_table,
+                email_table=supabase_email_table,
+                entities_table=supabase_entities_table,
+                relations_table=supabase_relations_table,
+                user_table=supabase_user_table,
             )
-        else:
-            logger.warning("⚠️ No Supabase settings provided. Notifications will not be enabled.")
-            supabase_settings = None
-
-        # Disable emojis if desired
-        no_emojis = args.no_emojis or os.getenv("IQ_NO_EMOJIS", "false").lower() == "true"
 
         return cls(
             debug=debug,
@@ -186,3 +231,4 @@ class IQSettings:
 
 Settings = IQSettings.load()
 Logger = Settings.get_logger()
+supabase_settings: SupabaseSettings | None = Settings.supabase_settings

@@ -47,12 +47,16 @@ def build_initial_graph() -> list[dict]:
     return records
 
 
-def write_jsonl(output_path: Path, records: list[dict], overwrite: bool = False) -> None:
+def write_jsonl(output_path: Path | None, records: list[dict], overwrite: bool = False) -> None:
     """Write records to a JSONL file at output_path, creating parent dirs."""
+    if output_path is None:
+        print("⚠️ WARNING: No output path provided, using current directory")
+        output_path = Path.cwd() / "memory.jsonl"
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     if output_path.exists():
         if overwrite:
-            print(f"WARNING: Overwriting {output_path} with new initial graph")
+            print(f"⚠️ WARNING: Overwriting {output_path} with new initial graph")
         else:
             raise FileExistsError(f"Error: {output_path} already exists! Choose a different path, or use --overwrite to overwrite (DESTRUCTIVE)")
         for r in records:
@@ -62,8 +66,8 @@ def write_jsonl(output_path: Path, records: list[dict], overwrite: bool = False)
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description=
-        "Write a freshly-initialized knowledge graph (JSONL) to the given path."
+        name="IQ-MCP: iq-mcp-init / seed_memory utility tool",
+        description="Write a freshly-initialized knowledge graph (JSONL) to the given path, or current directory if no path is provided."
     )
     parser.add_argument(
         "output",
