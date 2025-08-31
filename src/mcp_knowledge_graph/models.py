@@ -6,11 +6,40 @@ including entities, relations, and temporal observations with durability metadat
 """
 
 from datetime import datetime, timezone
-from typing import Literal
-import uuid
-from pydantic import BaseModel, Field, ConfigDict
+from typing import Any, Literal
+from uuid import uuid4
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 from enum import Enum
-from .settings import Logger as logger
+import regex as re
+from .settings import Logger as logger, Settings
+
+
+# Helper functions
+_GRAPHEMES = re.compile(r"\X")
+_HAS_EMOJI = re.compile(r"(\p{Extended_Pictographic}|\p{Regional_Indicator})")
+def is_emoji(s: str) -> bool:
+    """Check if a string is a valid emoji."""
+    s = s.strip()
+    g = _GRAPHEMES.findall(s)
+    return len(g) == 1 and _HAS_EMOJI.search(g[0]) is not None
+
+
+def validate_entity_id(id: str) -> str | None:
+    """Validate the provided entity ID."""
+    if (
+        not id
+        or not isinstance(id, str)
+        or not id.strip()
+        or len(id) != 8
+        or not id.isalnum()
+    ):
+        logger.error(f"Invalid entity ID: {id}")
+        return None
+    return id
+
+class KnowledgeGraphException(Exception):
+    """Base exception for the knowledge graph."""
+    pass
 
 
 class DurabilityType(str, Enum):
@@ -38,7 +67,11 @@ class Observation(BaseModel):
         populate_by_name=True,
         validate_by_name=True,
     )
-    content: str = Field(..., title="Observation content", description="The observation content")
+    content: str = Field(
+        ...,
+        title="Observation content", 
+        description="The observation content. Should be a single sentence or concise statement in active voice. Example: 'John Doe is a software engineer'",
+    )
     durability: DurabilityType = Field(
         ...,
         title="Durability",
@@ -75,8 +108,8 @@ class Entity(BaseModel):
 
     Entities are connected to one another by Relations. Example:
 
-    - John and Karen are paternal twins: {'from': 'John Doe', 'to': 'Karen Smith', 'relation_type': 'paternal twin'}
-    - John and Karen are lifelong enemies and rivals: {'from': 'John Doe', 'to': 'Karen Smith', 'relation_type': 'evil twin'}
+    - John and Karen are paternal twins: {'from': 'John Doe', 'to': 'Karen Smith', 'relation': 'paternal twin'}
+    - John and Karen are lifelong enemies and rivals: {'from': 'John Doe', 'to': 'Karen Smith', 'relation': 'evil twin'}
 
     Relations are stored in active voice and describe how entities interact or relate to each other.
     """
@@ -87,7 +120,7 @@ class Entity(BaseModel):
     )
     id: str = Field(
         ...,
-        default_factory=lambda: str(uuid.uuid4()),
+        default_factory=lambda: str(uuid4()[:8]),
         title="Entity ID",
         description="Unique identifier for the entity",
     )
@@ -101,7 +134,7 @@ class Entity(BaseModel):
         title="Entity type",
         description="Type classification (e.g., 'person', 'organization', 'event')",
     )
-    observations: list[Observation] = Field(
+    observations: list[Observation] | list[None] | None = Field(
         default_factory=list,
         title="List of observations",
         description="Associated observations with content, durabiltiy, and timestamp",
@@ -111,15 +144,95 @@ class Entity(BaseModel):
         title="Aliases",
         description="Alternative names for the entity",
     )
-    icon: str | None = Field(
+    _icon: str | None = Field(
         default="👤",
         title="Icon",
         description="Emoji used to represent the entity in certain contexts",
     )
 
-    def __repr__(self):
-        return f"Entity(name={self.name}, entity_type={self.entity_type}, observations={self.observations}, aliases={self.aliases}, icon={self.icon})"
+    @property
+    def icon(self) -> str | None:
+        """Return the icon of the entity, if it exists and not its display is not disabled in settings."""
+        if Settings.no_emojis or not self._icon:
+            return None
+        return self._icon
 
+    @icon.setter
+    def icon(self, icon: str):
+        """Set the icon of the entity. Must be a single valid emoji."""
+        self._icon = icon if is_emoji(icon) else None
+        if not self._icon:
+            logger.debug(f"Invalid emoji '{icon}' given for entity '{self.name}'")
+            raise ValueError(f"Error setting icon for entity '{self.name}': value must be a single valid emoji. Instead, received '{icon}'")
+
+    def ensure_id(self) -> str:
+        """Ensure that the ID is set. If not, generate a new one. Returns the ID."""
+        if self.id is None:
+            self.id = str(uuid4()[:8])
+        return self.id
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the entity as a JSON dictionary ensuring the ID is set."""
+        self.ensure_id()
+        return self.model_dump(exclude_none=True)
+
+    @classmethod
+    def from_name(cls, name: str, entity_type: str) -> "Entity":
+        """Create an entity from a given name and entity type."""
+        return cls(name=name, entity_type=entity_type)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Entity":
+        """Initialize the entity from a dictionary of values."""
+        required_keys = ["id", "name", "entity_type"]
+        for k in required_keys:
+            if not data[k].strip():
+                raise ValueError(f"Missing required key: {k}")
+        
+        observations = []
+        aliases = []
+        icon = None
+        if data["observations"] and isinstance(data["observations"], list) and len(data["observations"]) > 0:
+            observations = [Observation(**o) for o in data["observations"]]
+        if data["aliases"] and isinstance(data["aliases"], list) and len(data["aliases"]) > 0:
+            aliases = [str(a) for a in data["aliases"]]
+        if data["icon"]:
+            icon = data["icon"] if is_emoji(data["icon"]) else None
+
+        return cls(
+            id=data["id"],
+            name=data["name"],
+            entity_type=data["entity_type"],
+            observations=observations,
+            aliases=aliases,
+            icon=icon
+        )
+
+    @classmethod
+    def from_values(cls, 
+        name: str,
+        entity_type: str,
+        observations: list[Observation] | None = None,
+        aliases: list[str] | None = None,
+        icon: str | None = None,
+    ) -> "Entity":
+        """
+        Create an entity from values.
+        
+        Args:
+            name (str, required): The name of the entity
+            entity_type (str, required): The type of the entity
+            observations (list[Observation]): The observations of the entity
+            aliases (list[str]): The aliases of the entity
+            icon (str): The emoji to provide a visual representation of the entity. Must be a single valid emoji.
+        
+        Returns:
+            Entity: The created entity
+        """
+        if not cls._validate_icon(icon):
+            icon = None
+            logger.warning(f"Invalid emoji '{icon}' given for new entity '{name}'")
+        return cls(name=name, entity_type=entity_type, observations=observations, aliases=aliases, icon=icon)
 
 class Relation(BaseModel):
     """
@@ -128,34 +241,72 @@ class Relation(BaseModel):
     Relations are stored in active voice and describe how entities
     interact or relate to each other.
     """
-
     model_config = ConfigDict(
         populate_by_name=True,
         validate_by_name=True,
+        validate_by_alias=True,
     )
-    from_entity: str | None = Field(
-        ..., deprecated=True, title="From entity", description="Source entity name"
-    )
-    to_entity: str | None = Field(..., title="To entity", description="Target entity name")
-    relation_type: str = Field(
-        ...,
-        title="Relation type",
-        description="Relationship type in active voice. Example: (A) is really interested in (B)",
+
+    from_entity: str | Entity = Field(
+        ..., title="From entity", description="Source entity object"
     )
     from_id: str | None = Field(
         default=None,
         title="From entity ID",
         description="Unique identifier for the source entity",
     )
+    relation: str = Field(
+        ...,
+        title="Relation type",
+        description="Relationship content/description in active voice. Example: (A) is really interested in (B)",
+        alias="relation_type",
+    )
+    to_entity: str | Entity = Field(..., title="To entity", description="Target entity object")
     to_id: str | None = Field(
         default=None,
         title="To entity ID",
         description="Unique identifier for the target entity",
     )
 
-    def __repr__(self):
-        return f"Relation(from_entity={self.from_entity}, to_entity={self.to_entity}, relation_type={self.relation_type})"
+    @classmethod
+    def from_entities(cls, from_entity: Entity, to_entity: Entity, relation: str) -> "Relation":
+        """Create a relation from entity objects and relation content."""
+        return cls(from_entity=from_entity, to_entity=to_entity, relation=relation)
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "Relation":
+        """Initialize the relation from a dictionary of values."""
+        from_id = data["from_entity"] or data["from_id"]
+        to_id = data["to_entity"] or data["to_id"]
+        validate_entity_id(from_id)
+        validate_entity_id(to_id)
+        content = data["relation"] or data["relation_type"]
+        if not from_id or not to_id:
+            raise ValueError(f"Invalid relation: {data}")
+        return cls(
+            from_id=from_id,
+            to_id=to_id,
+            relation=content
+        )
+
+    def ensure_ids(self) -> None:
+        """Ensure that the from_id and to_id are set. If not, pull from the from_entity and to_entity.
+        If the entity IDs are not set, new ones will be generated."""
+        try:
+            self.from_entity.ensure_id()
+            self.to_entity.ensure_id()
+            self.from_id = self.from_entity.id
+            self.to_id = self.to_entity.id
+        except Exception as e:
+            raise RuntimeError(f"Error ensuring entity IDs of relationship {self.relation}: {e}")
+    
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the relation to a JSON dictionary. Includes entity ids and relation content. If the from_id and to_id are not set, generate new ones."""
+        self.ensure_ids()
+        return self.model_dump(include={"from_id", "relation", "to_id"})
+
+    def __str__(self):
+        return f"{self.from_entity} ({self.from_id}) {self.relation} {self.to_entity} ({self.to_id})"
 
 class UserIdentifier(BaseModel):
     """
@@ -180,15 +331,15 @@ class UserIdentifier(BaseModel):
       - base_name: The base name of the user - first, middle, and last name without any prefixes or suffixes. Organized as a list of strings with each part.
       - names: Various full name forms for the user, depending on the provided information. Index 0 is the first, middle, and last name without any prefixes or suffixes.
     """
+    model_config = ConfigDict(
+        populate_by_name=True,
+        validate_by_name=True,
+    )
 
     linked_entity_id: str | None = Field(
         default=None,
         title="Linked entity ID",
         description="The ID of the entity that is linked to the user. This entity will be used to store observations about the user.",
-    )
-    model_config = ConfigDict(
-        populate_by_name=True,
-        validate_by_name=True,
     )
     preferred_name: str | None = Field(
         default=None,
@@ -251,11 +402,8 @@ class UserIdentifier(BaseModel):
         description="The entity that is linked to the user. This is used to link the user to the entity that represents them in the knowledge graph.",
     )
 
-    def __repr__(self):
-        return f"UserIdentifier(preferred_name={self.preferred_name}, first_name={self.first_name}, last_name={self.last_name}, middle_names={self.middle_names}, pronouns={self.pronouns}, nickname={self.nickname}, prefixes={self.prefixes}, suffixes={self.suffixes}, emails={self.emails}, base_name={self.base_name}, names={self.names})"
-
     @classmethod
-    def from_llm(
+    def from_values(
         cls,
         preferred_name: str | None = None,
         first_name: str | None = None,
@@ -267,9 +415,21 @@ class UserIdentifier(BaseModel):
         suffixes: list[str] | None = None,
         emails: list[str] | None = None,
     ) -> "UserIdentifier":
-        """Create a UserIdentifier from a LLM response."""
+        """Create a UserIdentifier from values.
+        
+        Args:
+            preferred_name (str): The preferred name of the user
+            first_name (str): The given name of the user
+            last_name (str): The family name of the user
+            middle_names (list[str]): The middle names of the user
+            pronouns (str): The pronouns of the user
+            nickname (str): The nickname of the user
+            prefixes (list[str]): The prefixes of the user
+            suffixes (list[str]): The suffixes of the user
+            emails (list[str]): The email addresses of the user
+        """
 
-        # Compute the preferred name
+        # Compute the preferred name if not given
         if not preferred_name:
             if nickname:
                 preferred_name = nickname
@@ -291,21 +451,31 @@ class UserIdentifier(BaseModel):
         if last_name:
             base_name_parts.append(last_name)
         if not base_name_parts:
-            raise ValueError("No suitable name provided for the user")
+            # Use nickname if all else fails
+            base_name_parts.append(nickname or preferred_name)  # For alt names list, prefer nickname over preferred name
+            logger.warning("No suitable first/middle/last name(s) provided for the user, using nickname")
 
-        # First index is first_name, last_name
+        # names[0] is first_name, last_name without any prefixes or suffixes
         base_name_str = " ".join(base_name_parts)
         full_names = [base_name_str]
-        # Next index is first_name, middle_names, last_name. Results in a duplicate if no middle names are provided.
+
+        # names[1] is first_name, middle_names, last_name. Results in a duplicate of names[0] (intentional) if no middle names are provided.
         if middle_names:
-            middle_joined = " ".join(middle_names)
-            full_names.append(" ".join([n for n in [first_name, middle_joined, last_name] if n]))
+            parts = [first_name]
+            parts.extend(middle_names)
+            parts.append(last_name)
+            full_names.append(" ".join(parts))
+        elif first_name or last_name:
+            parts = [first_name, last_name]
+            full_names.append(" ".join(parts))
         else:
-            full_names.append(" ".join([n for n in [first_name, last_name] if n]))
+            # If no other suitable name can be computed, use the base name again
+            full_names.append(base_name_str)
 
         if len(full_names) != 2:
-            raise ValueError("Unknown error occured during name computation")
-        # Add all possible prefix/suffix combinations on top of the base name of the user
+            raise ValueError(f"Unknown error occured during name computation (full_names length={len(full_names)}, expected 2)")
+        
+        # Next, add all possible prefix/suffix combinations on top of the base name (names[0]) of the user
         if prefixes:
             for pfx in prefixes:
                 prefixed_name = f"{pfx} {base_name_str}"
@@ -318,7 +488,6 @@ class UserIdentifier(BaseModel):
             first_name=first_name,
             last_name=last_name,
             middle_names=middle_names,
-            base_name=base_name_parts,
             preferred_name=preferred_name,
             nickname=nickname,
             prefixes=prefixes,
@@ -367,7 +536,7 @@ class KnowledgeGraph(BaseModel):
     Relations:
         - from_entity: Source entity name
         - to_entity: Target entity name
-        - relation_type: Relationship type in active voice. Example: (A) is really interested in (B)
+        - relation: Relationship type in active voice. Example: (A) is really interested in (B)
 
     Observations are timestamped statements about entities. They are used to track the state of entities over time.
 
@@ -400,9 +569,6 @@ class KnowledgeGraph(BaseModel):
         default=None, title="Relations", description="All relations between entities"
     )
 
-    def __repr__(self):
-        return f"KnowledgeGraph(entities={self.entities}, relations={self.relations}, user_info={self.user_info})"
-
     @classmethod
     def from_dict(cls, data: dict) -> "KnowledgeGraph":
         """Initialize the knowledge graph from a dictionary of values."""
@@ -413,26 +579,27 @@ class KnowledgeGraph(BaseModel):
         )
 
     @classmethod
-    def from_default(cls) -> "KnowledgeGraph":
-        """Initialize the knowledge graph with default values."""
+    def from_components(cls, user_info: UserIdentifier, entities: list[Entity], relations: list[Relation]) -> "KnowledgeGraph":
+        """Initialize the knowledge graph by passing in the user info object, entities lists, and relations lists."""
         return cls(
-            user_info=UserIdentifier.from_default(),
-            entities=[
-                Entity(
-                    name="__default_user__",
-                    entity_type="__default_user__",
-                    observations=[
-                        Observation(
-                            content="**Is the user you are speaking to**",
-                            durability=DurabilityType.PERMANENT,
-                            timestamp=datetime.now().isoformat(),
-                        )
-                    ],
-                )
-            ],
-            relations=[],
+            user_info=user_info,
+            entities=entities,
+            relations=relations,
         )
 
+    @classmethod
+    def from_default(cls) -> "KnowledgeGraph":
+        """Initialize the knowledge graph with default values."""
+        from .seed_graph import build_initial_graph
+        return build_initial_graph()
+
+    def to_dict_list(self) -> list[dict]:
+        """Return the knowledge graph as a list of dictionaries suitable for writing to a JSONL file."""
+        result = []
+        result.append(self.user_info.to_dict())
+        result.extend(self.entities)
+        result.extend(self.relations)
+        return result
 
 class CleanupResult(BaseModel):
     """Result of cleaning up outdated observations."""
@@ -484,6 +651,118 @@ class DurabilityGroupedObservations(BaseModel):
     def __repr__(self):
         return f"DurabilityGroupedObservations(permanent={self.permanent}, long_term={self.long_term}, short_term={self.short_term}, temporary={self.temporary})"
 
+class CreateEntityRequest(BaseModel):
+    """
+    Request model used to create an entity.
+    
+    Properties:
+        name (str): The name of the new entity to create.
+        entity_type (str): The type of the entity. Arbitrary, but should be a noun.
+        observations (list[Observation]): The observations of the entity. Optional, but recommended.
+        aliases (list[str]): Any alternative names for the entity
+        icon (str): The icon of the entity. Must be a single valid emoji. Optional, but recommended.
+    """
+    
+    model_config = ConfigDict(
+        populate_by_name=True,
+        validate_by_name=True,
+        validate_by_alias=True,
+    )
+    name: str = Field(
+        ...,
+        title="Entity name",
+        description="The name of the new entity to create.",
+    )
+    entity_type: str = Field(
+        ...,
+        title="Entity type",
+        description="The type of the entity. Arbitrary, but should be a noun.",
+        alias="type",
+    )
+    observations: list[Observation] | None = Field(
+        default=None,
+        title="Observations",
+        description="The observations of the entity. Optional, but recommended.",
+    )
+    aliases: list[str] | None = Field(
+        default=None,
+        title="Aliases",
+        description="Any alternative names for the entity",
+    )
+    icon: str | None = Field(
+        default=None,
+        title="Icon",
+        description="The icon of the entity. Must be a single valid emoji. Optional, but recommended.",
+    )
+
+class CreateRelationRequest(BaseModel):
+    """Request model used to create a relation."""
+    model_config = ConfigDict(
+        populate_by_name=True,
+        validate_by_name=True,
+    )
+
+    from_entity_id: str = Field(
+        ...,
+        title="Originating entity ID",
+        description="The name of the entity to create a relation from",
+    )
+    to_entity_id: str = Field(
+        ...,
+        title="Destination entity ID",
+        description="The id of the entity to create a relation to",
+    )
+    relation: str = Field(
+        ...,
+        title="Relation content",
+        description="Description of the relation. Should be in active voice and concise. Example: 'is the father of'",
+    )
+
+    @field_validator("from_entity_id")
+    def _validate_from_entity_id(cls, v: str) -> str:
+        """Validate the provided originating entity ID."""
+        if v == "user":
+            return v
+        elif (
+            not v
+            or v == ""
+            or not isinstance(v, str)
+            or not v.strip()
+            or len(v) != 8
+            or not v.isalnum()
+        ):
+            raise ValueError(f"Invalid originating entity ID: {v}")
+        return v
+
+    @field_validator("to_entity_id")
+    def _validate_to_entity_id(cls, v: str) -> str:
+        """Validate the provided destination entity ID."""
+        if v == "user":
+            return v
+        elif (
+            not v
+            or v == ""
+            or not isinstance(v, str)
+            or not v.strip()
+            or len(v) != 8
+            or not v.isalnum()
+        ):
+            raise ValueError(f"Invalid destination entity ID: {v}")
+        return v
+
+    @classmethod
+    def from_objects(
+        cls,
+        from_entity: Entity,
+        to_entity: Entity,
+        relation: str,
+    ) -> "CreateRelationRequest":
+        """Produce a CreateRelationRequest from Entity objects and relation content."""
+        if not all(isinstance(from_entity, Entity) and from_entity.id):
+            from_entity.ensure_id()
+        if not all(isinstance(to_entity, Entity) and to_entity.id):
+            to_entity.ensure_id()
+        return cls(from_entity_id=from_entity.id, to_entity_id=to_entity.id, relation=relation)
 
 class ObservationRequest(BaseModel):
     """Request model for managing observations for an entity in the knowledge graph. Used for both addition and deletion."""
@@ -552,7 +831,7 @@ class DeleteEntryRequest(BaseModel):
         - 'data' (list[AddObservationRequest] | list[str] | list[Relation]): must be a list of the appropriate object for each entry_type:
             - entry_type = 'entity': list of entity names
             - entry_type = 'observation': [{entity_name, [observation content]}]
-            - entry_type = 'relation': [{from_entity, to_entity, relation_type}]
+            - entry_type = 'relation': [{from_entity, to_entity, relation}]
     """
 
     entry_type: Literal["observation", "entity", "relation"] = Field(
@@ -567,33 +846,35 @@ class DeleteEntryRequest(BaseModel):
         """
     )
 
-
 class CreateEntryRequest(BaseModel):
     """Request model used to validate and add data to the knowledge graph.
 
     Properties:
         - 'entry_type' (str): must be one of: 'observation', 'entity', or 'relation'
-        - 'data' (list[AddObservationRequest] | list[Entity] | list[Relation])
+        - 'data' (list[ObservationRequest] | list[Entity] | list[Relation])
 
     'data' must be a list of the appropriate object for each entry_type:
 
         - observation: [{'entity_name': 'entity_name', 'content': list[{'content':'observation_content', 'durability': Literal['temporary', 'short-term', 'long-term', 'permanent']}]}]  (timestamp will be automatically added)
         - entity: [{'name': 'entity_name', 'entity_type': entity type, 'observations': [{'content': str, 'durability': Literal['temporary', 'short-term', 'long-term', 'permanent']}]}]
-        - relation: [{'from': 'entity_name', 'to': 'entity_name', 'relation_type': 'relation_type'}]
+        - relation: [{'from': 'entity_name', 'to': 'entity_name', 'relation': 'relation'}]
     """
-
+    model_config = ConfigDict(
+        deprecated=True,
+        populate_by_name=True,
+        validate_by_name=True,
+    )
     entry_type: Literal["observation", "entity", "relation"] = Field(
         description="Type of entry to create: 'observation', 'entity', or 'relation'"
     )
     data: list[ObservationRequest] | list[Entity] | list[Relation] = Field(
         description="""Data to be added to the knowledge graph. Expected format depends on the entry_type:
         
-        - observation: list of AddObservationRequest objects
+        - observation: list of ObservationRequest objects
         - entity: list of Entity objects
         - relation: list of Relation objects
         """
     )
-
 
 class CreateEntityResult(BaseModel):
     """Result of creating an entity."""
@@ -604,18 +885,15 @@ class CreateEntityResult(BaseModel):
         description="The entities that were successfully created (excludes existing names)",
     )
 
-    def __repr__(self):
-        return f"CreateEntityResult(entities={self.entities})"
-
-
 class CreateRelationResult(BaseModel):
     """Result of creating a relation."""
 
+    model_config = ConfigDict(
+        populate_by_name=True,
+        validate_by_name=True,
+    )
     relations: list[Relation] = Field(
         ...,
         title="Relations",
         description="The relations that were successfully created",
     )
-
-    def __repr__(self):
-        return f"CreateRelationResult(relations={self.relations})"

@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import Literal
 from dotenv import load_dotenv
 
-
 logging.basicConfig(level=logging.INFO)
 
 DEFAULT_MEMORY_PATH = Path(__name__).parent.parent / "memory.jsonl"

@@ -3,49 +3,40 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from .models import Entity, Relation
+from .models import Entity, KnowledgeGraph, Relation, UserIdentifier
 
-def build_initial_graph() -> list[dict]:
+def build_initial_graph(user_info: UserIdentifier| None = None) -> KnowledgeGraph:
     """Return a minimal initialized knowledge graph using Pydantic models.
 
     Output mirrors example.jsonl: JSON Lines with entries of type "entity" and "relation".
     Entities and relations are constructed via models to remain consistent with schema changes.
     """
-    user_entity = Entity(name="default_user", entity_type="user")
-    assistant_entity = Entity(name="default_assistant", entity_type="assistant")
+    if user_info is None:
+        user_info = UserIdentifier.from_default()
+    else:
+        user_info = user_info
+    
+    user_entity = Entity(name=user_info.names[0], entity_type="user")
+    assistant_entity = Entity(name="assistant", entity_type="AI assistant")
 
+    # Create seed entries for the new graph
     relation_user_to_assistant = Relation(
-        from_entity=user_entity.name,
-        to_entity=assistant_entity.name,
-        relation_type="has an AI assistant named",
+        from_entity=user_entity,
+        to_entity=assistant_entity,
+        relation="has an AI assistant named",
     )
-    relation_assistant_to_user = Relation(
-        from_entity=assistant_entity.name,
-        to_entity=user_entity.name,
-        relation_type="is the AI assistant of",
+    relation_assistant_to_user = Relation.from_entities(
+        from_entity=assistant_entity,
+        to_entity=user_entity,
+        relation="is the AI assistant of",
     )
 
-    def to_entity_record(entity: Entity) -> dict:
-        return {"type": "entity", "data": entity.model_dump(exclude_none=True)}
-
-    def to_relation_record(relation: Relation) -> dict:
-        data = relation.model_dump(exclude_none=True)
-        # Map model field names to external JSONL schema keys for compatibility with example.jsonl
-        if "from_entity" in data:
-            data["from"] = data.pop("from_entity")
-        if "to_entity" in data:
-            data["to"] = data.pop("to_entity")
-        return {"type": "relation", "data": data}
-
-    records: list[dict] = [
-        to_entity_record(user_entity),
-        to_entity_record(assistant_entity),
-        to_relation_record(relation_user_to_assistant),
-        to_relation_record(relation_assistant_to_user),
-    ]
-
-    return records
-
+    graph = KnowledgeGraph.from_components(
+        user_info=user_info,
+        entities=[user_entity, assistant_entity],
+        relations=[relation_user_to_assistant, relation_assistant_to_user],
+    )
+    return graph
 
 def write_jsonl(output_path: Path | None, records: list[dict], overwrite: bool = False) -> None:
     """Write records to a JSONL file at output_path, creating parent dirs."""
@@ -81,8 +72,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    records = build_initial_graph()
-    write_jsonl(args.output, records)
+    new_graph = build_initial_graph()
+    write_jsonl(args.output, new_graph.to_dict())
 
 
 if __name__ == "__main__":

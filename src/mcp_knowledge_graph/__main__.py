@@ -9,7 +9,7 @@ from .server import start_server
 
 def main():
     try:
-        logger.info(f"Memory path: {settings.memory_path}")
+        logger.info(f"🔍 Memory path: {settings.memory_path}")
         logger.debug("🚀 Starting IQ-MCP server...")
         asyncio.run(start_server())
     except KeyboardInterrupt:

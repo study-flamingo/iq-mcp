@@ -123,7 +123,7 @@ class KnowledgeGraphManager:
         """Deduplicate relations by (from, to, type), keeping last occurrence order."""
         unique: dict[tuple[str, str, str], Relation] = {}
         for rel in relations:
-            key = (rel.from_entity, rel.to_entity, rel.relation_type)
+            key = (rel.from_entity, rel.to_entity, rel.relation)
             unique[key] = rel
         return list(unique.values())
 
@@ -214,14 +214,17 @@ class KnowledgeGraphManager:
                                 if not payload:
                                     raise logger.error(f"Invalid payload: {item}")
                             else:
-                                raise logger.error(f"{item} has invalid item type: {item_type}")
+                                raise logger.error(f"{item} has invalid data")
 
                         if item_type == "entity" and isinstance(payload, dict):
-                            entity = Entity(**payload)
+                            entity = Entity.from_dict(payload)
                             entities.append(entity)
+                            logger.debug(f"Loaded entity: {entity}")
 
                         elif item_type == "relation" and isinstance(payload, dict):
-                            relations.append(Relation(**payload))
+                            relation = Relation.from_dict(payload)
+                            relations.append(relation)
+                            logger.debug(f"Loaded relation: {relation}")
 
                         elif item_type == "user_info" and isinstance(payload, dict):
                             user_info = UserIdentifier(**payload)
@@ -239,6 +242,8 @@ class KnowledgeGraphManager:
                             f"Warning: Skipping invalid line in {self.memory_file_path}: {e}"
                         )
                         continue
+                    except Exception as e:
+                        raise RuntimeError(f"Error loading graph: {e}")
 
             if not user_info:
                 logger.warning(
@@ -277,34 +282,41 @@ class KnowledgeGraphManager:
             lines = []
 
             # Save user info
-            if graph.user_info:
-                user_info_payload = graph.user_info.model_dump()
-                record = {"type": "user_info", "data": user_info_payload}
-                lines.append(json.dumps(record, separators=(",", ":")))
-            else:
-                # If for some reason the user info is not set, save with default info
-                user_info_payload = UserIdentifier.from_default().model_dump()
-                record = {"type": "user_info", "data": user_info_payload}
-                lines.append(json.dumps(record, separators=(",", ":")))
+            try:
+                if graph.user_info:
+                    user_info_payload = graph.user_info.model_dump()
+                    record = {"type": "user_info", "data": user_info_payload}
+                    lines.append(json.dumps(record, separators=(",", ":")))
+                else:
+                    # If for some reason the user info is not set, save with default info
+                    user_info_payload = UserIdentifier.from_default().model_dump()
+                    record = {"type": "user_info", "data": user_info_payload}
+                    lines.append(json.dumps(record, separators=(",", ":")))
+            except Exception as e:
+                raise RuntimeError(f"Failed to save user info: {e}")
 
             # Save entities
-            for entity in graph.entities:
-                entity_payload = entity.model_dump()
-                record = {"type": "entity", "data": entity_payload}
-                lines.append(json.dumps(record, separators=(",", ":")))
+            try:
+                for e in graph.entities:
+                    record = {"type": "entity", "data": e.to_dict()}
+                    lines.append(json.dumps(record, separators=(",", ":")))
+            except Exception as e:
+                raise RuntimeError(f"Failed to save entities: {e}")
 
             # Save relations
-            for relation in graph.relations:
-                relation_payload = relation.model_dump()
-                record = {"type": "relation", "data": relation_payload}
-                lines.append(json.dumps(record, separators=(",", ":")))
+            try:
+                for r in graph.relations:
+                    record = {"type": "relation", "data": r.to_dict()}
+                    lines.append(json.dumps(record, separators=(",", ":")))
+            except Exception as e:
+                raise RuntimeError(f"Failed to save relations: {e}")
 
-            if test:
-                memory_file_path = self.memory_file_path.with_suffix("_test.jsonl")
-            else:
-                memory_file_path = self.memory_file_path
-            with open(memory_file_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(lines))
+
+            try:
+                with open(self.memory_file_path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(lines))
+            except Exception as e:
+                raise RuntimeError(f"Failed to write graph to {self.memory_file_path}: {e}")
 
         except Exception as e:
             raise RuntimeError(f"Failed to save graph: {e}")
@@ -359,18 +371,18 @@ class KnowledgeGraphManager:
             from_c = self._canonicalize_entity_name(graph, rel.from_entity)
             to_c = self._canonicalize_entity_name(graph, rel.to_entity)
             canonicalized.append(
-                Relation(from_entity=from_c, to_entity=to_c, relation_type=rel.relation_type)
+                Relation(from_entity=from_c, to_entity=to_c, relation=rel.relation)
             )
 
         # Create set of existing relations for duplicate checking (with canonical names)
         existing_relations = {
-            (r.from_entity, r.to_entity, r.relation_type) for r in graph.relations
+            (r.from_entity, r.to_entity, r.relation) for r in graph.relations
         }
 
         new_relations = [
             relation
             for relation in canonicalized
-            if (relation.from_entity, relation.to_entity, relation.relation_type)
+            if (relation.from_entity, relation.to_entity, relation.relation)
             not in existing_relations
         ]
 
@@ -562,7 +574,7 @@ class KnowledgeGraphManager:
             (
                 self._canonicalize_entity_name(graph, r.from_entity),
                 self._canonicalize_entity_name(graph, r.to_entity),
-                r.relation_type,
+                r.relation,
             )
             for r in relations
         }
@@ -571,7 +583,7 @@ class KnowledgeGraphManager:
         graph.relations = [
             r
             for r in graph.relations
-            if (r.from_entity, r.to_entity, r.relation_type) not in canonical_to_delete
+            if (r.from_entity, r.to_entity, r.relation) not in canonical_to_delete
         ]
 
         await self._save_graph(graph)
@@ -814,3 +826,13 @@ class KnowledgeGraphManager:
         graph.user_info = user_info
         await self._save_graph(graph)
         return user_info
+
+    async def get_entities_from_relation(self, relation: Relation) -> (Entity | None, Entity | None):
+        """
+        Resolve the entities from a Relation object. Returns the 'from' entity and 'to' entity as a tuple.
+        """
+        graph = await self._load_graph()
+
+        from_entity = self._get_entity_by_id(graph, relation.from_id)
+        to_entity = self._get_entity_by_id(graph, relation.to_id)
+        return from_entity, to_entity

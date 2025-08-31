@@ -12,7 +12,7 @@ def _load_graph(input_path: Path) -> Tuple[List[Dict[str, Any]], List[Dict[str, 
 
     Expected input lines:
       {"type": "entity", "data": {"name": str, "entity_type": str, "observations": list[str|{content:str}] , "aliases": list[str]}}
-      {"type": "relation", "data": {"from": str, "to": str, "relation_type": str}}
+      {"type": "relation", "data": {"from": str, "to": str, "relation": str}}
     """
     nodes_by_id: Dict[str, Dict[str, Any]] = {}
     edges: List[Dict[str, Any]] = []
@@ -71,10 +71,10 @@ def _load_graph(input_path: Path) -> Tuple[List[Dict[str, Any]], List[Dict[str, 
             elif typ == "relation":
                 src = data.get("from")
                 dst = data.get("to")
-                rel_type = data.get("relation_type", "related_to")
+                rel_type = data.get("relation", "related_to")
                 if not src or not dst:
                     continue
-                edges.append({"source": src, "target": dst, "relation_type": rel_type})
+                edges.append({"source": src, "target": dst, "relation": rel_type})
             else:
                 # Ignore other types for now
                 continue
@@ -222,7 +222,7 @@ def _build_html(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]], title:
         .data(data.links)
         .join('text')
         .attr('class', 'link-label')
-        .text(d => d.relation_type || 'related_to');
+        .text(d => d.relation || 'related_to');
 
       // Nodes
       const node = zoomLayer.append('g')
