@@ -77,11 +77,7 @@ class Observation(BaseModel):
         title="Durability",
         description="How long this observation is expected to remain relevant",
     )
-    timestamp: datetime | None = Field(
-        ...,
-        title="Timestamp",
-        description="ISO date string when the observation was created",
-    )
+    timestamp: datetime = Field(..., title="Timestamp", description="ISO date when the observation was created")
 
     @classmethod
     def add_timestamp(
@@ -119,8 +115,7 @@ class Entity(BaseModel):
         validate_by_name=True,
     )
     id: str = Field(
-        ...,
-        default_factory=lambda: str(uuid4()[:8]),
+        default_factory=lambda: str(uuid4())[:8],
         title="Entity ID",
         description="Unique identifier for the entity",
     )
@@ -134,10 +129,10 @@ class Entity(BaseModel):
         title="Entity type",
         description="Type classification (e.g., 'person', 'organization', 'event')",
     )
-    observations: list[Observation] | list[None] | None = Field(
+    observations: list[Observation] = Field(
         default_factory=list,
         title="List of observations",
-        description="Associated observations with content, durabiltiy, and timestamp",
+        description="Associated observations with content, durability, and timestamp",
     )
     aliases: list[str] = Field(
         default_factory=list,
@@ -167,8 +162,8 @@ class Entity(BaseModel):
 
     def ensure_id(self) -> str:
         """Ensure that the ID is set. If not, generate a new one. Returns the ID."""
-        if self.id is None:
-            self.id = str(uuid4()[:8])
+        if not self.id:
+            self.id = str(uuid4())[:8]
         return self.id
 
     def to_dict(self) -> dict[str, Any]:
@@ -184,38 +179,30 @@ class Entity(BaseModel):
     @classmethod
     def from_dict(cls, data: dict) -> "Entity":
         """Initialize the entity from a dictionary of values."""
-        required_keys = ["id", "name", "entity_type"]
-        for k in required_keys:
-            if not data[k].strip():
-                raise ValueError(f"Missing required key: {k}")
+        for k in ["id", "name", "entity_type"]:
+            v = data.get(k)
+            if not isinstance(v, str) or not v.strip():
+                raise ValueError(f"Missing or invalid required key: {k}")
         
-        observations = []
-        aliases = []
-        icon = None
-        if data["observations"] and isinstance(data["observations"], list) and len(data["observations"]) > 0:
-            observations = [Observation(**o) for o in data["observations"]]
-        if data["aliases"] and isinstance(data["aliases"], list) and len(data["aliases"]) > 0:
-            aliases = [str(a) for a in data["aliases"]]
-        if data["icon"]:
-            icon = data["icon"] if is_emoji(data["icon"]) else None
+        observations = [Observation(**o) for o in (data.get("observations") or [])]
+        aliases = [str(a) for a in (data.get("aliases") or [])]
 
-        return cls(
-            id=data["id"],
-            name=data["name"],
-            entity_type=data["entity_type"],
-            observations=observations,
-            aliases=aliases,
-            icon=icon
-        )
+        e = cls(id=data["id"], name=data["name"], entity_type=data["entity_type"],
+                observations=observations, aliases=aliases)
+        icon = data.get("icon")
+        if icon:
+            e.icon = icon  # will validate via setter
+        return e
 
     @classmethod
-    def from_values(cls, 
-        name: str,
+    def from_values(
+        cls, 
+        name: str, 
         entity_type: str,
         observations: list[Observation] | None = None,
         aliases: list[str] | None = None,
-        icon: str | None = None,
-    ) -> "Entity":
+        icon: str | None = None
+        ) -> "Entity":
         """
         Create an entity from values.
         
@@ -229,10 +216,15 @@ class Entity(BaseModel):
         Returns:
             Entity: The created entity
         """
-        if not cls._validate_icon(icon):
-            icon = None
-            logger.warning(f"Invalid emoji '{icon}' given for new entity '{name}'")
-        return cls(name=name, entity_type=entity_type, observations=observations, aliases=aliases, icon=icon)
+        e = cls(name=name, entity_type=entity_type,
+                observations=observations or [],
+                aliases=aliases or [])
+        if icon:
+            if is_emoji(icon):
+                e.icon = icon
+            else:
+                logger.warning(f"Invalid emoji '{icon}' given for new entity '{name}'")
+        return e
 
 class Relation(BaseModel):
     """
@@ -275,33 +267,34 @@ class Relation(BaseModel):
 
     @classmethod
     def from_dict(cls, data: dict) -> "Relation":
-        """Initialize the relation from a dictionary of values."""
-        from_id = data["from_entity"] or data["from_id"]
-        to_id = data["to_entity"] or data["to_id"]
-        validate_entity_id(from_id)
-        validate_entity_id(to_id)
-        content = data["relation"] or data["relation_type"]
-        if not from_id or not to_id:
-            raise ValueError(f"Invalid relation: {data}")
-        return cls(
-            from_id=from_id,
-            to_id=to_id,
-            relation=content
-        )
+        """Initialize the relation from a dictionary of values. Ideal for reading from storage."""
+        from_id = validate_entity_id(data.get("from_id") or data.get("from_entity"))
+        to_id = validate_entity_id(data.get("to_id") or data.get("to_entity"))
+        content = data.get("relation") or data.get("relation_type")
+        if not content or not isinstance(content, str) or not content.strip():
+            raise ValueError(f"Invalid relation content: {content!r}")
+        return cls(from_id=from_id, to_id=to_id, relation=content)
 
     def ensure_ids(self) -> None:
-        """Ensure that the from_id and to_id are set. If not, pull from the from_entity and to_entity.
-        If the entity IDs are not set, new ones will be generated."""
-        try:
-            self.from_entity.ensure_id()
-            self.to_entity.ensure_id()
-            self.from_id = self.from_entity.id
-            self.to_id = self.to_entity.id
-        except Exception as e:
-            raise RuntimeError(f"Error ensuring entity IDs of relationship {self.relation}: {e}")
+        """
+        Ensure that the from_id and to_id are set. If not, pull from the from_entity and to_entity.
+        If either entities are not correctly typed, raise an error.
+        """
+        if not self.from_id or not self.to_id:
+            try:
+                if not self.from_entity or not self.to_entity:
+                    raise ValueError("Bad relation: from_entity or to_entity are invalid!")
+                if not isinstance(self.from_entity, Entity) or not isinstance(self.to_entity, Entity):
+                    raise ValueError("Bad relation: from_entity and to_entity must be Entity objects")
+                self.from_entity.ensure_id()
+                self.to_entity.ensure_id()
+                self.from_id = self.from_entity.id
+                self.to_id = self.to_entity.id
+            except Exception as e:
+                raise KnowledgeGraphException(f"Error ensuring entity IDs of relationship {self.relation}: {e}")
     
     def to_dict(self) -> dict[str, Any]:
-        """Serialize the relation to a JSON dictionary. Includes entity ids and relation content. If the from_id and to_id are not set, generate new ones."""
+        """Serialize the relation to a JSON dictionary, ideal for writing to storage. Includes entity ids and relation content. If the from_id and to_id are not set, generate new ones."""
         self.ensure_ids()
         return self.model_dump(include={"from_id", "relation", "to_id"})
 
@@ -499,18 +492,12 @@ class UserIdentifier(BaseModel):
 
     @classmethod
     def from_default(cls) -> "UserIdentifier":
-        """Create a default UserIdentifier."""
+        """Create and return a default UserIdentifier."""
         return cls(
-            first_name="__default_user__",
-            last_name=None,
-            middle_names=None,
-            preferred_name=None,
-            pronouns=None,
-            nickname=None,
-            prefixes=None,
-            suffixes=None,
-            emails=None,
-            names=["__default_user__"],
+            first_name="user",
+            preferred_name="user",
+            pronouns="they/them",
+            names=["user", "user"],
         )
 
 
@@ -595,10 +582,9 @@ class KnowledgeGraph(BaseModel):
 
     def to_dict_list(self) -> list[dict]:
         """Return the knowledge graph as a list of dictionaries suitable for writing to a JSONL file."""
-        result = []
-        result.append(self.user_info.to_dict())
-        result.extend(self.entities)
-        result.extend(self.relations)
+        result = [self.user_info.model_dump(exclude_none=True)]
+        result.extend([e.model_dump(exclude_none=True) for e in (self.entities or [])])
+        result.extend([r.model_dump(exclude_none=True) for r in (self.relations or [])])
         return result
 
 class CleanupResult(BaseModel):
@@ -758,9 +744,9 @@ class CreateRelationRequest(BaseModel):
         relation: str,
     ) -> "CreateRelationRequest":
         """Produce a CreateRelationRequest from Entity objects and relation content."""
-        if not all(isinstance(from_entity, Entity) and from_entity.id):
+        if not (isinstance(from_entity, Entity) and from_entity.id):
             from_entity.ensure_id()
-        if not all(isinstance(to_entity, Entity) and to_entity.id):
+        if not (isinstance(to_entity, Entity) and to_entity.id):
             to_entity.ensure_id()
         return cls(from_entity_id=from_entity.id, to_entity_id=to_entity.id, relation=relation)
 
