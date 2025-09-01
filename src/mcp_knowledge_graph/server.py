@@ -199,7 +199,7 @@ async def read_graph():
     try:
         graph = await manager.read_graph()
 
-        result = await _print_user_info(graph)
+        result = _print_user_info(graph)
         try:
             user_name = graph.user_info.preferred_name  # Preferred name should be set during entity creations at minimum
         except Exception as e:
@@ -210,8 +210,8 @@ async def read_graph():
             result += f"\n👤 You've made observations about {len(graph.entities)} entities:\n"
             for e in graph.entities:
                 i = e.icon
-                if e._icon:
-                    i = f"{e._icon} "
+                if e.icon:
+                    i = f"{e.icon} "
                 if "default_user" in e.name.lower():
                     entity_name = user_name
                 else:
@@ -224,17 +224,44 @@ async def read_graph():
         result += (
             f"\n🔗 You've learned about {len(graph.relations)} relations between these entities:\n"
         )
-        for r in graph.relations:
-            if "default_user" in r.from_entity.lower():
-                from_entity = user_name
-            else:
-                from_entity = r.from_entity
-            if "default_user" in r.to_entity.lower():
-                to_entity = user_name
-            else:
-                to_entity = r.to_entity
-            result += f"  - {from_entity} {r.relation} {to_entity}\n"
+        try:
+            # Build id -> entity map for safe lookup
+            id_to_entity: dict[str, Entity] = {}
+            for e in graph.entities:
+                try:
+                    if not e.id:
+                        e.ensure_id()
+                    id_to_entity[e.id] = e
+                except Exception:
+                    continue
 
+            for r in graph.relations:
+                f_id = r.from_id
+                t_id = r.to_id
+                f_e = id_to_entity.get(f_id) if f_id else None
+                t_e = id_to_entity.get(t_id) if t_id else None
+
+                # Fallback to legacy names only if IDs are missing
+                f_name = f_e.name if f_e else (r.from_entity or "unknown")
+                t_name = t_e.name if t_e else (r.to_entity or "unknown")
+                f_type = f_e.entity_type if f_e else ""
+                t_type = t_e.entity_type if t_e else ""
+                f_i = f"{(f_e.icon if f_e else None)} " if (f_e and f_e.icon) else ""
+                t_i = f"{(t_e.icon if t_e else None)} " if (t_e and t_e.icon) else ""
+
+                # Check for user-linked entity and use its name instead
+                if f_e and f_e.name == "__user__" or f_e.name == "user":
+                    f_name = graph.user_info.preferred_name
+                if t_e and t_e.name == "__user__" or t_e.name == "user":
+                    t_name = graph.user_info.preferred_name
+
+                link_from = f"[{f_i}{f_name}]({f_id})" if f_id else f_name
+                link_to = f"[{t_i}{t_name}]({t_id})" if t_id else t_name
+                type_from = f" ({f_type})" if f_type else ""
+                type_to = f" ({t_type})" if t_type else ""
+                result += f"  - {link_from}{type_from} {r.relation} {link_to}{type_to}\n"
+        except Exception as e:
+            logger.error(f"Failed to print relations: {e}")
         return result
 
     except Exception as e:
@@ -285,7 +312,7 @@ async def create_entities(new_entities: list[CreateEntityRequest]):
             result = f"{len(entities)} entities created successfully:\n"
 
         for e in entities:
-            i = f"{e._icon} " if e._icon and not settings.no_emojis else ""
+            i = f"{e.icon} " if e.icon and not settings.no_emojis else ""
             result += f"{i}**{e.name}** ({e.entity_type})\n"
             if e.aliases:
                 result += "  Alias(es): "
@@ -344,8 +371,8 @@ async def create_relations(new_relations: list[CreateRelationRequest]):
             # Resolve print elements from entity objects
             f = r.from_entity
             t = r.to_entity
-            f_i = f"{f._icon} " if f._icon and not settings.no_emojis else ""
-            t_i = f"{t._icon} " if t._icon and not settings.no_emojis else ""
+            f_i = f"{f.icon} " if f.icon and not settings.no_emojis else ""
+            t_i = f"{t.icon} " if t.icon and not settings.no_emojis else ""
             result += f"{f_i}{f.name} ({f.entity_type}) {r.relation} {t_i}{t.name} ({t.entity_type})\n"
 
         return result

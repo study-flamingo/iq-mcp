@@ -23,7 +23,6 @@ def is_emoji(s: str) -> bool:
     g = _GRAPHEMES.findall(s)
     return len(g) == 1 and _HAS_EMOJI.search(g[0]) is not None
 
-
 def validate_entity_id(id: str) -> str | None:
     """Validate the provided entity ID."""
     if (
@@ -114,8 +113,8 @@ class Entity(BaseModel):
         populate_by_name=True,
         validate_by_name=True,
     )
-    id: str = Field(
-        default_factory=lambda: str(uuid4())[:8],
+    id: str | None = Field(
+        default=str(uuid4())[:8],
         title="Entity ID",
         description="Unique identifier for the entity",
     )
@@ -139,15 +138,11 @@ class Entity(BaseModel):
         title="Aliases",
         description="Alternative names for the entity",
     )
-    _icon: str | None = Field(
-        default="👤",
-        title="Icon",
-        description="Emoji used to represent the entity in certain contexts",
-    )
+    _icon: str | None = None
 
     @property
     def icon(self) -> str | None:
-        """Return the icon of the entity, if it exists and not its display is not disabled in settings."""
+        """Return the icon of the entity if it exists, and its display is not disabled in settings."""
         if Settings.no_emojis or not self._icon:
             return None
         return self._icon
@@ -160,11 +155,15 @@ class Entity(BaseModel):
             logger.debug(f"Invalid emoji '{icon}' given for entity '{self.name}'")
             raise ValueError(f"Error setting icon for entity '{self.name}': value must be a single valid emoji. Instead, received '{icon}'")
 
-    def ensure_id(self) -> str:
-        """Ensure that the ID is set. If not, generate a new one. Returns the ID."""
-        if not self.id:
-            self.id = str(uuid4())[:8]
-        return self.id
+    # def ensure_id(self) -> str:
+    #     """
+    #     Ensure that the ID is set. If not, generate a new one and assign it to the entity. Returns the ID.
+        
+    #     Will be deprecated at some point.
+    #     """
+    #     if not self.id:
+    #         self.id = generate_entity_id()
+    #     return self.id
 
     def to_dict(self) -> dict[str, Any]:
         """Return the entity as a JSON dictionary ensuring the ID is set."""
@@ -178,12 +177,18 @@ class Entity(BaseModel):
 
     @classmethod
     def from_dict(cls, data: dict) -> "Entity":
-        """Initialize the entity from a dictionary of values."""
-        for k in ["id", "name", "entity_type"]:
+        """Initialize the entity from a dictionary of values. Ideal for reading from storage."""
+        logger.debug(f"Loading entity from dictionary: {data}")
+
+        for k in ["name", "entity_type"]:  # TODO: id will be required in the future
             v = data.get(k)
             if not isinstance(v, str) or not v.strip():
                 raise ValueError(f"Missing or invalid required key: {k}")
-        
+
+        if not data.get("id"):
+            logger.warning(f"Entity '{data['name']}' ID is missing, manager will generate a new one")
+            data["id"] = None
+
         observations = [Observation(**o) for o in (data.get("observations") or [])]
         aliases = [str(a) for a in (data.get("aliases") or [])]
 
@@ -201,7 +206,8 @@ class Entity(BaseModel):
         entity_type: str,
         observations: list[Observation] | None = None,
         aliases: list[str] | None = None,
-        icon: str | None = None
+        icon: str | None = None,
+        id: str | None = None
         ) -> "Entity":
         """
         Create an entity from values.
@@ -212,13 +218,18 @@ class Entity(BaseModel):
             observations (list[Observation]): The observations of the entity
             aliases (list[str]): The aliases of the entity
             icon (str): The emoji to provide a visual representation of the entity. Must be a single valid emoji.
+            id (str): The unique identifier of the entity in the knowledge graph.
         
+        The ID is managed by the KnowledgeGraphManager and one will be generated if it is not provided, i.e., if creating a new entity from values.
+
         Returns:
             Entity: The created entity
         """
         e = cls(name=name, entity_type=entity_type,
                 observations=observations or [],
-                aliases=aliases or [])
+                aliases=aliases or [],
+                icon=icon,
+                id=id)
         if icon:
             if is_emoji(icon):
                 e.icon = icon
@@ -239,8 +250,15 @@ class Relation(BaseModel):
         validate_by_alias=True,
     )
 
-    from_entity: str | Entity = Field(
-        ..., title="From entity", description="Source entity object"
+    from_entity: str | None = Field(
+        default=None,
+        title="From entity",
+        description="Source entity name (in-memory convenience only; not persisted)",
+    )
+    to_entity: str | None = Field(
+        default=None,
+        title="To entity",
+        description="Target entity name (in-memory convenience only; not persisted)",
     )
     from_id: str | None = Field(
         default=None,
@@ -253,7 +271,6 @@ class Relation(BaseModel):
         description="Relationship content/description in active voice. Example: (A) is really interested in (B)",
         alias="relation_type",
     )
-    to_entity: str | Entity = Field(..., title="To entity", description="Target entity object")
     to_id: str | None = Field(
         default=None,
         title="To entity ID",
@@ -262,44 +279,76 @@ class Relation(BaseModel):
 
     @classmethod
     def from_entities(cls, from_entity: Entity, to_entity: Entity, relation: str) -> "Relation":
-        """Create a relation from entity objects and relation content."""
-        return cls(from_entity=from_entity, to_entity=to_entity, relation=relation)
+        """Create a relation from one entity object to another with the given relation content."""
+        from_id = from_entity.id
+        to_id = to_entity.id
+        return cls(from_id=from_id, to_id=to_id, relation=relation)
 
     @classmethod
     def from_dict(cls, data: dict) -> "Relation":
-        """Initialize the relation from a dictionary of values. Ideal for reading from storage."""
-        from_id = validate_entity_id(data.get("from_id") or data.get("from_entity"))
-        to_id = validate_entity_id(data.get("to_id") or data.get("to_entity"))
+        """Initialize the relation from a dictionary of values. Ideal for reading from storage.
+
+        Supports both id-only records and legacy name-based records.
+        """
         content = data.get("relation") or data.get("relation_type")
         if not content or not isinstance(content, str) or not content.strip():
             raise ValueError(f"Invalid relation content: {content!r}")
-        return cls(from_id=from_id, to_id=to_id, relation=content)
 
-    def ensure_ids(self) -> None:
-        """
-        Ensure that the from_id and to_id are set. If not, pull from the from_entity and to_entity.
-        If either entities are not correctly typed, raise an error.
-        """
-        if not self.from_id or not self.to_id:
-            try:
-                if not self.from_entity or not self.to_entity:
-                    raise ValueError("Bad relation: from_entity or to_entity are invalid!")
-                if not isinstance(self.from_entity, Entity) or not isinstance(self.to_entity, Entity):
-                    raise ValueError("Bad relation: from_entity and to_entity must be Entity objects")
-                self.from_entity.ensure_id()
-                self.to_entity.ensure_id()
-                self.from_id = self.from_entity.id
-                self.to_id = self.to_entity.id
-            except Exception as e:
-                raise KnowledgeGraphException(f"Error ensuring entity IDs of relationship {self.relation}: {e}")
+        # Prefer IDs if present
+        from_id_raw = data.get("from_id")
+        to_id_raw = data.get("to_id")
+        from_id = validate_entity_id(from_id_raw) if from_id_raw else None
+        to_id = validate_entity_id(to_id_raw) if to_id_raw else None
+
+        # Accept legacy names; ids will be resolved later by the manager
+        from_entity = data.get("from_entity") or data.get("from")
+        to_entity = data.get("to_entity") or data.get("to")
+        if not (from_id and to_id):
+            if not isinstance(from_entity, str) or not from_entity.strip():
+                raise ValueError("Missing relation endpoints: need valid from_id/to_id or legacy names")
+            if not isinstance(to_entity, str) or not to_entity.strip():
+                raise ValueError("Missing relation endpoints: need valid from_id/to_id or legacy names")
+
+        return cls(
+            from_entity=from_entity,
+            to_entity=to_entity,
+            from_id=from_id,
+            to_id=to_id,
+            relation=content,
+        )
+
+    # def ensure_ids(self) -> None:    # Deprecated, as IDs are now required
+    #     """
+    #     Ensure that the from_id and to_id are set. If not, pull from the from_entity and to_entity.
+    #     If either entities are not correctly typed, raise an error.
+    #     """
+    #     if not self.from_id or not self.to_id:
+    #         try:
+    #             if not self.from_entity or not self.to_entity:
+    #                 raise ValueError("Bad relation: from_entity or to_entity are invalid!")
+    #             if not isinstance(self.from_entity, Entity) or not isinstance(self.to_entity, Entity):
+    #                 raise ValueError("Bad relation: from_entity and to_entity must be Entity objects")
+    #             self.from_entity.ensure_id()
+    #             self.to_entity.ensure_id()
+    #             self.from_id = self.from_entity.id
+    #             self.to_id = self.to_entity.id
+    #         except Exception as e:
+    #             raise KnowledgeGraphException(f"Error ensuring entity IDs of relationship {self.relation}: {e}")
     
     def to_dict(self) -> dict[str, Any]:
-        """Serialize the relation to a JSON dictionary, ideal for writing to storage. Includes entity ids and relation content. If the from_id and to_id are not set, generate new ones."""
-        self.ensure_ids()
-        return self.model_dump(include={"from_id", "relation", "to_id"})
+        """Serialize the relation to a JSON-compatible dictionary.
+
+        Includes endpoint names for backward compatibility, relation content (by alias), and
+        optional IDs when available. Does not attempt to generate or infer IDs at this stage.
+        """
+        return self.model_dump(
+            by_alias=True,
+            exclude_none=True,
+            include={"relation", "from_id", "to_id"},
+        )
 
     def __str__(self):
-        return f"{self.from_entity} ({self.from_id}) {self.relation} {self.to_entity} ({self.to_id})"
+        return f"Entity:{self.from_id} '{self.relation}' Entity:{self.to_id}"
 
 class UserIdentifier(BaseModel):
     """
@@ -334,8 +383,8 @@ class UserIdentifier(BaseModel):
         title="Linked entity ID",
         description="The ID of the entity that is linked to the user. This entity will be used to store observations about the user.",
     )
-    preferred_name: str | None = Field(
-        default=None,
+    preferred_name: str = Field(
+        default="",
         title="Preferred name",
         description="The preferred name of the user",
     )
@@ -545,6 +594,7 @@ class KnowledgeGraph(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
         validate_by_name=True,
+        extra="forbid",
     )
     user_info: UserIdentifier = Field(
         ..., title="User info", description="Information about the user"

@@ -1,0 +1,1 @@
+"""Test loading the graph."""
