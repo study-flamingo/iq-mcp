@@ -20,7 +20,7 @@ def build_initial_graph(user_info: UserIdentifier| None = None) -> KnowledgeGrap
     assistant_entity = Entity(name="assistant", entity_type="AI assistant")
 
     # Create seed entries for the new graph
-    relation_user_to_assistant = Relation(
+    relation_user_to_assistant = Relation.from_entities(
         from_entity=user_entity,
         to_entity=assistant_entity,
         relation="has an AI assistant named",

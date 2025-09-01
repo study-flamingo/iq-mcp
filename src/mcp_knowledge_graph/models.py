@@ -260,7 +260,7 @@ class Relation(BaseModel):
         title="To entity",
         description="Target entity name (in-memory convenience only; not persisted)",
     )
-    from_id: str | None = Field(
+    from_id: str = Field(
         default=None,
         title="From entity ID",
         description="Unique identifier for the source entity",
@@ -271,7 +271,7 @@ class Relation(BaseModel):
         description="Relationship content/description in active voice. Example: (A) is really interested in (B)",
         alias="relation_type",
     )
-    to_id: str | None = Field(
+    to_id: str = Field(
         default=None,
         title="To entity ID",
         description="Unique identifier for the target entity",
