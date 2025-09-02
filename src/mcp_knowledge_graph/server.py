@@ -21,6 +21,7 @@ from .models import (
     CreateRelationResult,
     CleanupResult,
     KnowledgeGraph,
+    KnowledgeGraphException,
     UserIdentifier,
     CreateEntityRequest,
     CreateRelationRequest,
@@ -188,6 +189,106 @@ def _print_user_info(
 
     return result
 
+async def _print_relations_from_graph(
+    graph: KnowledgeGraph = None,
+    entities_list: list[Entity] = None,
+    prefix: str = "  - ",
+    separator: str = "\n  - ", 
+    suffix: str = "\n",
+    md_links: bool = True,
+    include_ids: bool = True,
+    include_types: bool = True,
+    ):
+    """
+    Print relations in a readable format. Respects the no_emojis property from Settings.
+    A number of options are available to customize the display. All options are optional, and the 
+    default values are used if not specified.
+    
+    May also pass a list of entities to print relations from instead of the graph.
+    
+    Format: <from_entity> <relation> <to_entity><separator>
+    
+    One of the following args is required:
+
+        - graph: The knowledge graph to print relations from. Typical usage.
+        - entities_list: A list of entities to print relations from.
+    
+    Optional Args:
+
+        - separator: The separator to use between relations. Default is ` \n  - `.
+        - md_links: Whether to use Markdown links for the entities. Default is True.
+        - prefix: The prefix to use before the relations. Default is `  - `.
+        - suffix: The suffix to use after the relations. Default is `\n`.
+        - include_ids: Whether to include the IDs of the entities in the display. Default is True.
+        - include_types: Whether to include the types of the entities in the display. Default is True.
+    
+    Example of default list display:
+    ```
+      - [👤 John Doe](123) (person) is a friend of [👤 Jane Doe](456) (person)
+      - [👤 Jim Doe](789) (person) is an enemy of [👤 Janet Doe](012) (person)
+    (trailing newline)
+    ```
+    """
+    if graph:
+        entities_list = entities_list or graph.entities
+    else:
+        entities_list = entities_list or None
+        
+    if not entities_list:
+        raise ValueError("No entities list provided and no graph provided to get entities from")
+    
+    result = prefix
+    entity_map = await manager._get_entity_id_map(entities_list=entities_list)
+    try:
+        for r in graph.relations:
+            items = []
+            try:
+                a = entity_map.get(r.from_id)
+                b = entity_map.get(r.to_id)
+                
+                # If this is the user-linked entity, use the preferred name instead; if name is missing, use "unknown"
+                a_name = "unknown"
+                b_name = "unknown"
+                if a:
+                    if a.name == "__user__" or a.name.lower().strip() == "user":
+                        a_name = graph.user_info.preferred_name
+                    else:
+                        a_name = a.name if a.name else "unknown"
+                if b:
+                    if b.name == "__user__" or b.name.lower().strip() == "user":
+                        b_name = graph.user_info.preferred_name
+                    else:
+                        b_name = b.name if b.name else "unknown"
+            except Exception as e:
+                raise ToolError(f"Failed to get relation entities: {e}")
+
+            # Compose strings
+            if md_links:
+                link_from = f"[{a.icon}{a_name}]({a.id})" if a else f"{a_name}"
+                link_to = f"[{b.icon}{b_name}]({b.id})" if b else f"{b_name}"
+            else:
+                link_from = f"{a.icon}{a_name}" if a else f"{a_name}"
+                link_to = f"{b.icon}{b_name}" if b else f"{b_name}"
+            if include_ids:
+                link_from += f" (ID: {a.id})" if a else ""
+                link_to += f" (ID: {b.id})" if b else ""
+            if include_types:
+                link_from += f" ({a.entity_type})" if a else ""
+                link_to += f" ({b.entity_type})" if b else ""
+            
+            # Add to result
+            items.append(f"{link_from} {r.relation} {link_to}")
+
+        # Join items with the separator
+        result += separator.join(items)
+
+        # Finally, add the suffix
+        result += suffix
+
+        return result
+    except Exception as e:
+        raise ToolError(f"Failed to print relations: {e}")
+
 
 @mcp.tool
 async def read_graph():
@@ -221,51 +322,25 @@ async def read_graph():
             logger.error(f"Failed to print entities: {e}")
 
         # Print all relations
-        result += (
-            f"\n🔗 You've learned about {len(graph.relations)} relations between these entities:\n"
-        )
         try:
-            # Build id -> entity map for safe lookup
-            id_to_entity: dict[str, Entity] = {}
-            for e in graph.entities:
-                try:
-                    if not e.id:
-                        e.ensure_id()
-                    id_to_entity[e.id] = e
-                except Exception:
-                    continue
-
-            for r in graph.relations:
-                f_id = r.from_id
-                t_id = r.to_id
-                f_e = id_to_entity.get(f_id) if f_id else None
-                t_e = id_to_entity.get(t_id) if t_id else None
-
-                # Fallback to legacy names only if IDs are missing
-                f_name = f_e.name if f_e else (r.from_entity or "unknown")
-                t_name = t_e.name if t_e else (r.to_entity or "unknown")
-                f_type = f_e.entity_type if f_e else ""
-                t_type = t_e.entity_type if t_e else ""
-                f_i = f"{(f_e.icon if f_e else None)} " if (f_e and f_e.icon) else ""
-                t_i = f"{(t_e.icon if t_e else None)} " if (t_e and t_e.icon) else ""
-
-                # Check for user-linked entity and use its name instead
-                if f_e and f_e.name == "__user__" or f_e.name == "user":
-                    f_name = graph.user_info.preferred_name
-                if t_e and t_e.name == "__user__" or t_e.name == "user":
-                    t_name = graph.user_info.preferred_name
-
-                link_from = f"[{f_i}{f_name}]({f_id})" if f_id else f_name
-                link_to = f"[{t_i}{t_name}]({t_id})" if t_id else t_name
-                type_from = f" ({f_type})" if f_type else ""
-                type_to = f" ({t_type})" if t_type else ""
-                result += f"  - {link_from}{type_from} {r.relation} {link_to}{type_to}\n"
+            result += (
+                f"\n🔗 You've learned about {len(graph.relations)} relations between these entities:\n"
+            )
+            obs_result = await _print_relations_from_graph(graph)
+            if obs_result:
+                result += obs_result
+            else:
+                raise KnowledgeGraphException(f"No output from _print_relations_from_graph: {e}")
+        except KnowledgeGraphException as e:
+            result += (f"\nERROR: Failed to print relations: {e}")
         except Exception as e:
-            logger.error(f"Failed to print relations: {e}")
+            raise ToolError(f"Error while printing relations: {e}")
         return result
 
+    except RuntimeError as e:
+        raise RuntimeError(f"Critical error while printing graph: {e}")
     except Exception as e:
-        raise ToolError(f"Failed to read graph: {e}")
+        raise ToolError(f"Error while printing graph: {e}")
 
 
 @mcp.tool

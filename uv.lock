@@ -370,7 +370,7 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "ruff" },
 ]
-notify = [
+sb = [
     { name = "supabase" },
 ]
 
@@ -389,7 +389,7 @@ dev = [
     { name = "pytest-asyncio", specifier = ">=1.1.0" },
     { name = "ruff", specifier = ">=0.12.7" },
 ]
-notify = [{ name = "supabase", specifier = ">=2.18.1" }]
+sb = [{ name = "supabase", specifier = ">=2.18.1" }]
 
 [[package]]
 name = "isodate"

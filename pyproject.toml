@@ -49,6 +49,6 @@ dev = [
     "pytest-asyncio>=1.1.0",
     "ruff>=0.12.7",
 ]
-notify = [
+sb = [
     "supabase>=2.18.1",
 ]

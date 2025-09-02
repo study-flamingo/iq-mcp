@@ -23,8 +23,8 @@ def is_emoji(s: str) -> bool:
     g = _GRAPHEMES.findall(s)
     return len(g) == 1 and _HAS_EMOJI.search(g[0]) is not None
 
-def validate_entity_id(id: str) -> str | None:
-    """Validate the provided entity ID."""
+def validate_id_simple(id: str) -> str:
+    """Simple validation of the provided entity ID. Checks if the ID is a string, is not empty, is 8 characters long, and is alphanumeric. If invalid, raises a ValueError."""
     if (
         not id
         or not isinstance(id, str)
@@ -32,12 +32,18 @@ def validate_entity_id(id: str) -> str | None:
         or len(id) != 8
         or not id.isalnum()
     ):
-        logger.error(f"Invalid entity ID: {id}")
-        return None
+        raise ValueError(f"Invalid entity ID found: {id}")
     return id
 
 class KnowledgeGraphException(Exception):
-    """Base exception for the knowledge graph."""
+    """
+    Base exception for the knowledge graph.
+    
+    KnowledgeGraphException should be raised when there is an issue involving interactions between 
+    elements or components of the knowledge graph.
+    - Exceptions involving data validity should be raised as a `ValueError` instead.
+    - More dangerous exceptions that do not involve data validity or typing (e.g., for logic that may compromise data integrity, involving loading/saving, edge cases, etc.) should be raised as a `RuntimeError` instead.
+    """
     pass
 
 
@@ -141,10 +147,10 @@ class Entity(BaseModel):
     _icon: str | None = None
 
     @property
-    def icon(self) -> str | None:
+    def icon(self) -> str:
         """Return the icon of the entity if it exists, and its display is not disabled in settings."""
         if Settings.no_emojis or not self._icon:
-            return None
+            return ""
         return self._icon
 
     @icon.setter
@@ -154,6 +160,19 @@ class Entity(BaseModel):
         if not self._icon:
             logger.debug(f"Invalid emoji '{icon}' given for entity '{self.name}'")
             raise ValueError(f"Error setting icon for entity '{self.name}': value must be a single valid emoji. Instead, received '{icon}'")
+
+    @icon.getter
+    def icon(self) -> str:
+        """Return the icon of the entity if it exists, and its display is not disabled in settings."""
+        if Settings.no_emojis or not self._icon:
+            return ""
+        return self._icon
+
+    @field_validator("id", mode="after")
+    @staticmethod
+    def check_id(cls, v: str) -> str:
+        return validate_id_simple(id=v)
+
 
     # def ensure_id(self) -> str:
     #     """
@@ -178,7 +197,7 @@ class Entity(BaseModel):
     @classmethod
     def from_dict(cls, data: dict) -> "Entity":
         """Initialize the entity from a dictionary of values. Ideal for reading from storage."""
-        logger.debug(f"Loading entity from dictionary: {data}")
+        # logger.debug(f"Loading entity from dict: {str(data)[:50]}...")
 
         for k in ["name", "entity_type"]:  # TODO: id will be required in the future
             v = data.get(k)
@@ -252,11 +271,13 @@ class Relation(BaseModel):
 
     from_entity: str | None = Field(
         default=None,
+        deprecated=True,
         title="From entity",
         description="Source entity name (in-memory convenience only; not persisted)",
     )
     to_entity: str | None = Field(
         default=None,
+        deprecated=True,
         title="To entity",
         description="Target entity name (in-memory convenience only; not persisted)",
     )
@@ -290,50 +311,21 @@ class Relation(BaseModel):
 
         Supports both id-only records and legacy name-based records.
         """
-        content = data.get("relation") or data.get("relation_type")
-        if not content or not isinstance(content, str) or not content.strip():
-            raise ValueError(f"Invalid relation content: {content!r}")
+        content = data.get("relation") or data.get("relation_type")  # compat with old data format
+        if not content.strip() or not isinstance(content, str):
+            raise ValueError(f"Invalid relation content: {content}")
 
-        # Prefer IDs if present
-        from_id_raw = data.get("from_id")
-        to_id_raw = data.get("to_id")
-        from_id = validate_entity_id(from_id_raw) if from_id_raw else None
-        to_id = validate_entity_id(to_id_raw) if to_id_raw else None
-
-        # Accept legacy names; ids will be resolved later by the manager
-        from_entity = data.get("from_entity") or data.get("from")
-        to_entity = data.get("to_entity") or data.get("to")
-        if not (from_id and to_id):
-            if not isinstance(from_entity, str) or not from_entity.strip():
-                raise ValueError("Missing relation endpoints: need valid from_id/to_id or legacy names")
-            if not isinstance(to_entity, str) or not to_entity.strip():
-                raise ValueError("Missing relation endpoints: need valid from_id/to_id or legacy names")
+        # Check IDs
+        from_id_raw = str(data.get("from_id"))
+        to_id_raw = str(data.get("to_id"))
+        from_id = validate_id_simple(from_id_raw)
+        to_id = validate_id_simple(to_id_raw)
 
         return cls(
-            from_entity=from_entity,
-            to_entity=to_entity,
             from_id=from_id,
             to_id=to_id,
             relation=content,
         )
-
-    # def ensure_ids(self) -> None:    # Deprecated, as IDs are now required
-    #     """
-    #     Ensure that the from_id and to_id are set. If not, pull from the from_entity and to_entity.
-    #     If either entities are not correctly typed, raise an error.
-    #     """
-    #     if not self.from_id or not self.to_id:
-    #         try:
-    #             if not self.from_entity or not self.to_entity:
-    #                 raise ValueError("Bad relation: from_entity or to_entity are invalid!")
-    #             if not isinstance(self.from_entity, Entity) or not isinstance(self.to_entity, Entity):
-    #                 raise ValueError("Bad relation: from_entity and to_entity must be Entity objects")
-    #             self.from_entity.ensure_id()
-    #             self.to_entity.ensure_id()
-    #             self.from_id = self.from_entity.id
-    #             self.to_id = self.to_entity.id
-    #         except Exception as e:
-    #             raise KnowledgeGraphException(f"Error ensuring entity IDs of relationship {self.relation}: {e}")
     
     def to_dict(self) -> dict[str, Any]:
         """Serialize the relation to a JSON-compatible dictionary.

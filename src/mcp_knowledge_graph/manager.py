@@ -283,19 +283,36 @@ class KnowledgeGraphManager:
         except Exception as e:
             raise KnowledgeGraphException(f"Error validating existing entity ID: {e}")
 
-    def _verify_relation(self, relation: Relation, graph: KnowledgeGraph) -> (bool, bool):
+    def _verify_relation(self, relation: Relation, graph: KnowledgeGraph) -> Relation:
         """
-        Verify that the relation endpoints exist in the graph. Returns a tuple of booleans indicating whether the from and to entities exist.
-
-        If the entities themselves are required, use the _get_entities_from_relation() method instead.
+        Verify that the relation endpoints exist in the graph. If the entities themselves are 
+        required, use the _get_entities_from_relation() method instead.
+        
+        Raises:
+            - ValueError if the relation is missing one or both endpoint IDs
+            - RuntimeError if entity lookup fails with error
+            - KnowledgeGraphException if entity lookup succeeds, but returns no results
         """
+        graph = graph
+        
         if not relation.from_id or not relation.to_id:
-            raise KnowledgeGraphException(
-                f"Relation {relation.relation} missing one or both endpoint IDs!"
+            raise ValueError(
+                f"Relation `A {relation.relation} B` is missing one or both endpoint IDs!"
             )
-        bad_a = True if self._get_entity_by_id(relation.from_id, graph) else False
-        bad_b = True if self._get_entity_by_id(relation.to_id, graph) else False
-        return bad_a, bad_b
+        try:
+            a = self._get_entity_by_id(relation.from_id, graph)
+            b = self._get_entity_by_id(relation.to_id, graph)
+        except Exception as e:
+            raise RuntimeError(f"Error getting entities from relation: {e}")
+        
+        errors: list[str] = []
+        if not a:
+            errors.append(f"Invalid from ID: {str(relation.from_id)}")
+        if not b:
+            errors.append(KnowledgeGraphException(f"Relation `{relation.relation}` has invalid endpoints: {relation.from_id} and {relation.to_id}"))
+        if len(errors) > 0:
+            raise RuntimeError(f"Error verifying relation: {errors}")
+        return relation
 
     def _get_entities_from_relation(
         self, relation: Relation, graph: KnowledgeGraph
@@ -315,6 +332,92 @@ class KnowledgeGraphManager:
         except Exception as e:
             raise KnowledgeGraphException(f"Error getting entities from relation: {e}")
 
+    def _process_memory_line(self, line: str) -> UserIdentifier | Entity | Relation | None:
+        """
+        Produces a UserIdentifier, Entity, or Relation from a line of the memory file.
+        
+        Args:
+            line: The line of the memory file to load
+            
+        Returns:
+            The UserIdentifier, list of Entities, or list of Relations from the line
+        """
+        line = line.strip()
+        if not line:
+            return None
+
+        # Determine line/record type
+        try:
+            item = json.loads(line)
+
+            item_type = item.get("type")
+
+            payload: dict | None = None
+            if item_type in ("entity", "relation", "user_info"):
+                # Ensure the data is a dict
+                if isinstance(item.get("data"), dict):
+                    payload = item["data"]
+                    if not payload:
+                        raise KnowledgeGraphException(
+                            f"Item has invalid data: {payload}"
+                        )
+                else:
+                    raise KnowledgeGraphException("Item has invalid data: not a dict")
+
+            # If the line is an entity, return the entity
+            if item_type == "entity" and isinstance(payload, dict):
+                try:
+                    entity = Entity.from_dict(payload)
+                except Exception as e:
+                    raise ValueError(f"Invalid entity: {e}")
+                return entity
+
+            # If the line is a relation, return the relation
+            elif item_type == "relation" and isinstance(payload, dict):
+                try:
+                    relation = Relation.from_dict(payload)
+                except Exception as e:
+                    raise ValueError(f"Invalid relation: {e}")
+                return relation
+
+            elif item_type == "user_info" and isinstance(payload, dict):
+                try:
+                    user_info = UserIdentifier(**payload)
+                except Exception as e:
+                    raise ValueError(f"Invalid user info: {e}")
+                return user_info
+
+            else:
+                # Unrecognized line
+                raise ValueError(
+                    f"Missing or invalid type: {item_type}"
+                )
+        except Exception as e:
+            raise ValueError(f"Error parsing line: {e}")
+
+    def _validate_user_info(self, graph: KnowledgeGraph) -> None:
+        """
+        Validate the user info object of the knowledge graph.
+        
+        Raises:
+         - ValueError if the user info is invalid
+         - KnowledgeGraphException if the user info appears valid, but the user-linked entity cannot be found
+        """
+        user_info = graph.user_info
+        entity_ids = [str(e.id) for e in graph.entities]
+
+        if not user_info.preferred_name:
+            raise ValueError("User info must have a preferred name")
+        if not user_info.linked_entity_id:
+            raise ValueError("User info must have a linked entity ID")
+        
+        for e_id in entity_ids:
+            logger.debug(f"Checking entity ID `{str(e_id)}` against user-linked entity ID `{str(user_info.linked_entity_id)}`")
+            if str(e_id) == str(user_info.linked_entity_id):
+                return
+        # If we get here, the user-linked entity ID was not found in the graph
+        raise KnowledgeGraphException(f"No entitiy found for user-linked entity ID `{user_info.linked_entity_id}`")
+
     async def _load_graph(self) -> KnowledgeGraph:
         """
         Load the knowledge graph from JSONL storage.
@@ -328,89 +431,76 @@ class KnowledgeGraphManager:
             )
             new_graph = KnowledgeGraph.from_default()
             return new_graph
-
+        
+        # Load the graph
         try:
+            # Instantiate graph components
             user_info: UserIdentifier | None = None
-            entities = []
-            relations = []
+            entities: list[Entity] = []
+            relations: list[Relation] = []
 
+            # Open the memory file
             with open(self.memory_file_path, "r", encoding="utf-8") as f:
+                # Load the graph line by line
                 i = 0
                 for line in f:
-                    line = line.strip()
-                    if not line:
-                        logger.warning(
-                            f"⚠️ Skipping empty line {i} in {self.memory_file_path}: {line}"
-                        )
-                        break
-
+                    # Determine the type of the line
                     try:
-                        item = json.loads(line)
-
-                        item_type = item.get("type")
-
-                        payload: dict | None = None
-                        if item_type in ("entity", "relation", "user_info"):
-                            if isinstance(item.get("data"), dict):
-                                payload = item["data"]
-                                if not payload:
-                                    raise KnowledgeGraphException(
-                                        f"Item has invalid payload: {payload}"
-                                    )
-                            else:
-                                raise KnowledgeGraphException("Item has invalid data")
-
-                        if item_type == "entity" and isinstance(payload, dict):
-                            entity = Entity.from_dict(payload)
-                            entities.append(entity)
-                            logger.debug(f"Line {i}: 👤 Loaded entity: {entity}")
-
-                        elif item_type == "relation" and isinstance(payload, dict):
-                            relation = Relation.from_dict(payload)
-                            relations.append(relation)
-                            logger.debug(f"Line {i}: 🔗 Loaded relation: {relation}")
-
-                        elif item_type == "user_info" and isinstance(payload, dict):
-                            user_info = UserIdentifier(**payload)
-                            logger.debug(f"Line {i}: 😃 Loaded user info: {user_info}")
-
-                        else:
-                            # Unrecognized line; skip with warning but continue
-                            raise KnowledgeGraphException(
-                                f"Missing or invalid type/payload: {item_type}"
-                            )
-                            continue
-                    except (
-                        json.JSONDecodeError,
-                        ValueError,
-                        TypeError,
-                        KnowledgeGraphException,
-                    ) as e:
-                        # Skip invalid lines but continue processing
-                        logger.warning(
-                            f"Warning: Skipping invalid line {i} in {self.memory_file_path}: {e}"
-                        )
-                        continue
+                        item = self._process_memory_line(line)
+                        
+                        match item.__class__.__name__:
+                            # If the line is a user info object, overwrite the existing user info object with a warning
+                            case "UserIdentifier":
+                                if user_info:
+                                    logger.warning("Multiple user info objects found in memory file! Overwriting.")
+                                user_info = item
+                            case "Entity":
+                                entities.append(item)
+                            case "Relation":
+                                relations.append(item)
+                            case _:
+                                raise ValueError(f"Invalid line {i} in {self.memory_file_path}: {item}. Skipping.")
+                    # Raise error for this line but continue loading the graph
                     except Exception as e:
-                        raise RuntimeError(f"Error loading graph: {e}")
-                    i += 1
-
+                        logger.error(f"Invalid line {i} in {self.memory_file_path}: {e}. Skipping.")
+                    # Quick check in case the app is loading a large invalid file
+                    if i > 50 and (
+                        len(entities) == 0
+                        and len(relations) == 0
+                        and not user_info
+                    ):
+                        raise RuntimeError("Failed to load graph: no valid data found in first 50 lines, memory is invalid or corrupt!")
+                    # More strict check in case the first check passed in a large file of questionable validity
+                    elif i > 500 and (
+                        len(entities) == 0
+                        or len(relations) == 0
+                        or not user_info
+                    ):
+                        raise RuntimeError("Failed to load graph: too much invalid data found in first 500 lines, memory is invalid or corrupt!")
+                    else:
+                        i += 1  # Next line
+                # EOF
+            
+            # If EOF is reached with no errors, begin validity checks
             if not user_info and not entities and not relations:
                 raise KnowledgeGraphException("No valid data found in memory file!")
 
-            # Validate the loaded data
+            # Ensure all components are present
             if not user_info:
-                logger.warning(
-                    "No valid user info object found in memory file! Initializing new user info object with default user info."
+                raise ValueError(
+                    "No valid user info object found in memory file!"
                 )
-                user_info = UserIdentifier.from_default()
             if not entities:
                 raise KnowledgeGraphException("No valid entities found in memory file!")
             if not relations:
                 raise KnowledgeGraphException("No valid relations found in memory file!")
+            
+            # Log that we have successfully loaded the graph components
             logger.info(
-                f"💾 Loaded {len(entities)} entities and {len(relations)} relations from memory file"
+                f"💾 Loaded user info for {user_info.preferred_name}; loaded {len(entities)} entities and {len(relations)} relations from memory file, validating..."
             )
+            
+            # Compose the preliminary graph
             graph = KnowledgeGraph(user_info=user_info, entities=entities, relations=relations)
 
             # Validate the loaded data
@@ -423,38 +513,48 @@ class KnowledgeGraphManager:
             #   - Ensure all entities have valid, unique IDs
             #   - Ensure all relation endpoints actually exist in the graph
             #   - Validate user_info's linked entity
+            errors: list[Exception] = []
             try:
-                try:
-                    for e in graph.entities:
+                # Validate entities
+                valid_entities: list[Entity] = []
+                for e in graph.entities:
+                    try:
                         e = self._validate_entity(e, graph)
-                except Exception as e:
-                    raise KnowledgeGraphException(f"Bad entity: {e}")
-                try:
-                    for r in graph.relations:
-                        a, b = self._verify_relation(r, graph)
-                        err = []
-                        err.append(r.from_id if a else None)
-                        err.append(r.to_id if b else None)
-                        if err:
-                            raise ValueError(
-                                f"Relation {r.relation} has invalid endpoint(s): {', '.join(err)}"
-                            )
-                except Exception as e:
-                    raise KnowledgeGraphException(f"Bad relation: {e}")
-                user_ent = self._get_entity_by_id(graph.user_info.linked_entity_id, graph)
-                if not user_ent:
-                    raise KnowledgeGraphException(
-                        f"User-linked entity {graph.user_info.linked_entity_id} not found"
-                    )
-                user_ent = self._validate_entity(user_ent, graph)
-                if user_ent.id != graph.user_info.linked_entity_id:
-                    raise KnowledgeGraphException(
-                        f"User-linked entity {graph.user_info.linked_entity_id} has invalid ID: {user_ent.id}"
-                    )
-            except Exception as e:
-                logger.warning(f"Validation failed: {e}")
+                    except Exception as err:
+                        errors.append(f"Bad entity `{str(e)[:24]}...`: {err}. Excluding from graph.")
+                    valid_entities.append(e)
+                logger.debug(f"✅👤 Successfully validated {len(valid_entities)} entities")
+                
+                # Validate relations
+                for r in graph.relations:
+                    valid_relations: list[Relation] = []
+                    try:
+                        self._verify_relation(r, graph)
+                    except Exception as e:
+                        # Simply unload relations that are invalid  TODO: handle more gracefully
+                        errors.append(f"Bad relation `{str(r)[:24]}...`: {e}. Excluding from graph.")
+                        graph.relations.remove(r)
+                    valid_relations.append(r)
+                logger.debug(f"✅🔗 Successfully validated {len(valid_relations)} relations")
 
-            return graph
+                # Verify the user-linked entity exists and is valid
+                try:
+                    self._validate_user_info(graph)
+                except Exception as e:
+                    raise RuntimeError(f"User info invalid: {e}")  # TODO: graceful fallback
+                finally:
+                    logger.debug("✅😃 Successfully validated user info!")
+            
+            except RuntimeError as e:
+                # Should exit with non-zero code if this happens
+                raise RuntimeError(f"Critical validation error: {e}")
+            except Exception as e:
+                # Should validate the graph even if this happens
+                errors.append(f"Unspecified validation error: {e}")
+            
+            # Validation complete! Recompose the fully-validated graph and return
+            validated_graph = KnowledgeGraph.from_components(user_info=user_info, entities=valid_entities, relations=valid_relations)
+            return validated_graph
 
         except Exception as e:
             raise RuntimeError(f"Error loading graph: {e}")
@@ -530,6 +630,24 @@ class KnowledgeGraphManager:
 
         except Exception as e:
             raise RuntimeError(f"Failed to save graph: {e}")
+
+    async def _get_entity_id_map(self, graph: KnowledgeGraph = None, entities_list: list[Entity] = None) -> dict[str, Entity]:
+        """
+        Get a map of entity IDs to entities. Can also pass a list of entities to use instead of the graph.entities list.
+        """
+        if isinstance(graph, KnowledgeGraph):
+            entities_list = entities_list or graph.entities or None
+        else:
+            entities_list = entities_list or None
+        
+        if not entities_list:
+            raise ValueError("No entities list provided and no graph provided to get entities from")
+        
+        entity_id_map = {}
+        for e in entities_list:
+            if e.id:
+                entity_id_map[e.id] = e
+        return entity_id_map
 
     async def create_entities(self, entities: list[Entity]) -> CreateEntityResult:
         """

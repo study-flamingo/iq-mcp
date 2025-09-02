@@ -13,11 +13,13 @@ def main():
         logger.debug("🚀 Starting IQ-MCP server...")
         asyncio.run(start_server())
     except KeyboardInterrupt:
-        logger.info("🛑 Received KeyboardInterrupt, shutting down...")
+        logger.info("👋 Received KeyboardInterrupt, shutting down gracefully...")
         exit(0)
     except Exception as e:
-        logger.error(f"❌ IQ-MCP encountered a critical error: {e}")
-        exit(1)
+        error = (f"⛔ IQ-MCP encountered an uncaught exception: {e}")
+        logger.error(error)
+        raise RuntimeError(error)
+        # exit(1)
 
 
 if __name__ == "__main__":
