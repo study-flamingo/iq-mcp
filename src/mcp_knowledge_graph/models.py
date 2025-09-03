@@ -17,33 +17,32 @@ from .settings import Logger as logger, Settings
 # Helper functions
 _GRAPHEMES = re.compile(r"\X")
 _HAS_EMOJI = re.compile(r"(\p{Extended_Pictographic}|\p{Regional_Indicator})")
+
+
 def is_emoji(s: str) -> bool:
     """Check if a string is a valid emoji."""
     s = s.strip()
     g = _GRAPHEMES.findall(s)
     return len(g) == 1 and _HAS_EMOJI.search(g[0]) is not None
 
+
 def validate_id_simple(id: str) -> str:
     """Simple validation of the provided entity ID. Checks if the ID is a string, is not empty, is 8 characters long, and is alphanumeric. If invalid, raises a ValueError."""
-    if (
-        not id
-        or not isinstance(id, str)
-        or not id.strip()
-        or len(id) != 8
-        or not id.isalnum()
-    ):
+    if not id or not isinstance(id, str) or not id.strip() or len(id) != 8 or not id.isalnum():
         raise ValueError(f"Invalid entity ID found: {id}")
     return id
+
 
 class KnowledgeGraphException(Exception):
     """
     Base exception for the knowledge graph.
-    
-    KnowledgeGraphException should be raised when there is an issue involving interactions between 
+
+    KnowledgeGraphException should be raised when there is an issue involving interactions between
     elements or components of the knowledge graph.
     - Exceptions involving data validity should be raised as a `ValueError` instead.
     - More dangerous exceptions that do not involve data validity or typing (e.g., for logic that may compromise data integrity, involving loading/saving, edge cases, etc.) should be raised as a `RuntimeError` instead.
     """
+
     pass
 
 
@@ -74,7 +73,7 @@ class Observation(BaseModel):
     )
     content: str = Field(
         ...,
-        title="Observation content", 
+        title="Observation content",
         description="The observation content. Should be a single sentence or concise statement in active voice. Example: 'John Doe is a software engineer'",
     )
     durability: DurabilityType = Field(
@@ -82,7 +81,9 @@ class Observation(BaseModel):
         title="Durability",
         description="How long this observation is expected to remain relevant",
     )
-    timestamp: datetime = Field(..., title="Timestamp", description="ISO date when the observation was created")
+    timestamp: datetime = Field(
+        ..., title="Timestamp", description="ISO date when the observation was created"
+    )
 
     @classmethod
     def add_timestamp(
@@ -159,7 +160,9 @@ class Entity(BaseModel):
         self._icon = icon if is_emoji(icon) else None
         if not self._icon:
             logger.debug(f"Invalid emoji '{icon}' given for entity '{self.name}'")
-            raise ValueError(f"Error setting icon for entity '{self.name}': value must be a single valid emoji. Instead, received '{icon}'")
+            raise ValueError(
+                f"Error setting icon for entity '{self.name}': value must be a single valid emoji. Instead, received '{icon}'"
+            )
 
     @icon.getter
     def icon(self) -> str:
@@ -173,11 +176,10 @@ class Entity(BaseModel):
     def check_id(cls, v: str) -> str:
         return validate_id_simple(id=v)
 
-
     # def ensure_id(self) -> str:
     #     """
     #     Ensure that the ID is set. If not, generate a new one and assign it to the entity. Returns the ID.
-        
+
     #     Will be deprecated at some point.
     #     """
     #     if not self.id:
@@ -205,14 +207,21 @@ class Entity(BaseModel):
                 raise ValueError(f"Missing or invalid required key: {k}")
 
         if not data.get("id"):
-            logger.warning(f"Entity '{data['name']}' ID is missing, manager will generate a new one")
+            logger.warning(
+                f"Entity '{data['name']}' ID is missing, manager will generate a new one"
+            )
             data["id"] = None
 
         observations = [Observation(**o) for o in (data.get("observations") or [])]
         aliases = [str(a) for a in (data.get("aliases") or [])]
 
-        e = cls(id=data["id"], name=data["name"], entity_type=data["entity_type"],
-                observations=observations, aliases=aliases)
+        e = cls(
+            id=data["id"],
+            name=data["name"],
+            entity_type=data["entity_type"],
+            observations=observations,
+            aliases=aliases,
+        )
         icon = data.get("icon")
         if icon:
             e.icon = icon  # will validate via setter
@@ -220,17 +229,17 @@ class Entity(BaseModel):
 
     @classmethod
     def from_values(
-        cls, 
-        name: str, 
+        cls,
+        name: str,
         entity_type: str,
         observations: list[Observation] | None = None,
         aliases: list[str] | None = None,
         icon: str | None = None,
-        id: str | None = None
-        ) -> "Entity":
+        id: str | None = None,
+    ) -> "Entity":
         """
         Create an entity from values.
-        
+
         Args:
             name (str, required): The name of the entity
             entity_type (str, required): The type of the entity
@@ -238,23 +247,27 @@ class Entity(BaseModel):
             aliases (list[str]): The aliases of the entity
             icon (str): The emoji to provide a visual representation of the entity. Must be a single valid emoji.
             id (str): The unique identifier of the entity in the knowledge graph.
-        
+
         The ID is managed by the KnowledgeGraphManager and one will be generated if it is not provided, i.e., if creating a new entity from values.
 
         Returns:
             Entity: The created entity
         """
-        e = cls(name=name, entity_type=entity_type,
-                observations=observations or [],
-                aliases=aliases or [],
-                icon=icon,
-                id=id)
+        e = cls(
+            name=name,
+            entity_type=entity_type,
+            observations=observations or [],
+            aliases=aliases or [],
+            icon=icon,
+            id=id,
+        )
         if icon:
             if is_emoji(icon):
                 e.icon = icon
             else:
                 logger.warning(f"Invalid emoji '{icon}' given for new entity '{name}'")
         return e
+
 
 class Relation(BaseModel):
     """
@@ -263,6 +276,7 @@ class Relation(BaseModel):
     Relations are stored in active voice and describe how entities
     interact or relate to each other.
     """
+
     model_config = ConfigDict(
         populate_by_name=True,
         validate_by_name=True,
@@ -326,7 +340,7 @@ class Relation(BaseModel):
             to_id=to_id,
             relation=content,
         )
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize the relation to a JSON-compatible dictionary.
 
@@ -341,6 +355,7 @@ class Relation(BaseModel):
 
     def __str__(self):
         return f"Entity:{self.from_id} '{self.relation}' Entity:{self.to_id}"
+
 
 class UserIdentifier(BaseModel):
     """
@@ -365,6 +380,7 @@ class UserIdentifier(BaseModel):
       - base_name: The base name of the user - first, middle, and last name without any prefixes or suffixes. Organized as a list of strings with each part.
       - names: Various full name forms for the user, depending on the provided information. Index 0 is the first, middle, and last name without any prefixes or suffixes.
     """
+
     model_config = ConfigDict(
         populate_by_name=True,
         validate_by_name=True,
@@ -450,7 +466,7 @@ class UserIdentifier(BaseModel):
         emails: list[str] | None = None,
     ) -> "UserIdentifier":
         """Create a UserIdentifier from values.
-        
+
         Args:
             preferred_name (str): The preferred name of the user
             first_name (str): The given name of the user
@@ -486,8 +502,12 @@ class UserIdentifier(BaseModel):
             base_name_parts.append(last_name)
         if not base_name_parts:
             # Use nickname if all else fails
-            base_name_parts.append(nickname or preferred_name)  # For alt names list, prefer nickname over preferred name
-            logger.warning("No suitable first/middle/last name(s) provided for the user, using nickname")
+            base_name_parts.append(
+                nickname or preferred_name
+            )  # For alt names list, prefer nickname over preferred name
+            logger.warning(
+                "No suitable first/middle/last name(s) provided for the user, using nickname"
+            )
 
         # names[0] is first_name, last_name without any prefixes or suffixes
         base_name_str = " ".join(base_name_parts)
@@ -507,8 +527,10 @@ class UserIdentifier(BaseModel):
             full_names.append(base_name_str)
 
         if len(full_names) != 2:
-            raise ValueError(f"Unknown error occured during name computation (full_names length={len(full_names)}, expected 2)")
-        
+            raise ValueError(
+                f"Unknown error occured during name computation (full_names length={len(full_names)}, expected 2)"
+            )
+
         # Next, add all possible prefix/suffix combinations on top of the base name (names[0]) of the user
         if prefixes:
             for pfx in prefixes:
@@ -540,6 +562,39 @@ class UserIdentifier(BaseModel):
             pronouns="they/them",
             names=["user", "user"],
         )
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "UserIdentifier":
+        """Create a UserIdentifier from a dictionary."""
+        # Data must at least have a name
+        if not data.get("name") or not data.get("preferred_name"):  # compat
+            raise ValueError("Invalid user info: missing name")
+
+        user_info: dict[str, Any] = {}
+        for k in [
+            "preferred_name",
+            "first_name",
+            "last_name",
+            "middle_names",
+            "pronouns",
+            "nickname",
+            "prefixes",
+            "suffixes",
+            "emails",
+            "linked_entity_id",
+        ]:
+            if k in data and not data[k]:
+                user_info[k] = data[k]
+
+        if not user_info["preferred_name"]:
+            user_info["preferred_name"] = (
+                data["preferred_name"] or data["first_name"] or data["name"] or None
+            )
+
+        if not user_info["linked_entity_id"]:
+            user_info["linked_entity_id"] = data["linked_entity_id"] or None
+
+        return cls(**data)
 
 
 class KnowledgeGraph(BaseModel):
@@ -608,7 +663,9 @@ class KnowledgeGraph(BaseModel):
         )
 
     @classmethod
-    def from_components(cls, user_info: UserIdentifier, entities: list[Entity], relations: list[Relation]) -> "KnowledgeGraph":
+    def from_components(
+        cls, user_info: UserIdentifier, entities: list[Entity], relations: list[Relation]
+    ) -> "KnowledgeGraph":
         """Initialize the knowledge graph by passing in the user info object, entities lists, and relations lists."""
         return cls(
             user_info=user_info,
@@ -620,6 +677,7 @@ class KnowledgeGraph(BaseModel):
     def from_default(cls) -> "KnowledgeGraph":
         """Initialize the knowledge graph with default values."""
         from .seed_graph import build_initial_graph
+
         return build_initial_graph()
 
     def to_dict_list(self) -> list[dict]:
@@ -628,6 +686,7 @@ class KnowledgeGraph(BaseModel):
         result.extend([e.model_dump(exclude_none=True) for e in (self.entities or [])])
         result.extend([r.model_dump(exclude_none=True) for r in (self.relations or [])])
         return result
+
 
 class CleanupResult(BaseModel):
     """Result of cleaning up outdated observations."""
@@ -679,10 +738,11 @@ class DurabilityGroupedObservations(BaseModel):
     def __repr__(self):
         return f"DurabilityGroupedObservations(permanent={self.permanent}, long_term={self.long_term}, short_term={self.short_term}, temporary={self.temporary})"
 
+
 class CreateEntityRequest(BaseModel):
     """
     Request model used to create an entity.
-    
+
     Properties:
         name (str): The name of the new entity to create.
         entity_type (str): The type of the entity. Arbitrary, but should be a noun.
@@ -690,7 +750,7 @@ class CreateEntityRequest(BaseModel):
         aliases (list[str]): Any alternative names for the entity
         icon (str): The icon of the entity. Must be a single valid emoji. Optional, but recommended.
     """
-    
+
     model_config = ConfigDict(
         populate_by_name=True,
         validate_by_name=True,
@@ -723,8 +783,10 @@ class CreateEntityRequest(BaseModel):
         description="The icon of the entity. Must be a single valid emoji. Optional, but recommended.",
     )
 
+
 class CreateRelationRequest(BaseModel):
     """Request model used to create a relation."""
+
     model_config = ConfigDict(
         populate_by_name=True,
         validate_by_name=True,
@@ -791,6 +853,7 @@ class CreateRelationRequest(BaseModel):
         if not (isinstance(to_entity, Entity) and to_entity.id):
             to_entity.ensure_id()
         return cls(from_entity_id=from_entity.id, to_entity_id=to_entity.id, relation=relation)
+
 
 class ObservationRequest(BaseModel):
     """Request model for managing observations for an entity in the knowledge graph. Used for both addition and deletion."""
@@ -874,6 +937,7 @@ class DeleteEntryRequest(BaseModel):
         """
     )
 
+
 class CreateEntryRequest(BaseModel):
     """Request model used to validate and add data to the knowledge graph.
 
@@ -887,6 +951,7 @@ class CreateEntryRequest(BaseModel):
         - entity: [{'name': 'entity_name', 'entity_type': entity type, 'observations': [{'content': str, 'durability': Literal['temporary', 'short-term', 'long-term', 'permanent']}]}]
         - relation: [{'from': 'entity_name', 'to': 'entity_name', 'relation': 'relation'}]
     """
+
     model_config = ConfigDict(
         deprecated=True,
         populate_by_name=True,
@@ -904,6 +969,7 @@ class CreateEntryRequest(BaseModel):
         """
     )
 
+
 class CreateEntityResult(BaseModel):
     """Result of creating an entity."""
 
@@ -912,6 +978,7 @@ class CreateEntityResult(BaseModel):
         title="Entities",
         description="The entities that were successfully created (excludes existing names)",
     )
+
 
 class CreateRelationResult(BaseModel):
     """Result of creating a relation."""

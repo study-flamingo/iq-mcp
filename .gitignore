@@ -114,3 +114,6 @@ __pycache__/
 *.pyc
 .pytest_cache/
 [!example]*.jsonl
+
+# private docs
+docs/.*
