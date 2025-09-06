@@ -250,9 +250,10 @@ class KnowledgeGraphManager:
         # TODO: improve pydantic utilization to simplify this method
         entities_list = graph.entities
 
-        # Ensuure the entity actually exists in the graph, and remove for the next step
+        # Ensure the entity actually exists in the graph without mutating the list under iteration
         try:
-            entities_list.remove(entity)
+            if entity not in entities_list:
+                raise ValueError("entity not present in entities list")
         except Exception as e:
             raise KnowledgeGraphException(f"Entity {entity.name} must exist in graph: {e}")
 
@@ -262,13 +263,17 @@ class KnowledgeGraphManager:
                 logger.warning(f"Entity {entity.name} has a duplicate ID: {entity.id}")
 
             # Also make sure this isn't a copy of another with a different id
-            ents = []
-            for e in entities_list:
-                ents.append(e.model_dump(exclude_none=True, exclude={"id"}))
+            # Compare against all other entities without mutating the source list
+            others = [e for e in entities_list if e is not entity]
+            other_entity_dicts = [
+                e.model_dump(exclude_none=True, exclude={"id"}) for e in others
+            ]
             entity_no_id = entity.model_dump(exclude_none=True, exclude={"id"})
-            for e in ents:
-                if e == entity_no_id:
-                    raise KnowledgeGraphException(f"Entity {entity.id} is a duplicate of {e.id}")
+            for e_dict in other_entity_dicts:
+                if e_dict == entity_no_id:
+                    raise KnowledgeGraphException(
+                        f"Entity {entity.id} is a duplicate of an existing entity"
+                    )
 
             # If this entity's name is "__user__", it should be the user-linked entity
             if entity.name == "__user__":
@@ -526,24 +531,29 @@ class KnowledgeGraphManager:
                 logger.debug(f"✅👤 Successfully validated {len(valid_entities)} entities")
                 
                 # Validate relations
+                valid_relations: list[Relation] = []
                 for r in graph.relations:
-                    valid_relations: list[Relation] = []
                     try:
                         self._verify_relation(r, graph)
                     except Exception as e:
-                        # Simply unload relations that are invalid  TODO: handle more gracefully
-                        errors.append(f"Bad relation `{str(r)[:24]}...`: {e}. Excluding from graph.")
-                        graph.relations.remove(r)
+                        # Simply exclude relations that are invalid  TODO: handle more gracefully
+                        errors.append(
+                            f"Bad relation `{str(r)[:24]}...`: {e}. Excluding from graph."
+                        )
+                        continue
                     valid_relations.append(r)
-                logger.debug(f"✅🔗 Successfully validated {len(valid_relations)} relations")
+                logger.debug(
+                    f"✅🔗 Successfully validated {len(valid_relations)} relations"
+                )
 
                 # Verify the user-linked entity exists and is valid
                 try:
                     self._validate_user_info(graph)
-                except Exception as e:
-                    raise RuntimeError(f"User info invalid: {e}")  # TODO: graceful fallback
-                finally:
                     logger.debug("✅😃 Successfully validated user info!")
+                except Exception as e:
+                    raise RuntimeError(
+                        f"User info invalid: {e}"
+                    )  # TODO: graceful fallback
             
             except RuntimeError as e:
                 # Should exit with non-zero code if this happens
@@ -776,8 +786,8 @@ class KnowledgeGraphManager:
         """
         graph = await self._load_graph()
 
-        from_entity = self._get_entity_by_id(graph, relation.from_id)
-        to_entity = self._get_entity_by_id(graph, relation.to_id)
+        from_entity = self._get_entity_by_id(relation.from_id, graph)
+        to_entity = self._get_entity_by_id(relation.to_id, graph)
         return from_entity, to_entity
 
     async def cleanup_outdated_observations(self) -> CleanupResult:

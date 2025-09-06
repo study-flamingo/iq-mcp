@@ -367,12 +367,20 @@ async def create_entities(new_entities: list[CreateEntityRequest]):
     Add new entities (nodes) to the knowledge graph.
     
     ## Adding Entities
+    
+    For each entity:
+    
     'data' must be a list of Entities:
       - name: entity_name (required)
       - entity_type: entity_type (required)
-      - observations: list of observations (optional)
+      - observations (list[Observation]): list of observations about the entity (optional, but recommended)
+        
+        Observations require:
         - content: str (required)
         - durability: Literal['temporary', 'short-term', 'long-term', 'permanent'] (optional, defaults to 'short-term')
+        
+        * The timestamp will be added automatically
+        
       - aliases: list of str (optional)
       - icon: Emoji to represent the entity (optional)
     """
@@ -380,30 +388,30 @@ async def create_entities(new_entities: list[CreateEntityRequest]):
         result = await manager.create_entities(new_entities)
         entities = result.entities or None
         if not entities or len(entities) == 0:
-            return "No new entities created!"
+            return "Request received, however, no new entities were created!"
         elif len(entities) == 1:
             result = "Entity created successfully:\n"
         else:
             result = f"{len(entities)} entities created successfully:\n"
-
-        for e in entities:
-            i = f"{e.icon} " if e.icon and not settings.no_emojis else ""
-            result += f"{i}**{e.name}** ({e.entity_type})\n"
-            if e.aliases:
-                result += "  Alias(es): "
-                alias_list = []
-                for a in e.aliases:
-                    alias_list.append(a)
-                result += f"{', '.join(alias_list)}\n"
-            if e.observations:
-                result += "  Observation(s): "
-                for o in e.observations:
-                    result += f"  - {o.content} ({o.durability.value})\n"
-            result += "\n"
-        
-        return result
     except Exception as e:
         raise ToolError(f"Failed to create entities: {e}")
+
+    for e in entities:
+        i = e.icon_
+        result += f"{i}{e.name} ({e.entity_type})\n"
+        if e.aliases:
+            result += "  Alias(es): "
+            alias_list = []
+            for a in e.aliases:
+                alias_list.append(a)
+            result += f"{', '.join(alias_list)}\n"
+        if e.observations:
+            result += "  Observation(s): "
+            for o in e.observations:
+                result += f"  - {o.content} ({o.durability.value})\n"
+        result += "\n"
+    
+    return result
 
 @mcp.tool
 async def create_relations(new_relations: list[CreateRelationRequest]):

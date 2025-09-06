@@ -17,14 +17,15 @@ from .settings import Logger as logger, Settings
 # Helper functions
 _GRAPHEMES = re.compile(r"\X")
 _HAS_EMOJI = re.compile(r"(\p{Extended_Pictographic}|\p{Regional_Indicator})")
-
-
 def is_emoji(s: str) -> bool:
     """Check if a string is a valid emoji."""
     s = s.strip()
     g = _GRAPHEMES.findall(s)
     return len(g) == 1 and _HAS_EMOJI.search(g[0]) is not None
 
+def get_current_datetime() -> datetime:
+    """Get the current datetime (UTC)."""
+    return datetime.now(timezone.utc)
 
 def validate_id_simple(id: str) -> str:
     """Simple validation of the provided entity ID. Checks if the ID is a string, is not empty, is 8 characters long, and is alphanumeric. If invalid, raises a ValueError."""
@@ -63,8 +64,8 @@ class Observation(BaseModel):
 
     Properties:
     - content(str): The observation content
-    - timestamp(str): ISO date string when the observation was created
     - durability(DurabilityType): How long this observation is expected to remain relevant
+    - timestamp(datetime): Timestamp of when the observation was created
     """
 
     model_config = ConfigDict(
@@ -77,24 +78,42 @@ class Observation(BaseModel):
         description="The observation content. Should be a single sentence or concise statement in active voice. Example: 'John Doe is a software engineer'",
     )
     durability: DurabilityType = Field(
-        ...,
+        default=DurabilityType.SHORT_TERM,
         title="Durability",
         description="How long this observation is expected to remain relevant",
     )
     timestamp: datetime = Field(
-        ..., title="Timestamp", description="ISO date when the observation was created"
+        default_factory=get_current_datetime,
+        title="Timestamp",
+        description="Timestamp of when the observation was created"
     )
 
     @classmethod
-    def add_timestamp(
-        cls, content: str, durability: DurabilityType = DurabilityType.SHORT_TERM
+    def from_dict(
+        cls,
+        data: dict
     ) -> "Observation":
         """Create a new timestamped observation from content and durability. The current datetime in ISO format (UTC) is used as the timestamp."""
-        ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        return cls(content=content, timestamp=ts, durability=durability)
-
-    def __repr__(self):
-        return f"Observation(content={self.content}, timestamp={self.timestamp}, durability={self.durability})"
+        
+        content = data.get("content")
+        durability = data.get("durability")
+        timestamp = get_current_datetime
+        return cls(content=content, timestamp=timestamp, durability=durability)
+    
+    @classmethod
+    def from_values(
+        cls,
+        content: str,
+        durability: DurabilityType = DurabilityType.SHORT_TERM,
+    ) -> "Observation":
+        """Create a new timestamped observation from content and durability. The current datetime in ISO format (UTC) is used as the timestamp."""
+        observation = cls(content=content, durability=durability, timestamp=get_current_datetime())
+        return observation
+    
+    def save(self) -> dict:
+        """Convert the observation to a dictionary for writing to storage."""
+        record = self.model_dump()
+        return record
 
 
 class Entity(BaseModel):
@@ -170,6 +189,13 @@ class Entity(BaseModel):
         if Settings.no_emojis or not self._icon:
             return ""
         return self._icon
+
+    @icon.getter
+    def icon_(self) -> str:
+        """Return the icon of the entity with an added whitespace if it exists, and its display is not disabled in settings. Otherwise, return an empty string."""
+        if Settings.no_emojis or not self._icon:
+            return ""
+        return self._icon + " "
 
     @field_validator("id", mode="after")
     @staticmethod
@@ -739,6 +765,26 @@ class DurabilityGroupedObservations(BaseModel):
         return f"DurabilityGroupedObservations(permanent={self.permanent}, long_term={self.long_term}, short_term={self.short_term}, temporary={self.temporary})"
 
 
+class ObservationRequest(BaseModel):
+    """Request model for managing observations for an entity in the knowledge graph. Used for both addition and deletion."""
+
+    entity_name: str = Field(
+        ...,
+        title="Entity name",
+        description="The name of the entity to add observations to",
+    )
+    observations: list[Observation] = Field(
+        ...,
+        title="Observations",
+        description="Observations to add - objects with durability metadata",
+    )
+    confirm: bool | None = Field(
+        ...,
+        title="Confirm",
+        description="Optional confirmation property. Must be passed for certain sensitive operations. ***ALWAYS VERIFY WITH THE USER BEFORE SETTING TO TRUE*** Experimental.",
+    )
+
+
 class CreateEntityRequest(BaseModel):
     """
     Request model used to create an entity.
@@ -853,26 +899,6 @@ class CreateRelationRequest(BaseModel):
         if not (isinstance(to_entity, Entity) and to_entity.id):
             to_entity.ensure_id()
         return cls(from_entity_id=from_entity.id, to_entity_id=to_entity.id, relation=relation)
-
-
-class ObservationRequest(BaseModel):
-    """Request model for managing observations for an entity in the knowledge graph. Used for both addition and deletion."""
-
-    entity_name: str = Field(
-        ...,
-        title="Entity name",
-        description="The name of the entity to add observations to",
-    )
-    observations: list[Observation] = Field(
-        ...,
-        title="Observations",
-        description="Observations to add - objects with durability metadata",
-    )
-    confirm: bool | None = Field(
-        ...,
-        title="Confirm",
-        description="Optional confirmation property. Must be passed for certain sensitive operations. ***ALWAYS VERIFY WITH THE USER BEFORE SETTING TO TRUE*** Experimental.",
-    )
 
 
 class AddObservationResult(BaseModel):

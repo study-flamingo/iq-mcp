@@ -6,13 +6,13 @@ This is a modern Python implementation using Pydantic models and FastMCP, design
 
 ## ✨ Highlights
 
-- **Temporal observations** with durability categories and automatic timestamps
-- **Smart cleanup** that removes outdated observations by durability
-- **Alias-aware graph**: resolve entities by name or any alias
-- **Unified tools**: single `create_entry` and `delete_entry` cover CRUD
-- **Merge entities**: consolidate duplicates while preserving relations and aliases
-- **Enhanced search** across names, aliases, types, and observation content
-- **Flexible storage**: robust JSONL reader supports nested and legacy-ish formats
+  - **Temporal observations** with durability categories and automatic timestamps
+  - **Smart cleanup** that removes outdated observations by durability
+  - **Alias-aware graph**: resolve entities by name or any alias
+  - **Unified tools**: single `create_entry` and `delete_entry` cover CRUD
+  - **Merge entities**: consolidate duplicates while preserving relations and aliases
+  - **Enhanced search** across names, aliases, types, and observation content
+  - **Flexible storage**: robust JSONL reader supports nested and legacy-ish formats
 
 ## Core Concepts
 
@@ -20,10 +20,10 @@ This is a modern Python implementation using Pydantic models and FastMCP, design
 
 Entities are the primary nodes in the knowledge graph. Each entity has:
 
-- A unique name (identifier)
-- An entity type (e.g., "person", "organization", "event")
-- A list of timestamped observations (with durability)
-- Optional aliases (alternative names that map to the same entity)
+  - A unique name (identifier)
+  - An entity type (e.g., "person", "organization", "event")
+  - A list of timestamped observations (with durability)
+  - Optional aliases (alternative names that map to the same entity)
 
 Example:
 
@@ -59,10 +59,10 @@ Relations define directed connections between entities. They are stored in activ
 Observations include durability and an ISO timestamp to distinguish durable facts from transient state.
 
 Durability categories:
-- `permanent`: Never expires (e.g., "Born in 1990")
-- `long-term`: Relevant for ~1+ years (e.g., "Works at Acme Corp")
-- `short-term`: Relevant for ~3 months (e.g., "Working on Project X")
-- `temporary`: Relevant for ~1 month (e.g., "Currently learning TypeScript")
+  - `permanent`: Never expires (e.g., "Born in 1990")
+  - `long-term`: Relevant for ~1+ years (e.g., "Works at Acme Corp")
+  - `short-term`: Relevant for ~3 months (e.g., "Working on Project X")
+  - `temporary`: Relevant for ~1 month (e.g., "Currently learning TypeScript")
 
 ## API Reference (FastMCP Tools)
 
@@ -72,10 +72,10 @@ Durability categories:
 
 Add observations, entities, or relations.
 
-- Request: `CreateEntryRequest`
-- Fields:
-  - `entry_type`: one of `"observation" | "entity" | "relation"`
-  - `data`: list of the appropriate objects for the chosen type
+  - Request: `CreateEntryRequest`
+  - Fields:
+    - `entry_type`: one of `"observation" | "entity" | "relation"`
+    - `data`: list of the appropriate objects for the chosen type
 
 Examples:
 
@@ -101,40 +101,40 @@ Examples:
 ```
 
 Notes:
-- Entity lookups are alias-aware; you can use the entity's name or any alias.
-- Timestamps are added automatically; you may pass `"ts": null` for convenience.
+  - Entity lookups are alias-aware; you can use the entity's name or any alias.
+  - Timestamps are added automatically; you may pass `"ts": null` for convenience.
 
 #### delete_entry
 
 Delete observations, entities, or relations.
 
-- Request: `DeleteEntryRequest`
-- Fields:
-  - `entry_type`: `"observation" | "entity" | "relation"`
-  - `data`:
-    - entities: `list[str]` of names or aliases
-    - observations: `list[DeleteObservationRequest]` with `{ entityName, observation: ["content to delete", ...] }`
-    - relations: `list[Relation]` with `{ from, to, relation_type }`
+  - Request: `DeleteEntryRequest`
+  - Fields:
+    - `entry_type`: `"observation" | "entity" | "relation"`
+    - `data`:
+      - entities: `list[str]` of names or aliases
+      - observations: `list[DeleteObservationRequest]` with `{ entityName, observation: ["content to delete", ...] }`
+      - relations: `list[Relation]` with `{ from, to, relation_type }`
 
 This action is destructive and irreversible. Always confirm with the user before invoking.
 
 ### Graph Operations
 
-- `read_graph()`: Returns full graph. Observations are sorted by newest first.
-- `search_nodes(query)`: Matches names, aliases, types, and observation content.
-- `open_nodes(entity_names)`: Returns only the requested nodes and their inter-relations (name or alias supported).
-- `merge_entities(newentity_name, entity_names)`: Merge multiple entities into a single entity. Combines observations (deduped), rewrites relations, and aggregates aliases. Prevents name/alias conflicts.
+  - `read_graph()`: Returns full graph. Observations are sorted by newest first.
+  - `search_nodes(query)`: Matches names, aliases, types, and observation content.
+  - `open_nodes(entity_names)`: Returns only the requested nodes and their inter-relations (name or alias supported).
+  - `merge_entities(newentity_name, entity_names)`: Merge multiple entities into a single entity. Combines observations (deduped), rewrites relations, and aggregates aliases. Prevents name/alias conflicts.
 
 ### Temporal Management
 
-- `cleanup_outdated_observations()`
-  - permanent: never removed
-  - long-term: removed after > ~12 months
-  - short-term: removed after > ~3 months
-  - temporary: removed after > ~1 month
-  - Returns counts plus details of removed observations
+  - `cleanup_outdated_observations()`
+    - permanent: never removed
+    - long-term: removed after > ~12 months
+    - short-term: removed after > ~3 months
+    - temporary: removed after > ~1 month
+    - Returns counts plus details of removed observations
 
-- `get_observations_by_durability(entity_name)`: Returns groups `permanent`, `long_term`, `short_term`, `temporary`.
+  - `get_observations_by_durability(entity_name)`: Returns groups `permanent`, `long_term`, `short_term`, `temporary`.
 
 ## Usage Examples
 
@@ -220,8 +220,8 @@ uv pip install -e .
 ```
 
 Notes:
-- Default transport is `stdio`. You can also use `http` or `sse` by setting `IQ_TRANSPORT` (aliases like `streamable-http` are normalized to `http`).
-- Memory path may be provided via CLI `--memory-path` or environment `IQ_MEMORY_PATH`.
+  - Default transport is `stdio`. You can also use `http` or `sse` by setting `IQ_TRANSPORT` (aliases like `streamable-http` are normalized to `http`).
+  - Memory path may be provided via CLI `--memory-path` or environment `IQ_MEMORY_PATH`.
 
 3) Optional: HTTP transport (for streamable clients)
 
@@ -233,12 +233,12 @@ python -m mcp_knowledge_graph.server --memory-path /absolute/path/to/memory.json
 ### Configuration (env and CLI)
 
 Env vars (with CLI equivalents):
-- `IQ_MEMORY_PATH` (or `--memory-path`): path to `memory.jsonl` (default: repo root `memory.jsonl`, fallback: `example.jsonl` if present)
-- `IQ_TRANSPORT` (or `--transport`): `stdio` | `http` | `sse`
-- `IQ_STREAMABLE_HTTP_PORT` (or `--port`): port for `http` transport (default: 8000)
-- `IQ_STREAMABLE_HTTP_HOST` (or `--http-host`)
-- `IQ_STREAMABLE_HTTP_PATH` (or `--http-path`)
-- `IQ_DEBUG` (or `--debug`): `true` enables verbose logging
+  - `IQ_MEMORY_PATH` (or `--memory-path`): path to `memory.jsonl` (default: repo root `memory.jsonl`, fallback: `example.jsonl` if present)
+  - `IQ_TRANSPORT` (or `--transport`): `stdio` | `http` | `sse`
+  - `IQ_STREAMABLE_HTTP_PORT` (or `--port`): port for `http` transport (default: 8000)
+  - `IQ_STREAMABLE_HTTP_HOST` (or `--http-host`)
+  - `IQ_STREAMABLE_HTTP_PATH` (or `--http-path`)
+  - `IQ_DEBUG` (or `--debug`): `true` enables verbose logging
 
 ### Migration
 
@@ -302,8 +302,7 @@ real name, and several possible variations (nickname, etc.).
 
 Save file format:
 
-  - `__default_user__` identifier 
-
+  - `__default_user__` identifier
 
 ```jsonl
 {"type":"entity","data":{"name":"Dr_Smith","entity_type":"person","observation":[{"contents":"Is a cardiologist","durability":"permanent","ts":"2025-01-01T00:00:00"}],"alias":["Doctor Smith"]}}
@@ -312,8 +311,8 @@ Save file format:
 
 ### Backward Compatibility
 
-- Loader tolerates both nested (`{"type":"entity","data":{...}}`) and flattened (`{"type":"entity", ...}`) variants
-- Lines that are malformed are skipped with warnings rather than failing the entire load
+  - Loader tolerates both nested (`{"type":"entity","data":{...}}`) and flattened (`{"type":"entity", ...}`) variants
+  - Lines that are malformed are skipped with warnings rather than failing the entire load
 
 ## Development
 
@@ -341,17 +340,17 @@ Open `graph.html` to explore nodes, aliases, observations, and relations with an
 
 ## Performance & Scalability
 
-- **Efficient search** across names, aliases, types, and observation content  
-- **Incremental cleanup** of outdated observations
-- **Optimized JSONL storage**
+  - **Efficient search** across names, aliases, types, and observation content  
+  - **Incremental cleanup** of outdated observations
+  - **Optimized JSONL storage**
 
 ## Python Features Demonstrated
 
-- **FastMCP 2.11** server tools
-- **Pydantic** models with field aliases
-- **Enums** for durability
-- **Type hints** throughout
-- **Async/await** where appropriate
+  - **FastMCP 2.11** server tools
+  - **Pydantic** models with field aliases
+  - **Enums** for durability
+  - **Type hints** throughout
+  - **Async/await** where appropriate
 
 ## Contributing
 
@@ -367,11 +366,11 @@ Key improvements over the original baseline:
 
 ### Recent
 
-- ✨ Temporal observations with durability + timestamps
-- ✨ Unified tools: `create_entry`, `delete_entry`
-- ✨ `merge_entities` tool for dedupe/consolidation
-- ✨ Alias-aware operations across tools
-- 🔄 Backward-friendly JSONL loading (nested and flattened)
+  - ✨ Temporal observations with durability + timestamps
+  - ✨ Unified tools: `create_entry`, `delete_entry`
+  - ✨ `merge_entities` tool for dedupe/consolidation
+  - ✨ Alias-aware operations across tools
+  - 🔄 Backward-friendly JSONL loading (nested and flattened)
 
 ## License
 
