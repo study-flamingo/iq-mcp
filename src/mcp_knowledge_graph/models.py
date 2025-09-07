@@ -17,15 +17,19 @@ from .settings import Logger as logger, Settings
 # Helper functions
 _GRAPHEMES = re.compile(r"\X")
 _HAS_EMOJI = re.compile(r"(\p{Extended_Pictographic}|\p{Regional_Indicator})")
+
+
 def is_emoji(s: str) -> bool:
     """Check if a string is a valid emoji."""
     s = s.strip()
     g = _GRAPHEMES.findall(s)
     return len(g) == 1 and _HAS_EMOJI.search(g[0]) is not None
 
+
 def get_current_datetime() -> datetime:
     """Get the current datetime (UTC)."""
     return datetime.now(timezone.utc)
+
 
 def validate_id_simple(id: str) -> str:
     """Simple validation of the provided entity ID. Checks if the ID is a string, is not empty, is 8 characters long, and is alphanumeric. If invalid, raises a ValueError."""
@@ -82,24 +86,21 @@ class Observation(BaseModel):
         title="Durability",
         description="How long this observation is expected to remain relevant",
     )
-    timestamp: datetime = Field(
-        default_factory=get_current_datetime,
+    timestamp: datetime | None = Field(
+        default=None,
         title="Timestamp",
-        description="Timestamp of when the observation was created"
+        description="Timestamp of when the observation was created",
     )
 
     @classmethod
-    def from_dict(
-        cls,
-        data: dict
-    ) -> "Observation":
+    def from_dict(cls, data: dict) -> "Observation":
         """Create a new timestamped observation from content and durability. The current datetime in ISO format (UTC) is used as the timestamp."""
-        
+
         content = data.get("content")
         durability = data.get("durability")
         timestamp = get_current_datetime
         return cls(content=content, timestamp=timestamp, durability=durability)
-    
+
     @classmethod
     def from_values(
         cls,
@@ -109,7 +110,14 @@ class Observation(BaseModel):
         """Create a new timestamped observation from content and durability. The current datetime in ISO format (UTC) is used as the timestamp."""
         observation = cls(content=content, durability=durability, timestamp=get_current_datetime())
         return observation
-    
+
+    @field_validator("timestamp", mode="after")
+    @staticmethod
+    def check_timestamp(v: datetime | None) -> datetime:
+        if v is None or v == "" or not isinstance(v, datetime):
+            return get_current_datetime()
+        return v
+
     def save(self) -> dict:
         """Convert the observation to a dictionary for writing to storage."""
         record = self.model_dump()
@@ -190,7 +198,6 @@ class Entity(BaseModel):
             return ""
         return self._icon
 
-    @icon.getter
     def icon_(self) -> str:
         """Return the icon of the entity with an added whitespace if it exists, and its display is not disabled in settings. Otherwise, return an empty string."""
         if Settings.no_emojis or not self._icon:
@@ -778,11 +785,6 @@ class ObservationRequest(BaseModel):
         title="Observations",
         description="Observations to add - objects with durability metadata",
     )
-    confirm: bool | None = Field(
-        ...,
-        title="Confirm",
-        description="Optional confirmation property. Must be passed for certain sensitive operations. ***ALWAYS VERIFY WITH THE USER BEFORE SETTING TO TRUE*** Experimental.",
-    )
 
 
 class CreateEntityRequest(BaseModel):
@@ -795,6 +797,8 @@ class CreateEntityRequest(BaseModel):
         observations (list[Observation]): The observations of the entity. Optional, but recommended.
         aliases (list[str]): Any alternative names for the entity
         icon (str): The icon of the entity. Must be a single valid emoji. Optional, but recommended.
+
+    If valid, the entity will automatically be assigned an ID and observations will be given timestamps.
     """
 
     model_config = ConfigDict(
@@ -827,6 +831,21 @@ class CreateEntityRequest(BaseModel):
         default=None,
         title="Icon",
         description="The icon of the entity. Must be a single valid emoji. Optional, but recommended.",
+    )
+
+
+class CreateEntityResult(BaseModel):
+    """Model for the result of creating an entity."""
+
+    entity: dict[str, Any] = Field(
+        ...,
+        title="Entity",
+        description="The entity that was successfully created, or the unsuccessful entity with errors",
+    )
+    errors: list[str] | None = Field(
+        default=None,
+        title="Errors",
+        description="Messages, warnings, or errors to return to the LLM or user, if applicable",
     )
 
 
@@ -996,14 +1015,14 @@ class CreateEntryRequest(BaseModel):
     )
 
 
-class CreateEntityResult(BaseModel):
-    """Result of creating an entity."""
+# class CreateEntityResult(BaseModel):
+#     """DEPRECATED: Result of creating an entity."""
 
-    entities: list[Entity] = Field(
-        ...,
-        title="Entities",
-        description="The entities that were successfully created (excludes existing names)",
-    )
+#     entities: list[Entity] = Field(
+#         ...,
+#         title="Entities",
+#         description="The entities that were successfully created (excludes existing names)",
+#     )
 
 
 class CreateRelationResult(BaseModel):

@@ -8,7 +8,7 @@
 ### mcp_knowledge_graph     Main package
 
     - __init__.py           
-    - 
+    - __main__.py           main entry point of package
     - manager.py            knowledge graph interactions
     - models.py             data models
     - notify.py             supabase integration

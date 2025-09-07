@@ -14,12 +14,7 @@ from fastmcp.exceptions import ToolError, ValidationError
 
 from .manager import KnowledgeGraphManager
 from .models import (
-    CreateEntryRequest,
     DeleteEntryRequest,
-    AddObservationResult,
-    CreateEntityResult,
-    CreateRelationResult,
-    CleanupResult,
     KnowledgeGraph,
     KnowledgeGraphException,
     UserIdentifier,
@@ -27,6 +22,7 @@ from .models import (
     CreateRelationRequest,
     ObservationRequest,
     Entity,
+    CreateEntityResult,
 )
 from .settings import Settings as settings, Logger as logger
 
@@ -36,9 +32,7 @@ import sys
 try:
     from .supabase import supabase, EmailSummary
 except Exception as e:
-    logger.warning(
-        "Supabase integration disabled: %s", e
-    )
+    logger.warning("Supabase integration disabled: %s", e)
     supabase = None
     EmailSummary = None
 
@@ -143,7 +137,9 @@ def _print_user_info(
     # Print observations
     try:
         if include_observations:
-            from_entity, to_entity = manager.get_entities_from_relation(graph.user_info.linked_entity)
+            from_entity, to_entity = manager.get_entities_from_relation(
+                graph.user_info.linked_entity
+            )
             result += ("\n" if settings.no_emojis else "\n🔍 ") + "Observations (times in UTC):\n"
             for o in from_entity.observations:
                 ts = o.timestamp.strftime("%Y-%m-%d %H:%M:%S")
@@ -161,7 +157,9 @@ def _print_user_info(
                     logger.warning("No entities found for names: __default_user__ or default_user")
                     return result
                 user_entity = lookup_result.entities[0]
-                result += ("\n" if settings.no_emojis else "\n🔍 ") + "Observations (times in UTC):\n"
+                result += (
+                    "\n" if settings.no_emojis else "\n🔍 "
+                ) + "Observations (times in UTC):\n"
                 for o in user_entity.observations:
                     ts = o.timestamp.strftime("%Y-%m-%d %H:%M:%S")
                     result += f"  - {o.content} ({ts}, {o.durability.value})\n"
@@ -171,7 +169,9 @@ def _print_user_info(
     # Print relations
     try:
         if include_relations:
-            from_entity, to_entity = manager.get_entities_from_relation(graph.user_info.linked_entity)
+            from_entity, to_entity = manager.get_entities_from_relation(
+                graph.user_info.linked_entity
+            )
             result += ("\n" if settings.no_emojis else "\n🔗 ") + "Relations:\n"
             for r in from_entity.relations:
                 result += f"  - {r.from_entity} {r.relation} {r.to_entity}\n"
@@ -180,7 +180,9 @@ def _print_user_info(
         # Deprecated fallback method
         try:
             if include_relations:
-                user_entity = manager.open_nodes("__default_user__") or manager.open_nodes("default_user")
+                user_entity = manager.open_nodes("__default_user__") or manager.open_nodes(
+                    "default_user"
+                )
                 result += ("\n" if settings.no_emojis else "\n🔗 ") + "Relations:\n"
                 for r in user_entity.relations:
                     result += f"  - {r.from_entity} {r.relation} {r.to_entity}\n"
@@ -189,30 +191,31 @@ def _print_user_info(
 
     return result
 
+
 async def _print_relations_from_graph(
     graph: KnowledgeGraph = None,
     entities_list: list[Entity] = None,
     prefix: str = "  - ",
-    separator: str = "\n  - ", 
+    separator: str = "\n  - ",
     suffix: str = "\n",
     md_links: bool = True,
     include_ids: bool = True,
     include_types: bool = True,
-    ):
+):
     """
     Print relations in a readable format. Respects the no_emojis property from Settings.
-    A number of options are available to customize the display. All options are optional, and the 
+    A number of options are available to customize the display. All options are optional, and the
     default values are used if not specified.
-    
+
     May also pass a list of entities to print relations from instead of the graph.
-    
+
     Format: <from_entity> <relation> <to_entity><separator>
-    
+
     One of the following args is required:
 
         - graph: The knowledge graph to print relations from. Typical usage.
         - entities_list: A list of entities to print relations from.
-    
+
     Optional Args:
 
         - separator: The separator to use between relations. Default is ` \n  - `.
@@ -221,7 +224,7 @@ async def _print_relations_from_graph(
         - suffix: The suffix to use after the relations. Default is `\n`.
         - include_ids: Whether to include the IDs of the entities in the display. Default is True.
         - include_types: Whether to include the types of the entities in the display. Default is True.
-    
+
     Example of default list display:
     ```
       - [👤 John Doe](123) (person) is a friend of [👤 Jane Doe](456) (person)
@@ -233,10 +236,10 @@ async def _print_relations_from_graph(
         entities_list = entities_list or graph.entities
     else:
         entities_list = entities_list or None
-        
+
     if not entities_list:
         raise ValueError("No entities list provided and no graph provided to get entities from")
-    
+
     result = prefix
     entity_map = await manager._get_entity_id_map(entities_list=entities_list)
     try:
@@ -245,7 +248,7 @@ async def _print_relations_from_graph(
             try:
                 a = entity_map.get(r.from_id)
                 b = entity_map.get(r.to_id)
-                
+
                 # If this is the user-linked entity, use the preferred name instead; if name is missing, use "unknown"
                 a_name = "unknown"
                 b_name = "unknown"
@@ -275,7 +278,7 @@ async def _print_relations_from_graph(
             if include_types:
                 link_from += f" ({a.entity_type})" if a else ""
                 link_to += f" ({b.entity_type})" if b else ""
-            
+
             # Add to result
             items.append(f"{link_from} {r.relation} {link_to}")
 
@@ -302,7 +305,9 @@ async def read_graph():
 
         result = _print_user_info(graph)
         try:
-            user_name = graph.user_info.preferred_name  # Preferred name should be set during entity creations at minimum
+            user_name = (
+                graph.user_info.preferred_name
+            )  # Preferred name should be set during entity creations at minimum
         except Exception as e:
             logger.error(f"Failed to print user info: {e}")
 
@@ -323,16 +328,14 @@ async def read_graph():
 
         # Print all relations
         try:
-            result += (
-                f"\n🔗 You've learned about {len(graph.relations)} relations between these entities:\n"
-            )
+            result += f"\n🔗 You've learned about {len(graph.relations)} relations between these entities:\n"
             obs_result = await _print_relations_from_graph(graph)
             if obs_result:
                 result += obs_result
             else:
                 raise KnowledgeGraphException(f"No output from _print_relations_from_graph: {e}")
         except KnowledgeGraphException as e:
-            result += (f"\nERROR: Failed to print relations: {e}")
+            result += f"\nERROR: Failed to print relations: {e}"
         except Exception as e:
             raise ToolError(f"Error while printing relations: {e}")
         return result
@@ -360,77 +363,102 @@ async def read_user_info(include_observations: bool = False, include_relations: 
         return result_str
     except Exception as e:
         raise ToolError(f"Failed to read user info: {e}")
- 
+
+
 @mcp.tool
 async def create_entities(new_entities: list[CreateEntityRequest]):
     """
     Add new entities (nodes) to the knowledge graph.
-    
+
     ## Adding Entities
-    
-    For each entity:
-    
-    'data' must be a list of Entities:
+
+    For each entity to be added:
+
       - name: entity_name (required)
       - entity_type: entity_type (required)
       - observations (list[Observation]): list of observations about the entity (optional, but recommended)
-        
+
         Observations require:
         - content: str (required)
         - durability: Literal['temporary', 'short-term', 'long-term', 'permanent'] (optional, defaults to 'short-term')
-        
+
         * The timestamp will be added automatically
-        
+
       - aliases: list of str (optional)
       - icon: Emoji to represent the entity (optional)
     """
     try:
-        result = await manager.create_entities(new_entities)
-        entities = result.entities or None
-        if not entities or len(entities) == 0:
-            return "Request received, however, no new entities were created!"
-        elif len(entities) == 1:
-            result = "Entity created successfully:\n"
-        else:
-            result = f"{len(entities)} entities created successfully:\n"
-    except Exception as e:
-        raise ToolError(f"Failed to create entities: {e}")
+        entities_created = await manager.create_entities(new_entities)
 
-    for e in entities:
-        i = e.icon_
-        result += f"{i}{e.name} ({e.entity_type})\n"
-        if e.aliases:
-            result += "  Alias(es): "
-            alias_list = []
-            for a in e.aliases:
-                alias_list.append(a)
-            result += f"{', '.join(alias_list)}\n"
-        if e.observations:
-            result += "  Observation(s): "
-            for o in e.observations:
-                result += f"  - {o.content} ({o.durability.value})\n"
-        result += "\n"
-    
-    return result
+        succeeded: list[CreateEntityResult] = []
+        failed: list[CreateEntityResult] = []
+        for r in entities_created:
+            if r.errors:
+                failed.append(r)
+            else:
+                succeeded.append(r)
+
+        if len(succeeded) == 0:
+            if len(failed) == 0:
+                result = "The request was received; however, no new entities were created!\n"
+            result = "Request received; however, no new entities were created, due to the following errors:\n"
+        elif len(succeeded) == 1:
+            result = "Entity created successfully:\n"
+        elif len(succeeded) > 1:
+            result = f"Created {len(succeeded)} entities successfully:\n"
+        for r in succeeded:
+            e = r.entity
+            i = e.icon_()
+            result += f"{i}{e.name} ({e.entity_type})\n"
+            if e.aliases:
+                result += "  Alias(es): "
+                alias_list = []
+                for a in e.aliases:
+                    alias_list.append(a)
+                result += f"{', '.join(alias_list)}\n"
+            if e.observations:
+                result += "  Observation(s): "
+                for o in e.observations:
+                    result += f"  - {o.content} ({o.durability.value})\n"
+            result += "\n"
+
+        if len(failed) == 0:
+            return result
+        elif len(failed) == 1:
+            result += "Failed to create entity:\n"
+        else:
+            result += f"Failed to create {len(failed)} entities:\n"
+        for e in failed:
+            result += f"  - {e.entity.name} ({e.entity.entity_type})\n"
+            if e.errors:
+                result += "Error(s):\n"
+                for err in e.errors:
+                    result += f"  - {err}\n"
+            result += "\n"
+
+        return result
+    except Exception as exc:
+        raise ToolError(f"Failed to create entities: {exc}")
+
 
 @mcp.tool
 async def create_relations(new_relations: list[CreateRelationRequest]):
     """
     Record relations (edges) between entities in the knowledge graph.
-    
+
     Args:
 
       - new_relations: list of CreateRelationRequest objects
 
         Each relation must be a CreateRelationRequest object with the following properties:
-        
+
         - from (str): Origin entity name
         - to (str): Destination entity name
         - relation (str): Relation type
 
-    Relations must be in active voice, directional, and should be concise and to the point. 
+    Relations must be in active voice, directional, and should be concise and to the point.
     Relation content must exclude the 'from' and 'to' entities, and be lowercase. Examples:
-    
+
       - <from_entity> "grew up during" <to_entity> (relation = "grew_up_during")
       - <from_entity> "was a sandwich artist for 20 years at" <to_entity>
       - <from_entity> "is going down a rabbit hole researching" <to_entity>
@@ -456,11 +484,14 @@ async def create_relations(new_relations: list[CreateRelationRequest]):
             t = r.to_entity
             f_i = f"{f.icon} " if f.icon and not settings.no_emojis else ""
             t_i = f"{t.icon} " if t.icon and not settings.no_emojis else ""
-            result += f"{f_i}{f.name} ({f.entity_type}) {r.relation} {t_i}{t.name} ({t.entity_type})\n"
+            result += (
+                f"{f_i}{f.name} ({f.entity_type}) {r.relation} {t_i}{t.name} ({t.entity_type})\n"
+            )
 
         return result
     except Exception as e:
         raise ToolError(f"Failed to create relations: {e}")
+
 
 @mcp.tool
 async def add_observations(new_observations: list[ObservationRequest]):
@@ -503,6 +534,7 @@ async def add_observations(new_observations: list[ObservationRequest]):
     except Exception as e:
         raise ToolError(f"Failed to add observations: {e}")
 
+
 @mcp.tool
 async def cleanup_outdated_observations():
     """Remove observations that are likely outdated based on their durability and age.
@@ -524,6 +556,7 @@ async def cleanup_outdated_observations():
     except Exception as e:
         raise ToolError(f"Failed to cleanup observations: {e}")
 
+
 @mcp.tool
 async def get_observations_by_durability(
     entity_name: str = Field(description="The name or alias of the entity to get observations for"),
@@ -541,6 +574,7 @@ async def get_observations_by_durability(
         return str(result)
     except Exception as e:
         raise ToolError(f"Failed to get observations: {e}")
+
 
 @mcp.tool
 async def delete_entry(request: DeleteEntryRequest) -> str:
@@ -575,6 +609,7 @@ async def delete_entry(request: DeleteEntryRequest) -> str:
             return ""
     except Exception as e:
         raise ToolError(f"Failed to delete entry: {e}")
+
 
 @mcp.tool
 async def update_user_info(user_info: UserIdentifier) -> str:
@@ -752,61 +787,65 @@ async def get_email_update():
     except Exception as e:
         raise ToolError(f"Failed to get email updates: {e}")
 
+
 if settings.debug:
-    @mcp.tool
-    async def DEPRECATED_create_entry(request: CreateEntryRequest):
-        """Add entities, observations, or relations to the knowledge graph.
+    # @mcp.tool
+    # async def DEPRECATED_create_entry(request: CreateEntryRequest):
+    #     """Add entities, observations, or relations to the knowledge graph.
 
-        'data' must be a list of the appropriate object for each entry_type:
+    #     'data' must be a list of the appropriate object for each entry_type:
 
+    #     ## Adding Observations
+    #     'data' must be a list of observations:
+    #     - entity_name: entity_name (required)
+    #     - content: str (required)
+    #     - durability: Literal['temporary', 'short-term', 'long-term', 'permanent'] (optional, defaults to 'short-term')
 
-        ## Adding Observations
-        'data' must be a list of observations:
-        - entity_name: entity_name (required)
-        - content: str (required)
-        - durability: Literal['temporary', 'short-term', 'long-term', 'permanent'] (optional, defaults to 'short-term')
+    #     Observation content must be in active voice, excule the 'from' entity, lowercase, and should be concise and to the point. Examples:
+    #     - "likes chicken"
+    #     - "enjoys long walks on the beach"
+    #     - "can ride a bike with no handlebars"
+    #     - "wants to be a movie star"
+    #     - "dropped out of college to pursue a career in underwater basket weaving"
 
-        Observation content must be in active voice, excule the 'from' entity, lowercase, and should be concise and to the point. Examples:
-        - "likes chicken"
-        - "enjoys long walks on the beach"
-        - "can ride a bike with no handlebars"
-        - "wants to be a movie star"
-        - "dropped out of college to pursue a career in underwater basket weaving"
+    #     Durability determines how long the observation is kept in the knowledge graph and should reflect
+    #     the expected amount of time the observation is relevant.
+    #     - 'temporary': The observation is only relevant for a short period of time (1 month)
+    #     - 'short-term': The observation is relevant for a few months (3 months).
+    #     - 'long-term': The observation is relevant for a few months to a year. (1 year)
+    #     - 'permanent': The observation is relevant for a very long time, or indefinitely. (never expires)
 
-        Durability determines how long the observation is kept in the knowledge graph and should reflect
-        the expected amount of time the observation is relevant.
-        - 'temporary': The observation is only relevant for a short period of time (1 month)
-        - 'short-term': The observation is relevant for a few months (3 months).
-        - 'long-term': The observation is relevant for a few months to a year. (1 year)
-        - 'permanent': The observation is relevant for a very long time, or indefinitely. (never expires)
+    #     """
+    #     logger.warning(
+    #         "This tool is deprecated and will be removed in a future version. Use the create_entities, create_relations, and apply_observations tools instead."
+    #     )
 
-        """
-        logger.warning("This tool is deprecated and will be removed in a future version. Use the create_entities, create_relations, and apply_observations tools instead.")
+    #     entry_type = request.entry_type
+    #     data = request.data
+    #     try:
+    #         if entry_type == "observation":
+    #             observation_result: list[AddObservationResult] = await manager.apply_observations(
+    #                 data
+    #             )
+    #             result = ""
+    #             for r in observation_result:
+    #                 result += str(r) + "\n"
 
-        entry_type = request.entry_type
-        data = request.data
-        try:
-            if entry_type == "observation":
-                observation_result: list[AddObservationResult] = await manager.apply_observations(data)
-                result = ""
-                for r in observation_result:
-                    result += str(r) + "\n"
+    #         elif entry_type == "entity":
+    #             entity_result: CreateEntityResult = await manager.create_entities(data)
+    #             result = str(entity_result)
 
-            elif entry_type == "entity":
-                entity_result: CreateEntityResult = await manager.create_entities(data)
-                result = str(entity_result)
+    #         elif entry_type == "relation":
+    #             relation_result: CreateRelationResult = await manager.create_relations(data)
+    #             result = str(relation_result)
 
-            elif entry_type == "relation":
-                relation_result: CreateRelationResult = await manager.create_relations(data)
-                result = str(relation_result)
+    #         else:
+    #             raise ValueError(f"Invalid entry type: {entry_type}")
 
-            else:
-                raise ValueError(f"Invalid entry type: {entry_type}")
+    #     except Exception as e:
+    #         raise ToolError(f"Failed to create entry: {e}")
 
-        except Exception as e:
-            raise ToolError(f"Failed to create entry: {e}")
-
-        return result
+    #     return result
 
     @mcp.tool
     async def DEBUG_save_graph() -> str:

@@ -22,7 +22,8 @@ from dotenv import load_dotenv
 
 logging.basicConfig(level=logging.INFO)
 
-DEFAULT_MEMORY_PATH = Path(__name__).parent.parent / "memory.jsonl"
+# Default memory file at repo root
+DEFAULT_MEMORY_PATH = Path(__file__).parents[2].resolve() / "memory.jsonl"
 DEFAULT_PORT = 8000
 
 
@@ -60,6 +61,7 @@ class SupabaseSettings:
     entities_table: str | None = None
     relations_table: str | None = None
     user_table: str | None = None
+
 
 class IQSettings:
     """IQ-MCP Application settings loaded from CLI and environment.
@@ -106,7 +108,7 @@ class IQSettings:
     def load(cls) -> "IQSettings":
         """
         Create a IQ-MCP Settings instance from CLI args, env, and defaults.
-        
+
         Properties:
             debug (bool): Enables verbose logging when True
             transport (Transport enum): Validated transport value ("stdio" | "sse" | "http")
@@ -148,8 +150,7 @@ class IQSettings:
             logger.debug(f"Loaded .env from {env_path}")
         elif load_dotenv(verbose=False):
             logger.debug("Loaded .env from current directory")
-        elif load_dotenv(DEFAULT_MEMORY_PATH):
-            logger.debug(f"Loaded .env from default memory path: {DEFAULT_MEMORY_PATH}")
+        # No default load from memory path (not an env file)
 
         # Resolve project root (repo root)
         project_root: Path = Path(__file__).parents[2].resolve()
@@ -162,14 +163,16 @@ class IQSettings:
         transport: Transport = TRANSPORT_ENUM[transport_raw]
 
         # Port/Host/Path for HTTP
-        http_port = int(args.port) or os.environ.get("IQ_STREAMABLE_HTTP_PORT", DEFAULT_PORT)
+        http_port = args.port or int(os.getenv("IQ_STREAMABLE_HTTP_PORT", DEFAULT_PORT))
         http_host = args.http_host or os.getenv("IQ_STREAMABLE_HTTP_HOST")
         http_path = args.http_path or os.getenv("IQ_STREAMABLE_HTTP_PATH")
 
         # Memory path precedence: CLI > env > default(project_root/memory.jsonl) > example.jsonl
 
-        memory_path_input = args.memory_path or os.getenv("IQ_MEMORY_PATH", DEFAULT_MEMORY_PATH)
-        memory_path = Path(memory_path_input).resolve()
+        memory_path_input = args.memory_path or os.getenv(
+            "IQ_MEMORY_PATH", str(DEFAULT_MEMORY_PATH)
+        )
+        memory_path = Path(str(memory_path_input)).resolve()
 
         # Disable emojis if desired
         no_emojis = args.no_emojis or os.getenv("IQ_NO_EMOJIS", "false").lower() == "true"
@@ -181,7 +184,7 @@ class IQSettings:
         supabase_entities_table = os.getenv("SUPABASE_ENTITIES_TABLE")
         supabase_relations_table = os.getenv("SUPABASE_RELATIONS_TABLE")
         supabase_user_table = os.getenv("SUPABASE_USER_TABLE")
-        
+
         # If no URL or key, skip Supabase configuration entirely
         if not supabase_url or not supabase_key:
             logger.warning("⚠️ No Supabase settings provided, skipping Supabase integration.")
