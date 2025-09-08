@@ -18,7 +18,11 @@ import argparse
 import os
 from pathlib import Path
 from typing import Literal
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except Exception:  # optional dev dependency for tests
+    def load_dotenv(*args, **kwargs):  # type: ignore
+        return False
 
 logging.basicConfig(level=logging.INFO)
 

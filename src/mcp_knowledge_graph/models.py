@@ -355,18 +355,16 @@ class Relation(BaseModel):
     @classmethod
     def from_dict(cls, data: dict) -> "Relation":
         """Initialize the relation from a dictionary of values. Ideal for reading from storage.
-
-        Supports both id-only records and legacy name-based records.
         """
-        content = data.get("relation") or data.get("relation_type")  # compat with old data format
-        if not content.strip() or not isinstance(content, str):
+        content = data.get("relation") or data.get("content") or data.get("relation_type") # compat with old data format
+        if not content.strip():
+            raise ValueError("Relation content invalid or missing")
+        elif not isinstance(content, str):
             raise ValueError(f"Invalid relation content: {content}")
 
         # Check IDs
-        from_id_raw = str(data.get("from_id"))
-        to_id_raw = str(data.get("to_id"))
-        from_id = validate_id_simple(from_id_raw)
-        to_id = validate_id_simple(to_id_raw)
+        from_id = validate_id_simple(data.get("from_id"))
+        to_id = validate_id_simple(data.get("to_id"))
 
         return cls(
             from_id=from_id,
@@ -410,8 +408,16 @@ class UserIdentifier(BaseModel):
       - prefixes: The prefixes of the user
       - suffixes: The suffixes of the user
       - emails: The email addresses of the user
+      
+    The following fields are computed automatically from the provided information, and should not be provided:
       - base_name: The base name of the user - first, middle, and last name without any prefixes or suffixes. Organized as a list of strings with each part.
       - names: Various full name forms for the user, depending on the provided information. Index 0 is the first, middle, and last name without any prefixes or suffixes.
+      - linked_entity_id: The ID of the entity that is linked to the user. This entity will be used to store observations about the user.
+    
+    Constructors:
+      - from_values(): Create a UserIdentifier from individually-provided fields.
+      - from_default(): Create a UserIdentifier with the default values.
+      - from_dict(data: dict): Initialize the UserIdentifier from a dictionary containing the above fields.
     """
 
     model_config = ConfigDict(
@@ -471,6 +477,7 @@ class UserIdentifier(BaseModel):
     )
     base_name: list[str] | None = Field(
         default=None,
+        deprecated=True,
         title="Base name",
         description="The base name of the user - first, middle, and last name without any prefixes or suffixes. Organized as a list of strings with each part.",
     )
@@ -478,11 +485,6 @@ class UserIdentifier(BaseModel):
         ...,
         title="Full name",
         description="Various full name forms for the user, depending on the provided information. Index 0 is the first, middle, and last name without any prefixes or suffixes.",
-    )
-    linked_entity: Entity | None = Field(
-        default=None,
-        title="Linked entity",
-        description="The entity that is linked to the user. This is used to link the user to the entity that represents them in the knowledge graph.",
     )
 
     @classmethod
@@ -497,6 +499,8 @@ class UserIdentifier(BaseModel):
         prefixes: list[str] | None = None,
         suffixes: list[str] | None = None,
         emails: list[str] | None = None,
+        linked_entity_id: str | None = None,
+        linked_entity: Entity | None = None,
     ) -> "UserIdentifier":
         """Create a UserIdentifier from values.
 
@@ -510,68 +514,73 @@ class UserIdentifier(BaseModel):
             prefixes (list[str]): The prefixes of the user
             suffixes (list[str]): The suffixes of the user
             emails (list[str]): The email addresses of the user
+            
+        User-linked Entity:
+        
+            If specifying a new user entity, provide either the linked_entity_id or the linked_entity object itself.
+            Warning: the new linked ID or Entity object should be validated prior to calling this function.
         """
 
-        # Compute the preferred name if not given
+        if linked_entity_id and linked_entity:
+            logger.warning("Both linked_entity_id and linked_entity provided - prioritizing linked_entity")
+        elif linked_entity_id and not linked_entity:
+            validate_id_simple(linked_entity_id)
+        elif linked_entity and not linked_entity_id:
+            validate_id_simple(linked_entity.id)
+            linked_entity_id = linked_entity.id
+        else:
+            raise ValueError("Must provide either linked_entity_id or linked_entity")
+
+        # Compose preferred name from the provided information if not provided
         if not preferred_name:
-            if nickname:
-                preferred_name = nickname
-            elif prefixes:
+
+            # Make sure there's enough data to work with
+            if (
+                not first_name
+                and not last_name
+                and not nickname
+                and not middle_names
+            ):
+                raise ValueError("Not enough data to compose a preferred name")
+
+            # First, try prefix + first name
+            if prefixes and first_name:
                 preferred_name = f"{prefixes[0]} {first_name}"
+            
+            # Then, try just first name
             elif first_name:
                 preferred_name = first_name
+            
+            # Then, try just last name
             elif last_name:
                 preferred_name = last_name
+            
+            # Then, try nickname
+            elif nickname:
+                preferred_name = nickname
+            
+            # Then, try middle names
+            elif middle_names:
+                preferred_name = " ".join(middle_names)
             else:
-                raise ValueError("No suitable name provided for the user")
+                raise ValueError("Not enough data to compose a preferred name for the user")
 
-        # Compute the base name parts - first, middle(s), and last name without any prefixes or suffixes
-        base_name_parts: list[str] = []
-        if first_name:
-            base_name_parts.append(first_name)
-        if middle_names:
-            base_name_parts.extend(middle_names)
-        if last_name:
-            base_name_parts.append(last_name)
-        if not base_name_parts:
-            # Use nickname if all else fails
-            base_name_parts.append(
-                nickname or preferred_name
-            )  # For alt names list, prefer nickname over preferred name
-            logger.warning(
-                "No suitable first/middle/last name(s) provided for the user, using nickname"
-            )
-
-        # names[0] is first_name, last_name without any prefixes or suffixes
-        base_name_str = " ".join(base_name_parts)
-        full_names = [base_name_str]
-
-        # names[1] is first_name, middle_names, last_name. Results in a duplicate of names[0] (intentional) if no middle names are provided.
-        if middle_names:
-            parts = [first_name]
-            parts.extend(middle_names)
-            parts.append(last_name)
-            full_names.append(" ".join(parts))
-        elif first_name or last_name:
-            parts = [first_name, last_name]
-            full_names.append(" ".join(parts))
-        else:
-            # If no other suitable name can be computed, use the base name again
-            full_names.append(base_name_str)
-
-        if len(full_names) != 2:
-            raise ValueError(
-                f"Unknown error occured during name computation (full_names length={len(full_names)}, expected 2)"
-            )
-
-        # Next, add all possible prefix/suffix combinations on top of the base name (names[0]) of the user
+        # Compose alternate names list
+        names = []
+        names.append(f"{first_name} {last_name}")
+        names.append(f"{first_name} {' '.join(middle_names) if middle_names else ""} {last_name}")
+        
         if prefixes:
             for pfx in prefixes:
-                prefixed_name = f"{pfx} {base_name_str}"
-                full_names.append(prefixed_name)
+                names.append(f"{pfx} {last_name}")
+                names.append(f"{pfx} {first_name} {last_name}")
                 if suffixes:
                     for sfx in suffixes:
-                        full_names.append(f"{prefixed_name}, {sfx}")
+                        names.append(f"{pfx} {first_name} {last_name}, {sfx}")
+                        names.append(f"{pfx} {last_name}, {sfx}")
+                        names.append(f"{first_name} {last_name}, {sfx}")
+
+        base_name = None  # deprecated
 
         return cls(
             first_name=first_name,
@@ -583,7 +592,9 @@ class UserIdentifier(BaseModel):
             suffixes=suffixes,
             pronouns=pronouns,
             emails=emails,
-            names=full_names,
+            names=names,
+            base_name=base_name,
+            linked_entity_id=linked_entity_id,
         )
 
     @classmethod
@@ -598,12 +609,10 @@ class UserIdentifier(BaseModel):
 
     @classmethod
     def from_dict(cls, data: dict) -> "UserIdentifier":
-        """Create a UserIdentifier from a dictionary."""
-        # Data must at least have a name
-        if not data.get("name") or not data.get("preferred_name"):  # compat
-            raise ValueError("Invalid user info: missing name")
-
+        """Create a UserIdentifier from a dictionary of values."""
         user_info: dict[str, Any] = {}
+        
+        # Filter for accepted values
         for k in [
             "preferred_name",
             "first_name",
@@ -616,18 +625,27 @@ class UserIdentifier(BaseModel):
             "emails",
             "linked_entity_id",
         ]:
-            if k in data and not data[k]:
+            if k in data and data[k]:
                 user_info[k] = data[k]
+        
+        # Quick validation of list types
+        if user_info["middle_names"]:
+            user_info["middle_names"] = [str(m) for m in user_info["middle_names"]]
+        if user_info["prefixes"]:
+            user_info["prefixes"] = [str(p) for p in user_info["prefixes"]]
+        if user_info["suffixes"]:
+            user_info["suffixes"] = [str(s) for s in user_info["suffixes"]]
+        if user_info["emails"]:
+            user_info["emails"] = [str(e) for e in user_info["emails"]]
+        
+        # Quick ID validation if provided - should be fully validated first by the manager
+        if user_info["linked_entity_id"]:
+            validate_id_simple(user_info["linked_entity_id"])
 
-        if not user_info["preferred_name"]:
-            user_info["preferred_name"] = (
-                data["preferred_name"] or data["first_name"] or data["name"] or None
-            )
+        # Create the user info object
+        new_user_info = cls.from_values(**user_info)
 
-        if not user_info["linked_entity_id"]:
-            user_info["linked_entity_id"] = data["linked_entity_id"] or None
-
-        return cls(**data)
+        return new_user_info
 
 
 class KnowledgeGraph(BaseModel):
@@ -709,7 +727,7 @@ class KnowledgeGraph(BaseModel):
     @classmethod
     def from_default(cls) -> "KnowledgeGraph":
         """Initialize the knowledge graph with default values."""
-        from .seed_graph import build_initial_graph
+        from mcp_knowledge_graph.utils.seed_graph import build_initial_graph
 
         return build_initial_graph()
 
@@ -850,22 +868,32 @@ class CreateEntityResult(BaseModel):
 
 
 class CreateRelationRequest(BaseModel):
-    """Request model used to create a relation."""
+    """Request model used to create a relation. If a name is provided, it will be used to match the entity to an ID."""
 
     model_config = ConfigDict(
         populate_by_name=True,
         validate_by_name=True,
     )
 
-    from_entity_id: str = Field(
+    from_entity_id: str | None = Field(
         ...,
         title="Originating entity ID",
         description="The name of the entity to create a relation from",
     )
-    to_entity_id: str = Field(
+    to_entity_id: str | None = Field(
         ...,
         title="Destination entity ID",
         description="The id of the entity to create a relation to",
+    )
+    from_entity_name: str | None = Field(
+        default=None,
+        title="Originating entity name",
+        description="The name of the entity to create a relation from",
+    )
+    to_entity_name: str | None = Field(
+        default=None,
+        title="Destination entity name",
+        description="The name of the entity to create a relation to",
     )
     relation: str = Field(
         ...,
@@ -923,22 +951,16 @@ class CreateRelationRequest(BaseModel):
 class AddObservationResult(BaseModel):
     """Result of adding observations to an entity."""
 
-    entity_name: str = Field(
-        ..., title="Entity name", description="The entity name that was updated"
-    )
-    entity_icon: str | None = Field(
-        default=None,
-        title="Entity icon",
-        description="The icon of the entity that was updated",
+    entity: Entity = Field(
+        ...,
+        title="Entity",
+        description="The entity that was updated",
     )
     added_observations: list[Observation] = Field(
         ...,
         title="Added observations",
-        description="The observations that were actually added (excluding duplicates)",
+        description="The observations that were actually added (excluding duplicates and errors)",
     )
-
-    def __repr__(self):
-        return f"AddObservationResult(entity_name={self.entity_name}, added_observations={self.added_observations})"
 
 
 class DeleteObservationRequest(BaseModel):

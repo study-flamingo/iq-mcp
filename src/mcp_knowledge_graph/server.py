@@ -43,11 +43,11 @@ except Exception as e:
 manager = KnowledgeGraphManager(settings.memory_path)
 
 # Create FastMCP server instance
-mcp = FastMCP(name="iq-mcp", version="1.0.0")
+mcp = FastMCP(name="iq-mcp", version="1.1.0")
 
 
 #### Helper functions ####
-def _print_user_info(
+async def _print_user_info(
     graph: KnowledgeGraph, include_observations: bool = False, include_relations: bool = False
 ):
     """Get the user's info from the knowledge graph and print to a string.
@@ -62,56 +62,35 @@ def _print_user_info(
         last_name = graph.user_info.last_name or ""
         first_name = graph.user_info.first_name or ""
         nickname = graph.user_info.nickname or ""
-        names = graph.user_info.names or []
-        preferred_name = graph.user_info.preferred_name or ""
-        # timezone = graph.user_info.timezone or "UTC"
-        linked_entity = graph.user_info.linked_entity or None
-
-        if linked_entity:
-            user_name = linked_entity.name
-        else:
-            logger.warning(
-                f"No linked entity found for user {graph.user_info.preferred_name}, using fallback names"
-            )
-            user_name = last_name or ""
-            user_name = first_name or ""
-            user_name = names[0] or ""
-            user_name = nickname or ""
-            user_name = preferred_name or ""
-            # user_info_unlinked = True
-
-        # Ensure that the user's name is set
-        user_info_missing: bool = False
-        if not user_name:
-            raise ValueError(
-                "Some weird error happened when trying to determine the user's name, fix me!"
-            )
-        elif "default_user" in user_name.lower():
-            user_info_missing = True
-
+        preferred_name = graph.user_info.preferred_name or (nickname or first_name or last_name or "user")
+        linked_entity_id = graph.user_info.linked_entity_id or None
         middle_names = graph.user_info.middle_names or []
         pronouns = graph.user_info.pronouns or ""
         emails = graph.user_info.emails or []
         prefixes = graph.user_info.prefixes or []
         suffixes = graph.user_info.suffixes or []
-
+        names = graph.user_info.names or [preferred_name]
+        
     except Exception as e:
         raise ToolError(f"Failed to load user info: {e}")
+    linked_entity = None
+    if linked_entity_id:
+        linked_entity = await manager.get_entity_by_id(linked_entity_id)
+    if not linked_entity:
+        logger.warning("User-linked entity not found; proceeding without observations section")
 
     try:
         # Start with printing the user's info
         result = (
             "" if settings.no_emojis else "🧠 "
         ) + "You remember the following information about the user:\n"
-        result += f"**{user_name}** ({names[0]})\n"
+        result += f"**{preferred_name}** ({names[0]})\n"
         if middle_names:
             result += f"Middle name(s): {', '.join(middle_names)}\n"
-        if nickname and nickname != user_name:
+        if nickname and nickname != preferred_name:
             result += f"Nickname: {nickname}\n"
         if pronouns:
             result += f"Pronouns: {pronouns}\n"
-        if emails:
-            result += f"Email addresses: {', '.join(emails)}\n"
         if prefixes:
             result += f"Prefixes: {', '.join(prefixes)}\n"
         if suffixes:
@@ -120,81 +99,57 @@ def _print_user_info(
             result += "May also go by:\n"
             for name in names[1:]:
                 result += f"  - {name}\n"
+        if emails:
+            result += f"Email addresses: {', '.join(emails)}\n"
 
-        # If it looks like the default/dummy user info is still present, prompt the LLM to update the user's info
-        if user_info_missing:
-            info_missing_msg = "".join(
-                [
-                    "\n**ALERT**: User info is missing from the graph! Talk with the user, and ",
-                    "use the update_user_info tool to update the graph with the user's ",
-                    "identifying information.\n",
-                ]
-            )
-            result += info_missing_msg
     except Exception as e:
         raise ToolError(f"Failed to print user info: {e}")
 
-    # Print observations
+    # Print observations about the user (from the user-linked entity)
     try:
-        if include_observations:
-            from_entity, to_entity = manager.get_entities_from_relation(
-                graph.user_info.linked_entity
-            )
-            result += ("\n" if settings.no_emojis else "\n🔍 ") + "Observations (times in UTC):\n"
-            for o in from_entity.observations:
-                ts = o.timestamp.strftime("%Y-%m-%d %H:%M:%S")
-                result += f"  - {o.content} ({ts}, {o.durability.value})\n"
-    except Exception as e:
-        logger.error(f"Failed to print observations: {e} - trying deprecated method")
-
-        # soon-to-be-deprecated process if user_info isn't linked yet
-        try:
-            if include_observations:
-                lookup_result: KnowledgeGraph = manager.open_nodes(
-                    "__default_user__"
-                ) or manager.open_nodes("default_user")
-                if not lookup_result.entities:
-                    logger.warning("No entities found for names: __default_user__ or default_user")
-                    return result
-                user_entity = lookup_result.entities[0]
-                result += (
-                    "\n" if settings.no_emojis else "\n🔍 "
-                ) + "Observations (times in UTC):\n"
-                for o in user_entity.observations:
+        if include_observations and linked_entity:
+            if len(linked_entity.observations) > 0:
+                result += ("\n" if settings.no_emojis else "\n🔍 ") + "Observations (times in UTC):\n"
+                for o in linked_entity.observations:
                     ts = o.timestamp.strftime("%Y-%m-%d %H:%M:%S")
                     result += f"  - {o.content} ({ts}, {o.durability.value})\n"
-        except Exception as e:
-            raise ToolError(f"Failed to print observations: {e}")
+            else:
+                pass  # No observations found in user-linked entity
+    except Exception as e:
+        raise ToolError(f"Failed to print user observations: {e}")
 
-    # Print relations
+    # Print relations about the user (dynamic, from graph relations)
     try:
         if include_relations:
-            from_entity, to_entity = manager.get_entities_from_relation(
-                graph.user_info.linked_entity
-            )
-            result += ("\n" if settings.no_emojis else "\n🔗 ") + "Relations:\n"
-            for r in from_entity.relations:
-                result += f"  - {r.from_entity} {r.relation} {r.to_entity}\n"
+            for r in graph.relations:
+                ents: tuple[Entity | None, Entity | None] = await manager.get_entities_from_relation(r)
+                if not isinstance(ents[0], Entity) or not isinstance(ents[1], Entity):
+                    logger.error(f"Failed to get entities from relation: {str(r)[:20]}...")
+                    continue
+                else:
+                    a: Entity = ents[0]
+                    b: Entity = ents[1]
+                
+                # Special case for user-linked entity
+                if r.from_id == linked_entity_id:
+                    from_record = f"{preferred_name} (user)"
+                else:
+                    from_record = f"{a.icon_()}{a.name} ({a.entity_type})"
+                if r.to_id == linked_entity_id:
+                    to_record = f"{preferred_name} (user)"
+                else:
+                    to_record = f"{b.icon_()}{b.name} ({b.entity_type})"
+                
+                result += f"  - {from_record} {r.relation} {to_record}\n"
+                
+        return result
     except Exception as e:
-        logger.error(f"Failed to print relations: {e} - trying deprecated method")
-        # Deprecated fallback method
-        try:
-            if include_relations:
-                user_entity = manager.open_nodes("__default_user__") or manager.open_nodes(
-                    "default_user"
-                )
-                result += ("\n" if settings.no_emojis else "\n🔗 ") + "Relations:\n"
-                for r in user_entity.relations:
-                    result += f"  - {r.from_entity} {r.relation} {r.to_entity}\n"
-        except Exception as e:
-            raise ToolError(f"Failed to print relations: {e}")
+        raise ToolError(f"Failed to print user relations: {e}")
 
-    return result
 
 
 async def _print_relations_from_graph(
     graph: KnowledgeGraph = None,
-    entities_list: list[Entity] = None,
     prefix: str = "  - ",
     separator: str = "\n  - ",
     suffix: str = "\n",
@@ -232,78 +187,78 @@ async def _print_relations_from_graph(
     (trailing newline)
     ```
     """
-    if graph:
-        entities_list = entities_list or graph.entities
-    else:
-        entities_list = entities_list or None
-
-    if not entities_list:
-        raise ValueError("No entities list provided and no graph provided to get entities from")
-
-    result = prefix
-    entity_map = await manager._get_entity_id_map(entities_list=entities_list)
+    result = ""
     try:
         for r in graph.relations:
-            items = []
             try:
-                a = entity_map.get(r.from_id)
-                b = entity_map.get(r.to_id)
-
-                # If this is the user-linked entity, use the preferred name instead; if name is missing, use "unknown"
-                a_name = "unknown"
-                b_name = "unknown"
-                if a:
-                    if a.name == "__user__" or a.name.lower().strip() == "user":
-                        a_name = graph.user_info.preferred_name
-                    else:
-                        a_name = a.name if a.name else "unknown"
-                if b:
-                    if b.name == "__user__" or b.name.lower().strip() == "user":
-                        b_name = graph.user_info.preferred_name
-                    else:
-                        b_name = b.name if b.name else "unknown"
+                entities: tuple[Entity | None, Entity | None] = await manager.get_entities_from_relation(r)
+                a: Entity = entities[0]
+                b: Entity = entities[1]
+                if not entities[0] or not isinstance(entities[0], Entity):
+                    raise ToolError("Failed to get 'from' entity from relation")
+                if not entities[1] or not isinstance(entities[1], Entity):
+                    raise ToolError("Failed to get 'to' entity from relation")
             except Exception as e:
                 raise ToolError(f"Failed to get relation entities: {e}")
 
-            # Compose strings
-            if md_links:
-                link_from = f"[{a.icon}{a_name}]({a.id})" if a else f"{a_name}"
-                link_to = f"[{b.icon}{b_name}]({b.id})" if b else f"{b_name}"
+            # If this is the user-linked entity, use the preferred name instead; if name is missing, use "unknown"
+            if a.name.lower().strip() == "__user__" or a.name.lower().strip() == "user":
+                a_name = graph.user_info.preferred_name
             else:
-                link_from = f"{a.icon}{a_name}" if a else f"{a_name}"
-                link_to = f"{b.icon}{b_name}" if b else f"{b_name}"
-            if include_ids:
-                link_from += f" (ID: {a.id})" if a else ""
-                link_to += f" (ID: {b.id})" if b else ""
+                a_name = a.name if a.name else "unknown"
+            if b.name.lower().strip() == "__user__" or b.name.lower().strip() == "user":
+                b_name = graph.user_info.preferred_name
+            else:
+                b_name = b.name if b.name else "unknown"
+
+            # Compose strings
+            if md_links and include_ids:
+                link_from = f"[{a.icon_()}{a_name}]({a.id})"
+                link_to = f"[{b.icon_()}{b_name}]({b.id})"
+            elif md_links and not include_ids:
+                link_from = f"{a.icon_()}{a_name}"
+                link_to = f"{b.icon_()}{b_name}"
+            else:
+                link_from = f"{a.icon_()}{a_name}"
+                link_to = f"{b.icon_()}{b_name}"
+                if include_ids:
+                    link_from += f" ({a.id})"
+                    link_to += f" ({b.id})"
             if include_types:
-                link_from += f" ({a.entity_type})" if a else ""
-                link_to += f" ({b.entity_type})" if b else ""
+                link_from += f" ({a.entity_type})"
+                link_to += f" ({b.entity_type})"
 
             # Add to result
-            items.append(f"{link_from} {r.relation} {link_to}")
-
-        # Join items with the separator
-        result += separator.join(items)
+            result += f"  - {link_from} {r.relation} {link_to}\n"
 
         # Finally, add the suffix
         result += suffix
 
         return result
     except Exception as e:
-        raise ToolError(f"Failed to print relations: {e}")
+        raise ToolError(f"Failed to print graph relations: {e}")
 
 
-@mcp.tool
-async def read_graph():
-    """Read the entire knowledge graph.
+@mcp.tool  # TODO: Split into read_user_info and read_graph tools
+async def read_graph(
+    exclude_user_info: Field(default=False, description="Whether to exclude the user info from the summary. Default is False."),
+    exclude_entities: Field(default=False, description="Whether to exclude the entities from the summary. Default is False."),
+    exclude_relations: Field(default=False, description="Whether to exclude the relations from the summary. Default is False."),
+):
+    """Read and print a user/LLM-friendly summary of the entire knowledge graph.
+
+    Args:
+        - exclude_user_info: Whether to exclude the user info from the summary. Default is False.
+        - exclude_entities: Whether to exclude the entities from the summary. Default is False.
+        - exclude_relations: Whether to exclude the relations from the summary. Default is False.
 
     Returns:
-        Complete knowledge graph data in JSON format, and a boolean indicating if user info is missing
+        User/LLM-friendly summary of the entire knowledge graph in text/markdown format
     """
     try:
         graph = await manager.read_graph()
 
-        result = _print_user_info(graph)
+        result = "" if exclude_user_info else await _print_user_info(graph, True, not exclude_relations)
         try:
             user_name = (
                 graph.user_info.preferred_name
@@ -328,9 +283,9 @@ async def read_graph():
 
         # Print all relations
         try:
-            result += f"\n🔗 You've learned about {len(graph.relations)} relations between these entities:\n"
             obs_result = await _print_relations_from_graph(graph)
             if obs_result:
+                result += f"\n🔗 You've learned about {len(graph.relations)} relations between these entities:\n"
                 result += obs_result
             else:
                 raise KnowledgeGraphException(f"No output from _print_relations_from_graph: {e}")
@@ -452,8 +407,8 @@ async def create_relations(new_relations: list[CreateRelationRequest]):
 
         Each relation must be a CreateRelationRequest object with the following properties:
 
-        - from (str): Origin entity name
-        - to (str): Destination entity name
+        - from (str): Origin entity name or ID
+        - to (str): Destination entity name or ID
         - relation (str): Relation type
 
     Relations must be in active voice, directional, and should be concise and to the point.
@@ -471,26 +426,26 @@ async def create_relations(new_relations: list[CreateRelationRequest]):
     try:
         result = await manager.create_relations(new_relations)
         relations = result.relations or None
+    except Exception as e:
+        raise ToolError(f"Failed to create relations: {e}")
+    
+    try:
         if not relations or len(relations) == 0:
-            return "No new relations created!"
+            return "Request successful; however, no new relations were added!"
         elif len(relations) == 1:
             result = "Relation created successfully:\n"
         else:
-            result = f"{len(relations)} relations created successfully:\n"
+            result = f"Created {len(relations)} relations successfully:\n"
 
         for r in relations:
-            # Resolve print elements from entity objects
-            f = r.from_entity
-            t = r.to_entity
-            f_i = f"{f.icon} " if f.icon and not settings.no_emojis else ""
-            t_i = f"{t.icon} " if t.icon and not settings.no_emojis else ""
+            from_e, to_e = await manager.get_entities_from_relation(r)
             result += (
-                f"{f_i}{f.name} ({f.entity_type}) {r.relation} {t_i}{t.name} ({t.entity_type})\n"
+                f"{from_e.icon_()}{from_e.name} ({from_e.entity_type}) {r.relation} {to_e.icon_()}{to_e.name} ({to_e.entity_type})\n"
             )
 
         return result
     except Exception as e:
-        raise ToolError(f"Failed to create relations: {e}")
+        raise ToolError(f"Failed to print relations: {e}")
 
 
 @mcp.tool
@@ -529,13 +484,33 @@ async def add_observations(new_observations: list[ObservationRequest]):
     Observations added to non-existent entities will result in the creation of the entity.
     """
     try:
-        result = await manager.add_observations(new_observations)
-        return result
+        results = await manager.apply_observations(new_observations)
     except Exception as e:
         raise ToolError(f"Failed to add observations: {e}")
+        
+    try:
+        if not results or len(results) == 0:
+            return "Request successful; however, no new observations were added!"
+        elif len(results) == 1:
+            result = "Observation added:\n"
+        else:
+            result = f"Added {len(result)} observations:\n"
+        
+        for r in results:
+            e = r.entity
+            result += f"{e.icon_()}{e.name} ({e.entity_type})\n"
+            
+            result += "  Observation(s): "
+            for o in r.added_observations:
+                result += f"  - {o.content} ({o.durability.value})\n"
+            result += "\n"
+
+        return result
+    except Exception as e:
+        raise ToolError(f"Failed to print observations: {e}")
 
 
-@mcp.tool
+@mcp.tool  # TODO: remove from interface and bury/automate in manager
 async def cleanup_outdated_observations():
     """Remove observations that are likely outdated based on their durability and age.
 
@@ -558,7 +533,7 @@ async def cleanup_outdated_observations():
 
 
 @mcp.tool
-async def get_observations_by_durability(
+async def get_observations_by_durability(  # TODO: add other sort options, maybe absorb into other tools
     entity_name: str = Field(description="The name or alias of the entity to get observations for"),
 ) -> str:
     """Get observations for an entity grouped by their durability type.
@@ -577,7 +552,7 @@ async def get_observations_by_durability(
 
 
 @mcp.tool
-async def delete_entry(request: DeleteEntryRequest) -> str:
+async def delete_entry(request: DeleteEntryRequest):  # TODO: deprecate!
     """Unified deletion tool for observations, entities, and relations. Data must be a list of the appropriate object for each entry_type:
 
     - 'entity': list of entity names or aliases
@@ -612,20 +587,64 @@ async def delete_entry(request: DeleteEntryRequest) -> str:
 
 
 @mcp.tool
-async def update_user_info(user_info: UserIdentifier) -> str:
+async def update_user_info(  # NOTE: feels weird, re-evaluate
+    preferred_name: str | None= Field(
+        description="Provide a new preferred name for the user."
+    ),
+    first_name: str | None= Field(
+        default=None,
+        description="Provide a new given name for the user."
+    ),
+    last_name: str | None = Field(
+        default=None,
+        description="Provide a new family name for the user."
+    ),
+    middle_names: list[str] | None = Field(
+        default=None,
+        description="Provide new middle names for the user"
+    ),
+    pronouns: str | None = Field(
+        default=None,
+        description="Provide new pronouns for the user"
+    ),
+    nickname: str | None = Field(
+        default=None,
+        description="Provide a new nickname for the user"
+    ),
+    prefixes: list[str] | None = Field(
+        default=None,
+        description="Provide new prefixes for the user"
+    ),
+    suffixes: list[str] | None = Field(
+        default=None,
+        description="Provide new suffixes for the user"
+    ),
+    emails: list[str] | None = Field(
+        default=None,
+        description="Provide new email address(es) for the user"
+    ),
+    linked_entity_id: str | None = Field(
+        default=None,
+        description="Provide the ID of the new user-linked entity to represent the user."
+    ),
+):
     """
     Update the user's identifying information in the graph. This tool should be rarely called, and
     only if it appears that the user's identifying information is missing or incorrect, or if the
     user specifically requests to do so.
 
+    Important:Provided args will overwrite existing user info fields, not append/extend them.
+
     Args:
-      - preferred_name: The preferred name of the user. (required)
+      - preferred_name: Provide a new preferred name for the user.
+        
         Preferred name is prioritized over other names for the user. If not provided, one will be
         selected from the other provided names in the following fallback order:
           1. Nickname
           2. Prefix + First name
           3. First name
           4. Last name
+          
       - first_name: The given name of the user
       - middle_names: The middle names of the user
       - last_name: The family name of the user
@@ -634,13 +653,20 @@ async def update_user_info(user_info: UserIdentifier) -> str:
       - prefixes: The prefixes of the user
       - suffixes: The suffixes of the user
       - emails: The email addresses of the user
+      - linked_entity_id: Provide to change the user-linked entity. This should almost NEVER be used, and only if the user specifically requests to do so AND it appears there is a problem with the link. It is always preferable to edit the user-linked entity instead.
 
       * One of the following MUST be provided: preferred_name, first_name, last_name, or nickname
+      * The `names` field will be computed automatically from the provided information. Ignored if provided upfront.
 
     Returns:
         On success, the updated user info.
         On failure, an error message.
 
+    ## Capturing user info
+    
+    When the user provides information about themselves, you should capture information for the 
+    required fields from their response.
+    
     Example user response:
         "My name is Dr. John Alexander Robert Doe Jr., M.D., AKA 'John Doe', but you can
         call me John. My pronouns are he/him. My email address is john.doe@example.com,
@@ -658,36 +684,35 @@ async def update_user_info(user_info: UserIdentifier) -> str:
         - Email address(es): "john.doe@example.com", "john.doe@work.com"
     """
     if (
-        not user_info.preferred_name
-        and not user_info.first_name
-        and not user_info.nickname
-        and not user_info.last_name
+        not preferred_name
+        and not first_name
+        and not nickname
+        and not last_name
     ):
         raise ValueError("Either a preferred name, first name, last name, or nickname are required")
 
-    # Strip whitespace from all fields
-    try:
-        user_info.preferred_name = user_info.preferred_name.strip()
-        user_info.first_name = user_info.first_name.strip()
-        user_info.last_name = user_info.last_name.strip()
-        user_info.middle_names = [name.strip() for name in user_info.middle_names]
-        user_info.pronouns = user_info.pronouns.strip()
-        user_info.nickname = user_info.nickname.strip()
-        user_info.prefixes = [name.strip() for name in user_info.prefixes]
-        user_info.suffixes = [name.strip() for name in user_info.suffixes]
-        user_info.emails = [email.strip() for email in user_info.emails]
-    except Exception as e:
-        logger.warning(f"User info validation warning: {e}")
+    new_user_info_dict = {
+        "preferred_name": preferred_name,
+        "first_name": first_name,
+        "last_name": last_name,
+        "middle_names": middle_names,
+        "pronouns": pronouns,
+        "nickname": nickname,
+        "prefixes": prefixes,
+        "suffixes": suffixes,
+        "emails": emails,
+        "linked_entity_id": linked_entity_id
+    }
 
     try:
-        result = await manager.update_user_info(user_info)
+        new_user_info = UserIdentifier.from_values(**new_user_info_dict)
+        result = await manager.update_user_info(new_user_info)
         return str(result)
     except Exception as e:
         raise ToolError(f"Failed to update user info: {e}")
 
-
 @mcp.tool
-async def search_nodes(
+async def search_nodes(  # TODO: improve search
     query: str = Field(
         description="The search query to match against entity names, aliases, types, and observation content"
     ),
@@ -738,7 +763,7 @@ async def open_nodes(
 
 
 @mcp.tool
-async def merge_entities(
+async def merge_entities(  # TODO: refactor
     new_entity_name: str = Field(
         description="Name of the new merged entity (must not conflict with an existing name or alias unless part of the merge)"
     ),
@@ -757,38 +782,39 @@ async def merge_entities(
     except Exception as e:
         raise ToolError(f"Failed to merge entities: {e}")
 
-
-@mcp.tool
-async def get_email_update():
-    """Get new email summaries from Supabase."""
-    if supabase is None or not getattr(supabase, "enabled", False):
-        return "Supabase integration is not configured."
-    try:
-        response = await supabase.get_new_email_summaries()
-        if not response:
-            return "No new email summaries found!"
-        result = ""
-        for summary in response:
-            result += f"Messsage ID: {summary.id}\n"
-            result += f"From: {summary.from_address} ({summary.from_name})\n"
-            result += f"Reply-To: {summary.reply_to}\n"
-            result += f"Timestamp: {summary.timestamp}\n"
-            result += f"Subject: {summary.subject}\n"
-            result += f"Summary: {summary.summary}\n"
-            try:
-                links_list = summary.links or []
-                links_str = "\n- ".join([str(link.get("url", link)) for link in links_list])
-                if links_str:
-                    result += f"Links: {links_str}"
-            except Exception:
-                pass
-            result += "\n\n"
-        return result
-    except Exception as e:
-        raise ToolError(f"Failed to get email updates: {e}")
-
+#----- DEBUG/EXPERIMENTAL TOOLS -----#
 
 if settings.debug:
+    @mcp.tool
+    async def DEBUG_get_email_update():
+        """Get new email summaries from Supabase."""
+        if supabase is None or not getattr(supabase, "enabled", False):
+            return "Supabase integration is not configured."
+        try:
+            response = await supabase.get_new_email_summaries()
+            if not response:
+                return "No new email summaries found!"
+            result = ""
+            for summary in response:
+                result += f"Messsage ID: {summary.id}\n"
+                result += f"From: {summary.from_address} ({summary.from_name})\n"
+                result += f"Reply-To: {summary.reply_to}\n"
+                result += f"Timestamp: {summary.timestamp}\n"
+                result += f"Subject: {summary.subject}\n"
+                result += f"Summary: {summary.summary}\n"
+                try:
+                    links_list = summary.links or []
+                    links_str = "\n- ".join([str(link.get("url", link)) for link in links_list])
+                    if links_str:
+                        result += f"Links: {links_str}"
+                except Exception:
+                    pass
+                result += "\n\n"
+            return result
+        except Exception as e:
+            raise ToolError(f"Failed to get email updates: {e}")
+
+
     # @mcp.tool
     # async def DEPRECATED_create_entry(request: CreateEntryRequest):
     #     """Add entities, observations, or relations to the knowledge graph.
@@ -848,7 +874,7 @@ if settings.debug:
     #     return result
 
     @mcp.tool
-    async def DEBUG_save_graph() -> str:
+    async def DEBUG_save_graph():
         """DEBUG TOOL: Test loading, and then immediately saving the graph."""
         try:
             graph = await manager._load_graph()

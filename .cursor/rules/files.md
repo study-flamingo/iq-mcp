@@ -15,3 +15,8 @@
     - server.py             main tool logic
     - settings.py           settings handlers
     - visualize.py          experimental visualizer
+
+#### utils
+    - migrate_graph.py      experimental memory migration tool
+    - schema.md             high-level knowledge graph schema
+    - seed_graph.py         util to create a new default graph from scratch
