@@ -21,7 +21,7 @@ classifiers = [
 requires-python = ">=3.13"
 dependencies = [
     "fastmcp>=2.11.0",
-    "pydantic>=2.0.0",
+    "pydantic>=2.11.0",
     "python-dotenv>=1.1.1",
     "regex>=2025.8.29",
     "typing-extensions>=4.5.0",

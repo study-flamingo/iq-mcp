@@ -241,9 +241,9 @@ async def _print_relations_from_graph(
 
 @mcp.tool  # TODO: Split into read_user_info and read_graph tools
 async def read_graph(
-    exclude_user_info: Field(default=False, description="Whether to exclude the user info from the summary. Default is False."),
-    exclude_entities: Field(default=False, description="Whether to exclude the entities from the summary. Default is False."),
-    exclude_relations: Field(default=False, description="Whether to exclude the relations from the summary. Default is False."),
+    exclude_user_info: bool = Field(default=False, description="Whether to exclude the user info from the summary. Default is False."),
+    exclude_entities: bool = Field(default=False, description="Whether to exclude the entities from the summary. Default is False."),
+    exclude_relations: bool = Field(default=False, description="Whether to exclude the relations from the summary. Default is False."),
 ):
     """Read and print a user/LLM-friendly summary of the entire knowledge graph.
 
@@ -264,7 +264,7 @@ async def read_graph(
                 graph.user_info.preferred_name
             )  # Preferred name should be set during entity creations at minimum
         except Exception as e:
-            logger.error(f"Failed to print user info: {e}")
+            raise ToolError(f"Failed to print user info: {e}")
 
         # Print all entities
         try:
@@ -279,7 +279,7 @@ async def read_graph(
                     entity_name = e.name
                 result += f"  - {i}{entity_name} ({e.entity_type})\n"
         except Exception as e:
-            logger.error(f"Failed to print entities: {e}")
+            raise ToolError(f"Failed to print entities: {e}")
 
         # Print all relations
         try:
@@ -341,6 +341,24 @@ async def create_entities(new_entities: list[CreateEntityRequest]):
 
       - aliases: list of str (optional)
       - icon: Emoji to represent the entity (optional)
+    
+    Example entity creation request:
+    ```json
+    [
+        {
+            "name": "John Doe",
+            "entity_type": "person",
+            "observations": [
+                {
+                    "content": "John Doe is a software engineer",
+                    "durability": "permanent",
+                }
+            ],
+            "aliases": ["John Smith", "John S."],
+            "icon": "🥴",
+        }
+    ]
+    ```
     """
     try:
         entities_created = await manager.create_entities(new_entities)
@@ -362,15 +380,12 @@ async def create_entities(new_entities: list[CreateEntityRequest]):
         elif len(succeeded) > 1:
             result = f"Created {len(succeeded)} entities successfully:\n"
         for r in succeeded:
-            e = r.entity
-            i = e.icon_()
-            result += f"{i}{e.name} ({e.entity_type})\n"
+            e = Entity.from_dict(r.entity or {})
+            icon = e.icon_()
+            result += f"{icon}{e.name} ({e.entity_type})\n"
             if e.aliases:
                 result += "  Alias(es): "
-                alias_list = []
-                for a in e.aliases:
-                    alias_list.append(a)
-                result += f"{', '.join(alias_list)}\n"
+                result += f"{', '.join([str(a) for a in e.aliases])}\n"
             if e.observations:
                 result += "  Observation(s): "
                 for o in e.observations:
@@ -383,11 +398,12 @@ async def create_entities(new_entities: list[CreateEntityRequest]):
             result += "Failed to create entity:\n"
         else:
             result += f"Failed to create {len(failed)} entities:\n"
-        for e in failed:
-            result += f"  - {e.entity.name} ({e.entity.entity_type})\n"
-            if e.errors:
+        for r in failed:
+            ent = r.entity or {}
+            result += f"  - {ent.get('name','unknown')} ({ent.get('entity_type','unknown')})\n"
+            if r.errors:
                 result += "Error(s):\n"
-                for err in e.errors:
+                for err in r.errors:
                     result += f"  - {err}\n"
             result += "\n"
 

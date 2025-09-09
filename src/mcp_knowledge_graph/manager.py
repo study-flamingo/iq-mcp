@@ -196,10 +196,14 @@ class KnowledgeGraphManager:
             # If timestamp parsing fails, assume not outdated
             return False
 
-    def _generate_new_entity_id(self) -> str:
-        """Generate a new entity ID. Entity IDs are UUID4s truncated to 8 characters. Convenience
+    def _generate_new_valid_entity_id(self, graph: KnowledgeGraph) -> str:
+        """Generate a unique new entity ID, ensuring it is not already in the graph. Entity IDs are UUID4s truncated to 8 characters. Convenience
         function for future proofing against changes in ID format."""
-        return str(uuid4())[:8]
+        while True:
+            new_id = str(uuid4())[:8]
+            if new_id not in [e.id for e in graph.entities]:
+                break
+        return new_id
 
     def _validate_new_entity_id(self, entity: Entity, graph: KnowledgeGraph) -> Entity:
         """
@@ -376,7 +380,7 @@ class KnowledgeGraphManager:
                     if not payload:
                         raise KnowledgeGraphException(f"Item has invalid data: {payload}")
                 else:
-                    raise KnowledgeGraphException("Item has invalid data: not a dict")
+                    raise KnowledgeGraphException("Item invalid: not a dict")
 
             # If the line is an entity, return the entity
             if item_type == "entity" and isinstance(payload, dict):
@@ -449,6 +453,7 @@ class KnowledgeGraphManager:
         Returns:
             KnowledgeGraph loaded from file, or empty graph if file doesn't exist
         """
+        logger.debug("manager._load_graph() called")
         if not self.memory_file_path.exists():
             logger.warning(
                 f"⛔ Memory file not found at {self.memory_file_path}! Returning newly initialized graph."
@@ -486,11 +491,11 @@ class KnowledgeGraphManager:
                                 relations.append(item)
                             case _:
                                 raise ValueError(
-                                    f"Invalid line {i} in {self.memory_file_path}: {item}. Skipping."
+                                    f"Bad type:{str(item)[:20]}..."
                                 )
-                    # Raise error for this line but continue loading the graph
                     except Exception as e:
-                        logger.error(f"Invalid line {i} in {self.memory_file_path}: {e}. Skipping.")
+                        # Raise error for this line but continue loading the graph
+                        raise KnowledgeGraphException(f"Invalid line {i} in {self.memory_file_path}: {e}. Skipping.")
                     # Quick check in case the app is loading a large invalid file
                     if i > 50 and (len(entities) == 0 and len(relations) == 0 and not user_info):
                         raise RuntimeError(
@@ -517,12 +522,8 @@ class KnowledgeGraphManager:
             if not relations:
                 raise KnowledgeGraphException("No valid relations found in memory file!")
 
-            # Log that we have successfully loaded the graph components
-            logger.info(
-                f"💾 Loaded user info for {user_info.preferred_name}; loaded {len(entities)} entities and {len(relations)} relations from memory file, validating..."
-            )
 
-            # Compose the preliminary graph
+            # Compose a preliminary graph
             graph = KnowledgeGraph(user_info=user_info, entities=entities, relations=relations)
 
             # Validate the loaded data
@@ -592,6 +593,12 @@ class KnowledgeGraphManager:
             validated_graph = KnowledgeGraph.from_components(
                 user_info=user_info, entities=valid_entities, relations=valid_relations
             )
+
+            # Log that we have successfully loaded the graph components
+            logger.debug(
+                f"💾 Loaded user info for {user_info.preferred_name}; loaded {len(entities)} entities and {len(relations)} relations from memory file, validating..."
+            )
+
             return validated_graph
 
         except Exception as e:
@@ -746,6 +753,7 @@ class KnowledgeGraphManager:
                 observations=req.observations or [],
                 aliases=req.aliases or [],
                 icon=req.icon,
+                id=self._generate_new_valid_entity_id(graph),
             )
             entity = self._validate_new_entity_id(entity, graph)
             graph.entities.append(entity)
@@ -950,43 +958,46 @@ class KnowledgeGraphManager:
 
         return self._group_by_durability(entity.observations)
 
-    async def delete_entities(self, entity_names: list[str]) -> None:
+    async def delete_entities(self, entity_names: list[str] | None = None, entity_ids: list[str] | None = None) -> None:
         """
         Delete multiple entities and their associated relations.
 
         Args:
             entity_names: list of entity names to delete
+            entity_ids: list of entity IDs to delete
+            
+            If both entity_names and entity_ids are provided, both will be used to delete the entities.
         """
-        if not entity_names:
-            raise ValueError("No entities deleted - no data provided!")
+        try:
+            entities_to_delete: list[Entity] = []
+            graph = await self._load_graph()
+            if entity_names:
+                for name in entity_names:
+                    entity = self._get_entity_by_name_or_alias(graph, name)
+                    if entity:
+                        entities_to_delete.append(entity)
+            if entity_ids:
+                for id in entity_ids:
+                    entity = self._get_entity_by_id(graph, id)
+                    if entity:
+                        entities_to_delete.append(entity)
+            if not entities_to_delete:
+                raise ValueError("No valid data provided")
 
-        graph = await self._load_graph()
-        # Resolve identifiers to canonical entity names
-        resolved_names: set[str] = set()
-        for ident in entity_names:
-            entity = self._get_entity_by_name_or_alias(graph, ident)
-            if entity:
-                resolved_names.add(entity.name)
+            # Delete the entities
+            graph.entities = [e for e in graph.entities if e not in entities_to_delete]
 
-        if not resolved_names:
-            logger.warning("No entities deleted - no valid entities provided in data")
-
-        # Remove entities and collect deleted IDs
-        deleted_ids: set[str] = set()
-        kept_entities: list[Entity] = []
-        for e in graph.entities:
-            if e.name in resolved_names:
-                if e.id:
-                    deleted_ids.add(e.id)
-            else:
-                kept_entities.append(e)
-        graph.entities = kept_entities
-
-        # Remove relations involving deleted entities by IDs
-        graph.relations = [
-            r for r in graph.relations if r.from_id not in deleted_ids and r.to_id not in deleted_ids
-        ]
-
+            # Remove relations involving deleted entities
+            new_relations: list[Relation] = []
+            for r in graph.relations:
+                from_e, to_e = self._get_entities_from_relation(r, graph)
+                if from_e not in entities_to_delete and to_e not in entities_to_delete:
+                    new_relations.append(r)
+            graph.relations = new_relations
+        except Exception as e:
+            raise KnowledgeGraphException(f"Error deleting entities: {e}")
+        
+        # If no errors, save the graph
         await self._save_graph(graph)
 
     async def delete_observations(self, deletions: list[DeleteObservationRequest]) -> None:

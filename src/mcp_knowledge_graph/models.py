@@ -8,7 +8,13 @@ including entities, relations, and temporal observations with durability metadat
 from datetime import datetime, timezone
 from typing import Any, Literal
 from uuid import uuid4
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import (
+    BaseModel,
+    Field,
+    ConfigDict,
+    field_validator,
+    computed_field,
+)
 from enum import Enum
 import regex as re
 from .settings import Logger as logger, Settings
@@ -29,7 +35,6 @@ def is_emoji(s: str) -> bool:
 def get_current_datetime() -> datetime:
     """Get the current datetime (UTC)."""
     return datetime.now(timezone.utc)
-
 
 def validate_id_simple(id: str) -> str:
     """Simple validation of the provided entity ID. Checks if the ID is a string, is not empty, is 8 characters long, and is alphanumeric. If invalid, raises a ValueError."""
@@ -146,6 +151,7 @@ class Entity(BaseModel):
     model_config = ConfigDict(
         populate_by_name=True,
         validate_by_name=True,
+        validate_by_alias=True,
     )
     id: str | None = Field(
         default=str(uuid4())[:8],
@@ -172,78 +178,43 @@ class Entity(BaseModel):
         title="Aliases",
         description="Alternative names for the entity",
     )
-    _icon: str | None = None
+    icon: str | None = Field(
+        default=None,
+        title="Icon",
+        description="The emoji to provide a visual representation of the entity. Must be a single valid emoji.",
+    )
 
-    @property
-    def icon(self) -> str:
-        """Return the icon of the entity if it exists, and its display is not disabled in settings."""
-        if Settings.no_emojis or not self._icon:
-            return ""
-        return self._icon
-
-    @icon.setter
-    def icon(self, icon: str):
+    @field_validator("icon", mode="after")
+    @classmethod
+    def validate_icon(cls, v: str) -> str:
         """Set the icon of the entity. Must be a single valid emoji."""
-        self._icon = icon if is_emoji(icon) else None
-        if not self._icon:
-            logger.debug(f"Invalid emoji '{icon}' given for entity '{self.name}'")
+        if v == "" or v is None:
+            return ""
+        elif is_emoji(v):
+            return v
+        else:
             raise ValueError(
-                f"Error setting icon for entity '{self.name}': value must be a single valid emoji. Instead, received '{icon}'"
+                f"Error setting icon for entity '{cls.name}': value must be a single valid emoji. Instead, received '{v}'"
             )
 
-    @icon.getter
-    def icon(self) -> str:
-        """Return the icon of the entity if it exists, and its display is not disabled in settings."""
-        if Settings.no_emojis or not self._icon:
-            return ""
-        return self._icon
-
     def icon_(self) -> str:
-        """Return the icon of the entity with an added whitespace if it exists, and its display is not disabled in settings. Otherwise, return an empty string."""
-        if Settings.no_emojis or not self._icon:
+        """Return the icon of the entity if it exists and its display is not disabled in settings, plus a single whitespace. Otherwise, return an empty string."""
+        if Settings.no_emojis or not self.icon:
             return ""
-        return self._icon + " "
-
-    @field_validator("id", mode="after")
-    @staticmethod
-    def check_id(cls, v: str) -> str:
-        return validate_id_simple(id=v)
-
-    # def ensure_id(self) -> str:
-    #     """
-    #     Ensure that the ID is set. If not, generate a new one and assign it to the entity. Returns the ID.
-
-    #     Will be deprecated at some point.
-    #     """
-    #     if not self.id:
-    #         self.id = generate_entity_id()
-    #     return self.id
+        return self.icon + " "
 
     def to_dict(self) -> dict[str, Any]:
-        """Return the entity as a JSON dictionary ensuring the ID is set."""
-        self.ensure_id()
+        """Return the entity as a JSON dictionary. Ideal for writing to storage."""
         return self.model_dump(exclude_none=True)
 
     @classmethod
-    def from_name(cls, name: str, entity_type: str) -> "Entity":
-        """Create an entity from a given name and entity type."""
-        return cls(name=name, entity_type=entity_type)
-
-    @classmethod
     def from_dict(cls, data: dict) -> "Entity":
-        """Initialize the entity from a dictionary of values. Ideal for reading from storage."""
-        # logger.debug(f"Loading entity from dict: {str(data)[:50]}...")
+        """Initialize the entity from a dictionary of values. Ideal for loading from storage."""
 
-        for k in ["name", "entity_type"]:  # TODO: id will be required in the future
-            v = data.get(k)
-            if not isinstance(v, str) or not v.strip():
+        for k in ["name", "entity_type", "id"]:
+            v = data.get(k, None)
+            if not isinstance(v.strip(), str) or not v.strip():
                 raise ValueError(f"Missing or invalid required key: {k}")
-
-        if not data.get("id"):
-            logger.warning(
-                f"Entity '{data['name']}' ID is missing, manager will generate a new one"
-            )
-            data["id"] = None
 
         observations = [Observation(**o) for o in (data.get("observations") or [])]
         aliases = [str(a) for a in (data.get("aliases") or [])]
@@ -254,10 +225,8 @@ class Entity(BaseModel):
             entity_type=data["entity_type"],
             observations=observations,
             aliases=aliases,
+            icon=data.get("icon", ""),
         )
-        icon = data.get("icon")
-        if icon:
-            e.icon = icon  # will validate via setter
         return e
 
     @classmethod
@@ -279,26 +248,27 @@ class Entity(BaseModel):
             observations (list[Observation]): The observations of the entity
             aliases (list[str]): The aliases of the entity
             icon (str): The emoji to provide a visual representation of the entity. Must be a single valid emoji.
-            id (str): The unique identifier of the entity in the knowledge graph.
+            id (str): The unique identifier of the entity in the knowledge graph. Should be generated by the KnowledgeGraphManager.
 
         The ID is managed by the KnowledgeGraphManager and one will be generated if it is not provided, i.e., if creating a new entity from values.
 
         Returns:
             Entity: The created entity
         """
+        if icon:
+            if is_emoji(icon):
+                pass
+            else:
+                logger.warning(f"Invalid emoji '{icon}' given for new entity '{name}'")
         e = cls(
             name=name,
             entity_type=entity_type,
             observations=observations or [],
             aliases=aliases or [],
             icon=icon,
+            _icon=icon,
             id=id,
         )
-        if icon:
-            if is_emoji(icon):
-                e.icon = icon
-            else:
-                logger.warning(f"Invalid emoji '{icon}' given for new entity '{name}'")
         return e
 
 
@@ -833,7 +803,6 @@ class CreateEntityRequest(BaseModel):
         ...,
         title="Entity type",
         description="The type of the entity. Arbitrary, but should be a noun.",
-        alias="type",
     )
     observations: list[Observation] | None = Field(
         default=None,
@@ -855,7 +824,7 @@ class CreateEntityRequest(BaseModel):
 class CreateEntityResult(BaseModel):
     """Model for the result of creating an entity."""
 
-    entity: dict[str, Any] = Field(
+    entity: Entity | dict[str, Any] = Field(
         ...,
         title="Entity",
         description="The entity that was successfully created, or the unsuccessful entity with errors",

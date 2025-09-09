@@ -1,0 +1,17 @@
+[
+    {
+        "name": "John Doe",
+        "entity_type": "person",
+        "observations": [
+            {
+                "content": "John Doe is a software engineer",
+                "durability": "permanent"
+            }
+        ],
+        "aliases": [
+            "John Smith",
+            "John S."
+        ],
+        "icon": "🥴"
+    }
+]
