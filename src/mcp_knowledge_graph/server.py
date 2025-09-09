@@ -62,7 +62,9 @@ async def _print_user_info(
         last_name = graph.user_info.last_name or ""
         first_name = graph.user_info.first_name or ""
         nickname = graph.user_info.nickname or ""
-        preferred_name = graph.user_info.preferred_name or (nickname or first_name or last_name or "user")
+        preferred_name = graph.user_info.preferred_name or (
+            nickname or first_name or last_name or "user"
+        )
         linked_entity_id = graph.user_info.linked_entity_id or None
         middle_names = graph.user_info.middle_names or []
         pronouns = graph.user_info.pronouns or ""
@@ -70,7 +72,7 @@ async def _print_user_info(
         prefixes = graph.user_info.prefixes or []
         suffixes = graph.user_info.suffixes or []
         names = graph.user_info.names or [preferred_name]
-        
+
     except Exception as e:
         raise ToolError(f"Failed to load user info: {e}")
     linked_entity = None
@@ -109,7 +111,9 @@ async def _print_user_info(
     try:
         if include_observations and linked_entity:
             if len(linked_entity.observations) > 0:
-                result += ("\n" if settings.no_emojis else "\n🔍 ") + "Observations (times in UTC):\n"
+                result += (
+                    "\n" if settings.no_emojis else "\n🔍 "
+                ) + "Observations (times in UTC):\n"
                 for o in linked_entity.observations:
                     ts = o.timestamp.strftime("%Y-%m-%d %H:%M:%S")
                     result += f"  - {o.content} ({ts}, {o.durability.value})\n"
@@ -122,14 +126,16 @@ async def _print_user_info(
     try:
         if include_relations:
             for r in graph.relations:
-                ents: tuple[Entity | None, Entity | None] = await manager.get_entities_from_relation(r)
+                ents: tuple[
+                    Entity | None, Entity | None
+                ] = await manager.get_entities_from_relation(r)
                 if not isinstance(ents[0], Entity) or not isinstance(ents[1], Entity):
                     logger.error(f"Failed to get entities from relation: {str(r)[:20]}...")
                     continue
                 else:
                     a: Entity = ents[0]
                     b: Entity = ents[1]
-                
+
                 # Special case for user-linked entity
                 if r.from_id == linked_entity_id:
                     from_record = f"{preferred_name} (user)"
@@ -139,64 +145,232 @@ async def _print_user_info(
                     to_record = f"{preferred_name} (user)"
                 else:
                     to_record = f"{b.icon_()}{b.name} ({b.entity_type})"
-                
+
                 result += f"  - {from_record} {r.relation} {to_record}\n"
-                
+
         return result
     except Exception as e:
         raise ToolError(f"Failed to print user relations: {e}")
 
 
-
-async def _print_relations_from_graph(
+async def print_entities_from_graph(
     graph: KnowledgeGraph = None,
-    prefix: str = "  - ",
-    separator: str = "\n  - ",
-    suffix: str = "\n",
+    exclude_user: bool = True,
+    prologue: str = "",
+    separator: str = "\n",
+    epilogue: str = "\n\n",
     md_links: bool = True,
     include_ids: bool = True,
     include_types: bool = True,
+    include_observations: bool = False,
+    include_relations: bool = False,
+    indent: int = 2,
+    ul: bool = True,
+    ol: bool = False,
+    bullet: str = "-",
+    ordinal_separator: str = ".",
 ):
     """
-    Print relations in a readable format. Respects the no_emojis property from Settings.
-    A number of options are available to customize the display. All options are optional, and the
+    Print entities from the graph in a readable format.
+
+    Various options are available to customize the display. All options except for graph are optional, and the
     default values are used if not specified.
 
-    May also pass a list of entities to print relations from instead of the graph.
+    Args:
 
-    Format: <from_entity> <relation> <to_entity><separator>
+        - graph: The knowledge graph to print entities from. Required.
+        - exclude_user: Whether to exclude the user from the entity list. Default is `True`.
+        - prologue: A string added before the entity list. Default is `None`.
+        - separator: The separator to use between list items (entities). Default is `\\n`.
+        - epilogue: A string added after the entity list. Default is `\\n`.
+        - md_links: Whether to use markdown-style links for the entities. Default is `True`.
+        - include_ids: Whether to include the IDs of the entities in the display. Default is `True`.
+        - include_types: Whether to include the types of the entities in the display. Default is `True`.
+        - include_observations: Whether to include observations of the entities in the display. Default is `False`.
+        - include_relations: Whether to include relations of the entities in the display. Default is `False`.
+        - indent: The number of spaces to indent the entity display. Default is `2`.
+        - ul: Whether to use a bulleted list. Default is `True`.
+        - ol: Whether to use a numbered list. Default is `False`.
+        - bullet: The bullet to use for the unordered list. Default is `-`.
+        - ordinal_separator: The separator to use between the ordinal and the entity. Default is `.`
 
-    One of the following args is required:
+    Display format:
 
-        - graph: The knowledge graph to print relations from. Typical usage.
-        - entities_list: A list of entities to print relations from.
-
-    Optional Args:
-
-        - separator: The separator to use between relations. Default is ` \n  - `.
-        - md_links: Whether to use Markdown links for the entities. Default is True.
-        - prefix: The prefix to use before the relations. Default is `  - `.
-        - suffix: The suffix to use after the relations. Default is `\n`.
-        - include_ids: Whether to include the IDs of the entities in the display. Default is True.
-        - include_types: Whether to include the types of the entities in the display. Default is True.
-
-    Example of default list display:
     ```
-      - [👤 John Doe](123) (person) is a friend of [👤 Jane Doe](456) (person)
-      - [👤 Jim Doe](789) (person) is an enemy of [👤 Janet Doe](012) (person)
-    (trailing newline)
+    <prefix><indent><bullet/ordinal><ordinal_separator> <entity><separator>...<suffix> (<entity_type>)
     ```
+
+    Example with default values:
+
+    ```
+    <prologue empty>
+      - [👤 John Doe](12345678) (person)
+      - [👤 Jane Doe](87654321) (person)
+      ...
+    <epilogue is double newline>
+    ```
+
+    Notes:
+
+        - `prologue` and `epilogue` strings should include newlines, unless inline display is desired
+        - `bullet` and `ordinal` are mutually exclusive
+        - `include_observations` and `include_relations` will select for items that are linked to the entity in question
+        - If a newline is not included in the `separator`, the list will print inline
+        - If both `md_links` and `include_ids` are `True`, the link will be the ID string e.g.: `[👤 John Doe](12345678)`
+        - If both `ul` and `ol` are `True` for some reason, an unordered list will be preferred
+        - `indent` is applied only to the entity list, not the prologue or epilogue
     """
-    result = ""
+    if not graph:
+        raise ValueError("No graph provided to print entities from")
+    try:
+        # Get the data
+        entities = graph.entities
+        # observations = graph.observations if include_observations else []
+        # relations = graph.relations if include_relations else []
+
+        # TODO: Implement relative observations and relations printing
+
+        result = ""
+
+        # Resolve options
+        ind: str = " " * indent
+        os = ordinal_separator
+        ord: str = "" if ol else bullet
+    except Exception as e:
+        raise ToolError(f"Failed to load entity data for printing: {e}")
+
+    # Start rendering
+    result = prologue
+    try:
+        i = 1
+        os = ordinal_separator if ol else ""
+        for e in entities:
+            if (
+                exclude_user
+                and e.name.lower().strip() == "__user__"
+                or e.name.lower().strip() == "user"
+            ):
+                logger.debug("User-linked entity found during entity printing, skipping")
+                continue
+            id = e.id
+            icon = e.icon_()
+            name = e.name
+            type = e.entity_type
+            ord = str(i) if ol else bullet
+
+            # Compose pre-entity string (list stuff like indentation, bullet, ordinal, etc.)
+            display_pre: str = f"{ind}{ord}{os} "
+
+            # Compose entity string (entity icon, name, id, type)
+            display = ""
+            if md_links and include_ids:
+                display += f"[{icon}{name}]({id})"
+            elif md_links and not include_ids:
+                # TODO: figure out more uses for md links here
+                display += f"{icon}{name}"
+            elif not md_links and include_ids:
+                display += f"{icon}{name} ({id})"
+            elif not md_links and not include_ids:
+                display += f"{icon}{name}"
+            if include_types:
+                display += f" ({type})"
+
+            # Compose post-entity string (separator)
+            display_post = f"{separator}"
+
+            result += f"{display_pre}{display}{display_post}"
+            i += 1
+
+        # Finally, add the epilogue
+        result += epilogue
+
+        return result
+    except Exception as e:
+        raise ToolError(f"Failed to print entities: {e}")
+
+
+async def print_relations_from_graph(
+    graph: KnowledgeGraph = None,
+    exclude_user: bool = True,
+    prologue: str = "",
+    separator: str = "\n",
+    epilogue: str = "\n\n",
+    md_links: bool = True,
+    include_ids: bool = True,
+    include_types: bool = True,
+    include_observations: bool = False,
+    include_relations: bool = False,
+    indent: int = 2,
+    ul: bool = True,
+    ol: bool = False,
+    bullet: str = "-",
+    ordinal_separator: str = ".",
+):
+    """
+    Print relations from the graph in a readable format.
+
+    Various options are available to customize the display. All options except for graph are optional, and the
+    default values are used if not specified.
+
+    Args:
+
+        - graph: The knowledge graph to print entities from. Required.
+        - exclude_user: Whether to exclude the user from the entity list. Default is `True`.
+        - prologue: A string added before the entity list. Default is `None`.
+        - separator: The separator to use between list items (entities). Default is `\\n`.
+        - epilogue: A string added after the entity list. Default is `\\n`.
+        - md_links: Whether to use markdown-style links for the entities. Default is `True`.
+        - include_ids: Whether to include the IDs of the entities in the display. Default is `True`.
+        - include_types: Whether to include the types of the entities in the display. Default is `True`.
+        - include_observations: Whether to include observations of the entities in the display. Default is `False`.
+        - include_relations: Whether to include relations of the entities in the display. Default is `False`.
+        - indent: The number of spaces to indent the entity display. Default is `2`.
+        - ul: Whether to use a bulleted list. Default is `True`.
+        - ol: Whether to use a numbered list. Default is `False`.
+        - bullet: The bullet to use for the unordered list. Default is `-`.
+        - ordinal_separator: The separator to use between the ordinal and the entity. Default is `.`
+
+    Display format:
+
+    ```
+    <prefix><indent><bullet/ordinal><ordinal_separator> <from_entity><relation><to_entity><separator>...<suffix> (<entity_type>)
+    ```
+
+    Example with default values:
+
+    ```
+    <prologue empty>
+      - [👤 John Doe](12345678) is related to[👤 Jane Doe](87654321) (person)
+      ...
+    <epilogue is double newline>
+    ```
+
+    Notes:
+
+        - `prologue` and `epilogue` strings should include newlines, unless inline display is desired
+        - `bullet` and `ordinal` are mutually exclusive
+        - `include_observations` and `include_relations` will select for items that are linked to the entity in question
+        - If a newline is not included in the `separator`, the list will print inline
+        - If both `md_links` and `include_ids` are `True`, the link will be the ID string e.g.: `[👤 John Doe](12345678)`
+        - If both `ul` and `ol` are `True` for some reason, an unordered list will be preferred
+        - `indent` is applied only to the entity list, not the prologue or epilogue
+    """
+    if not graph:
+        raise ValueError("No graph provided to print relations from")
+    result = prologue
+    try:
+        relations = graph.relations
+        entities = graph.entities
+    except Exception as e:
+        raise ToolError(f"Failed to load relation data for printing: {e}")
     try:
         for r in graph.relations:
             try:
-                entities: tuple[Entity | None, Entity | None] = await manager.get_entities_from_relation(r)
-                a: Entity = entities[0]
-                b: Entity = entities[1]
-                if not entities[0] or not isinstance(entities[0], Entity):
+                a: Entity = entities.get(r.from_id)
+                b: Entity = entities.get(r.to_id)
+                if not a or not isinstance(a, Entity):
                     raise ToolError("Failed to get 'from' entity from relation")
-                if not entities[1] or not isinstance(entities[1], Entity):
+                if not b or not isinstance(b, Entity):
                     raise ToolError("Failed to get 'to' entity from relation")
             except Exception as e:
                 raise ToolError(f"Failed to get relation entities: {e}")
@@ -231,8 +405,8 @@ async def _print_relations_from_graph(
             # Add to result
             result += f"  - {link_from} {r.relation} {link_to}\n"
 
-        # Finally, add the suffix
-        result += suffix
+        # Finally, add the epilogue
+        result += epilogue
 
         return result
     except Exception as e:
@@ -241,16 +415,31 @@ async def _print_relations_from_graph(
 
 @mcp.tool  # TODO: Split into read_user_info and read_graph tools
 async def read_graph(
-    exclude_user_info: bool = Field(default=False, description="Whether to exclude the user info from the summary. Default is False."),
-    exclude_entities: bool = Field(default=False, description="Whether to exclude the entities from the summary. Default is False."),
-    exclude_relations: bool = Field(default=False, description="Whether to exclude the relations from the summary. Default is False."),
+    exclude_user_info: bool = Field(
+        default=False,
+        description="Whether to exclude the user info from the summary. Default is False.",
+    ),
+    exclude_entities: bool = Field(
+        default=False,
+        description="Whether to exclude the entities from the summary. Default is False.",
+    ),
+    exclude_relations: bool = Field(
+        default=False,
+        description="Whether to exclude the relations from the summary. Default is False.",
+    ),
+    exclude_observations: bool = Field(
+        default=False,
+        description="Whether to exclude observations from the summary. Default is False.",
+    ),
 ):
     """Read and print a user/LLM-friendly summary of the entire knowledge graph.
 
     Args:
+
         - exclude_user_info: Whether to exclude the user info from the summary. Default is False.
         - exclude_entities: Whether to exclude the entities from the summary. Default is False.
         - exclude_relations: Whether to exclude the relations from the summary. Default is False.
+        - exclude_observations: Whether to exclude observations from the summary. Default is False.
 
     Returns:
         User/LLM-friendly summary of the entire knowledge graph in text/markdown format
@@ -258,45 +447,37 @@ async def read_graph(
     try:
         graph = await manager.read_graph()
 
-        result = "" if exclude_user_info else await _print_user_info(graph, True, not exclude_relations)
+        result = ""
+
         try:
-            user_name = (
-                graph.user_info.preferred_name
-            )  # Preferred name should be set during entity creations at minimum
+            if not exclude_user_info:
+                result += await _print_user_info(
+                    graph, not exclude_observations, not exclude_relations
+                )
         except Exception as e:
-            raise ToolError(f"Failed to print user info: {e}")
+            raise ToolError(f"Error while printing user info: {e}")
 
         # Print all entities
         try:
-            result += f"\n👤 You've made observations about {len(graph.entities)} entities:\n"
-            for e in graph.entities:
-                i = e.icon
-                if e.icon:
-                    i = f"{e.icon} "
-                if "default_user" in e.name.lower():
-                    entity_name = user_name
-                else:
-                    entity_name = e.name
-                result += f"  - {i}{entity_name} ({e.entity_type})\n"
+            if not exclude_entities:
+                result += f"\n👤 You've made observations about {len(graph.entities)} entities:\n"
+                result += print_entities_from_graph(graph)
         except Exception as e:
-            raise ToolError(f"Failed to print entities: {e}")
+            raise ToolError(f"Error while printing entities: {e}")
 
         # Print all relations
         try:
-            obs_result = await _print_relations_from_graph(graph)
-            if obs_result:
-                result += f"\n🔗 You've learned about {len(graph.relations)} relations between these entities:\n"
-                result += obs_result
-            else:
-                raise KnowledgeGraphException(f"No output from _print_relations_from_graph: {e}")
-        except KnowledgeGraphException as e:
-            result += f"\nERROR: Failed to print relations: {e}"
+            if not exclude_relations:
+                obs_result = await print_relations_from_graph(graph)
+                if obs_result:
+                    result += f"\n🔗 You've learned about {len(graph.relations)} relations between these entities:\n"
+                    result += obs_result
+                else:
+                    raise KnowledgeGraphException(f"Error calling _print_relations_from_graph: {e}")
         except Exception as e:
             raise ToolError(f"Error while printing relations: {e}")
         return result
 
-    except RuntimeError as e:
-        raise RuntimeError(f"Critical error while printing graph: {e}")
     except Exception as e:
         raise ToolError(f"Error while printing graph: {e}")
 
@@ -341,7 +522,7 @@ async def create_entities(new_entities: list[CreateEntityRequest]):
 
       - aliases: list of str (optional)
       - icon: Emoji to represent the entity (optional)
-    
+
     Example entity creation request:
     ```json
     [
@@ -400,7 +581,7 @@ async def create_entities(new_entities: list[CreateEntityRequest]):
             result += f"Failed to create {len(failed)} entities:\n"
         for r in failed:
             ent = r.entity or {}
-            result += f"  - {ent.get('name','unknown')} ({ent.get('entity_type','unknown')})\n"
+            result += f"  - {ent.get('name', 'unknown')} ({ent.get('entity_type', 'unknown')})\n"
             if r.errors:
                 result += "Error(s):\n"
                 for err in r.errors:
@@ -444,7 +625,7 @@ async def create_relations(new_relations: list[CreateRelationRequest]):
         relations = result.relations or None
     except Exception as e:
         raise ToolError(f"Failed to create relations: {e}")
-    
+
     try:
         if not relations or len(relations) == 0:
             return "Request successful; however, no new relations were added!"
@@ -455,9 +636,7 @@ async def create_relations(new_relations: list[CreateRelationRequest]):
 
         for r in relations:
             from_e, to_e = await manager.get_entities_from_relation(r)
-            result += (
-                f"{from_e.icon_()}{from_e.name} ({from_e.entity_type}) {r.relation} {to_e.icon_()}{to_e.name} ({to_e.entity_type})\n"
-            )
+            result += f"{from_e.icon_()}{from_e.name} ({from_e.entity_type}) {r.relation} {to_e.icon_()}{to_e.name} ({to_e.entity_type})\n"
 
         return result
     except Exception as e:
@@ -503,7 +682,7 @@ async def add_observations(new_observations: list[ObservationRequest]):
         results = await manager.apply_observations(new_observations)
     except Exception as e:
         raise ToolError(f"Failed to add observations: {e}")
-        
+
     try:
         if not results or len(results) == 0:
             return "Request successful; however, no new observations were added!"
@@ -511,11 +690,11 @@ async def add_observations(new_observations: list[ObservationRequest]):
             result = "Observation added:\n"
         else:
             result = f"Added {len(result)} observations:\n"
-        
+
         for r in results:
             e = r.entity
             result += f"{e.icon_()}{e.name} ({e.entity_type})\n"
-            
+
             result += "  Observation(s): "
             for o in r.added_observations:
                 result += f"  - {o.content} ({o.durability.value})\n"
@@ -604,44 +783,30 @@ async def delete_entry(request: DeleteEntryRequest):  # TODO: deprecate!
 
 @mcp.tool
 async def update_user_info(  # NOTE: feels weird, re-evaluate
-    preferred_name: str | None= Field(
-        description="Provide a new preferred name for the user."
-    ),
-    first_name: str | None= Field(
-        default=None,
-        description="Provide a new given name for the user."
+    preferred_name: str | None = Field(description="Provide a new preferred name for the user."),
+    first_name: str | None = Field(
+        default=None, description="Provide a new given name for the user."
     ),
     last_name: str | None = Field(
-        default=None,
-        description="Provide a new family name for the user."
+        default=None, description="Provide a new family name for the user."
     ),
     middle_names: list[str] | None = Field(
-        default=None,
-        description="Provide new middle names for the user"
+        default=None, description="Provide new middle names for the user"
     ),
-    pronouns: str | None = Field(
-        default=None,
-        description="Provide new pronouns for the user"
-    ),
-    nickname: str | None = Field(
-        default=None,
-        description="Provide a new nickname for the user"
-    ),
+    pronouns: str | None = Field(default=None, description="Provide new pronouns for the user"),
+    nickname: str | None = Field(default=None, description="Provide a new nickname for the user"),
     prefixes: list[str] | None = Field(
-        default=None,
-        description="Provide new prefixes for the user"
+        default=None, description="Provide new prefixes for the user"
     ),
     suffixes: list[str] | None = Field(
-        default=None,
-        description="Provide new suffixes for the user"
+        default=None, description="Provide new suffixes for the user"
     ),
     emails: list[str] | None = Field(
-        default=None,
-        description="Provide new email address(es) for the user"
+        default=None, description="Provide new email address(es) for the user"
     ),
     linked_entity_id: str | None = Field(
         default=None,
-        description="Provide the ID of the new user-linked entity to represent the user."
+        description="Provide the ID of the new user-linked entity to represent the user.",
     ),
 ):
     """
@@ -653,14 +818,14 @@ async def update_user_info(  # NOTE: feels weird, re-evaluate
 
     Args:
       - preferred_name: Provide a new preferred name for the user.
-        
+
         Preferred name is prioritized over other names for the user. If not provided, one will be
         selected from the other provided names in the following fallback order:
           1. Nickname
           2. Prefix + First name
           3. First name
           4. Last name
-          
+
       - first_name: The given name of the user
       - middle_names: The middle names of the user
       - last_name: The family name of the user
@@ -679,10 +844,10 @@ async def update_user_info(  # NOTE: feels weird, re-evaluate
         On failure, an error message.
 
     ## Capturing user info
-    
-    When the user provides information about themselves, you should capture information for the 
+
+    When the user provides information about themselves, you should capture information for the
     required fields from their response.
-    
+
     Example user response:
         "My name is Dr. John Alexander Robert Doe Jr., M.D., AKA 'John Doe', but you can
         call me John. My pronouns are he/him. My email address is john.doe@example.com,
@@ -699,12 +864,7 @@ async def update_user_info(  # NOTE: feels weird, re-evaluate
         - Suffixes: "Jr.", "M.D."
         - Email address(es): "john.doe@example.com", "john.doe@work.com"
     """
-    if (
-        not preferred_name
-        and not first_name
-        and not nickname
-        and not last_name
-    ):
+    if not preferred_name and not first_name and not nickname and not last_name:
         raise ValueError("Either a preferred name, first name, last name, or nickname are required")
 
     new_user_info_dict = {
@@ -717,7 +877,7 @@ async def update_user_info(  # NOTE: feels weird, re-evaluate
         "prefixes": prefixes,
         "suffixes": suffixes,
         "emails": emails,
-        "linked_entity_id": linked_entity_id
+        "linked_entity_id": linked_entity_id,
     }
 
     try:
@@ -726,6 +886,7 @@ async def update_user_info(  # NOTE: feels weird, re-evaluate
         return str(result)
     except Exception as e:
         raise ToolError(f"Failed to update user info: {e}")
+
 
 @mcp.tool
 async def search_nodes(  # TODO: improve search
@@ -798,9 +959,11 @@ async def merge_entities(  # TODO: refactor
     except Exception as e:
         raise ToolError(f"Failed to merge entities: {e}")
 
-#----- DEBUG/EXPERIMENTAL TOOLS -----#
+
+# ----- DEBUG/EXPERIMENTAL TOOLS -----#
 
 if settings.debug:
+
     @mcp.tool
     async def DEBUG_get_email_update():
         """Get new email summaries from Supabase."""
@@ -829,7 +992,6 @@ if settings.debug:
             return result
         except Exception as e:
             raise ToolError(f"Failed to get email updates: {e}")
-
 
     # @mcp.tool
     # async def DEPRECATED_create_entry(request: CreateEntryRequest):
