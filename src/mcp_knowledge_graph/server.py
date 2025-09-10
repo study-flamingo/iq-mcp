@@ -364,7 +364,7 @@ async def print_relations_from_graph(
     except Exception as e:
         raise ToolError(f"Failed to load relation data for printing: {e}")
     try:
-        for r in graph.relations:
+        for r in relations:
             try:
                 a: Entity = entities.get(r.from_id)
                 b: Entity = entities.get(r.to_id)
@@ -461,7 +461,7 @@ async def read_graph(
         try:
             if not exclude_entities:
                 result += f"\n👤 You've made observations about {len(graph.entities)} entities:\n"
-                result += print_entities_from_graph(graph)
+                result += await print_entities_from_graph(graph)
         except Exception as e:
             raise ToolError(f"Error while printing entities: {e}")
 
@@ -472,8 +472,6 @@ async def read_graph(
                 if obs_result:
                     result += f"\n🔗 You've learned about {len(graph.relations)} relations between these entities:\n"
                     result += obs_result
-                else:
-                    raise KnowledgeGraphException(f"Error calling _print_relations_from_graph: {e}")
         except Exception as e:
             raise ToolError(f"Error while printing relations: {e}")
         return result

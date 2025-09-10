@@ -31,6 +31,8 @@ from .models import (
     CreateEntityResult,
     UserIdentifier,
     KnowledgeGraphException,
+    MemoryRecord,
+    GraphMeta,
 )
 
 
@@ -366,49 +368,20 @@ class KnowledgeGraphManager:
         if not line:
             return None
 
-        # Determine line/record type
+        # Determine line/record type via pydantic
         try:
-            item = json.loads(line)
-
-            item_type = item.get("type")
-
-            payload: dict | None = None
-            if item_type in ("entity", "relation", "user_info"):
-                # Ensure the data is a dict
-                if isinstance(item.get("data"), dict):
-                    payload = item["data"]
-                    if not payload:
-                        raise KnowledgeGraphException(f"Item has invalid data: {payload}")
-                else:
-                    raise KnowledgeGraphException("Item invalid: not a dict")
-
-            # If the line is an entity, return the entity
-            if item_type == "entity" and isinstance(payload, dict):
-                try:
-                    entity = Entity.from_dict(payload)
-                except Exception as e:
-                    raise ValueError(f"Invalid entity: {e}")
-                return entity
-
-            # If the line is a relation, return the relation
-            elif item_type == "relation" and isinstance(payload, dict):
-                try:
-                    relation = Relation.from_dict(payload)
-                except Exception as e:
-                    str(e).replace("\n", " \\ ")
-                    raise ValueError(f"Invalid relation: {e}")
-                return relation
-
-            elif item_type == "user_info" and isinstance(payload, dict):
-                try:
-                    user_info = UserIdentifier(**payload)
-                except Exception as e:
-                    raise ValueError(f"Invalid user info: {e}")
-                return user_info
-
+            rec = MemoryRecord.model_validate_json(line)
+            if rec.type == 'meta':
+                # meta is handled in _load_graph, ignore here
+                return None
+            if rec.type == 'entity':
+                return Entity.from_dict(rec.data)
+            elif rec.type == 'relation':
+                return Relation.from_dict(rec.data)
+            elif rec.type == 'user_info':
+                return UserIdentifier.from_dict(rec.data)
             else:
-                # Unrecognized line
-                raise ValueError(f"Missing or invalid type: {item_type}")
+                raise ValueError(f"Missing or invalid type: {getattr(rec, 'type', None)}")
         except Exception as e:
             raise ValueError(f"Error parsing line: {e}")
 
@@ -464,6 +437,7 @@ class KnowledgeGraphManager:
         # Load the graph
         try:
             # Instantiate graph components
+            meta: GraphMeta | None = None
             user_info: UserIdentifier | None = None
             entities: list[Entity] = []
             relations: list[Relation] = []
@@ -471,43 +445,56 @@ class KnowledgeGraphManager:
             # Open the memory file
             with open(self.memory_file_path, "r", encoding="utf-8") as f:
                 # Load the graph line by line
-                i = 0
-                for line in f:
-                    # Determine the type of the line
+                for i, line in enumerate(f, start=1):
+                    # Parse a MemoryRecord; on failure, log and continue
                     try:
-                        item = self._process_memory_line(line)
-
-                        match item.__class__.__name__:
-                            # If the line is a user info object, overwrite the existing user info object with a warning
-                            case "UserIdentifier":
-                                if user_info:
-                                    logger.warning(
-                                        "Multiple user info objects found in memory file! Overwriting."
-                                    )
-                                user_info = item
-                            case "Entity":
-                                entities.append(item)
-                            case "Relation":
-                                relations.append(item)
-                            case _:
-                                raise ValueError(
-                                    f"Bad type:{str(item)[:20]}..."
-                                )
+                        rec = MemoryRecord.model_validate_json(line)
                     except Exception as e:
-                        # Raise error for this line but continue loading the graph
-                        raise KnowledgeGraphException(f"Invalid line {i} in {self.memory_file_path}: {e}. Skipping.")
-                    # Quick check in case the app is loading a large invalid file
+                        logger.warning(f"Skipping invalid line {i} in {self.memory_file_path}: {e}")
+                        continue
+
+                    if rec.type == 'meta':
+                        try:
+                            meta = GraphMeta.model_validate(rec.data)
+                        except Exception as e:
+                            logger.warning(f"Invalid meta at line {i}: {e}; using defaults")
+                            meta = GraphMeta()
+                        continue
+
+                    if rec.type == 'user_info':
+                        try:
+                            user_info = UserIdentifier.from_dict(rec.data)
+                        except Exception as e:
+                            logger.warning(f"Invalid user_info at line {i}: {e}; skipping")
+                        continue
+
+                    if rec.type == 'entity':
+                        try:
+                            entity = Entity.from_dict(rec.data)
+                            entities.append(entity)
+                        except Exception as e:
+                            logger.warning(f"Invalid entity at line {i}: {e}; skipping")
+                        continue
+
+                    if rec.type == 'relation':
+                        try:
+                            relation = Relation.from_dict(rec.data)
+                            relations.append(relation)
+                        except Exception as e:
+                            logger.warning(f"Invalid relation at line {i}: {e}; skipping")
+                        continue
+
+                    logger.warning(f"Unknown record type '{rec.type}' at line {i}; skipping")
+
+                    # Quick checks while streaming large files
                     if i > 50 and (len(entities) == 0 and len(relations) == 0 and not user_info):
                         raise RuntimeError(
                             "Failed to load graph: no valid data found in first 50 lines, memory is invalid or corrupt!"
                         )
-                    # More strict check in case the first check passed in a large file of questionable validity
-                    elif i > 500 and (len(entities) == 0 or len(relations) == 0 or not user_info):
+                    if i > 500 and (len(entities) == 0 or len(relations) == 0 or not user_info):
                         raise RuntimeError(
                             "Failed to load graph: too much invalid data found in first 500 lines, memory is invalid or corrupt!"
                         )
-                    else:
-                        i += 1  # Next line
                 # EOF
 
             # If EOF is reached with no errors, begin validity checks
@@ -524,7 +511,7 @@ class KnowledgeGraphManager:
 
 
             # Compose a preliminary graph
-            graph = KnowledgeGraph(user_info=user_info, entities=entities, relations=relations)
+            graph = KnowledgeGraph(user_info=user_info, entities=entities, relations=relations, meta=meta)
 
             # Validate the loaded data
             # Checklist:
@@ -602,7 +589,7 @@ class KnowledgeGraphManager:
             return validated_graph
 
         except Exception as e:
-            raise RuntimeError(f"Error loading graph: {e}")
+            raise RuntimeError("Error loading graph") from e
 
     async def _save_graph(self, graph: KnowledgeGraph) -> None:
         """
@@ -618,8 +605,10 @@ class KnowledgeGraphManager:
         try:
             lines = []
 
-            # Save user info
+            # Save meta / user info
             try:
+                meta_payload = (graph.meta or GraphMeta()).model_dump(mode="json")
+                lines.append(json.dumps({"type": "meta", "data": meta_payload}, separators=(",", ":")))
                 if graph.user_info:
                     user_info_payload = graph.user_info.model_dump(mode="json")
                     record = {"type": "user_info", "data": user_info_payload}
@@ -1284,44 +1273,15 @@ class KnowledgeGraphManager:
         await self._save_graph(graph)
         return merged_entity
 
-    async def update_user_info(self,
-                               preferred_name: str,
-                               first_name: str | None = None,
-                               last_name: str | None = None,
-                               middle_names: list[str] | None = None,
-                               pronouns: str | None = None,
-                               nickname: str | None = None,
-                               prefixes: list[str] | None = None,
-                               suffixes: list[str] | None = None,
-                               emails: list[str] | None = None,
-                               linked_entity_id: str | None = None) -> UserIdentifier:
-        """
-        Update the user's identifying information in the graph. Returns the updated user info on success.
+    async def update_user_info(self, new_user_info: UserIdentifier) -> UserIdentifier:
+        """Update the user's identifying information in the graph.
+        Accepts a fully-formed `UserIdentifier` which will be validated against the current graph.
         """
         graph = await self._load_graph()
-        old_user_info = graph.user_info
-        
-        new_user_info = {
-            "preferred_name": preferred_name or old_user_info.preferred_name,
-            "first_name": first_name or old_user_info.first_name,
-            "last_name": last_name or old_user_info.last_name,
-            "middle_names": middle_names or old_user_info.middle_names,
-            "pronouns": pronouns or old_user_info.pronouns,
-            "nickname": nickname or old_user_info.nickname,
-            "prefixes": prefixes or old_user_info.prefixes,
-            "suffixes": suffixes or old_user_info.suffixes,
-            "emails": emails or old_user_info.emails,
-            "linked_entity_id": linked_entity_id or old_user_info.linked_entity_id,
-        }
-
-        # Validate and apply the new user info
         try:
-            updated_user_info = UserIdentifier.from_values(**new_user_info)
-            validated_user_info: UserIdentifier = self._validate_user_info(graph, updated_user_info)
+            validated = self._validate_user_info(graph, new_user_info)
         except Exception as e:
             raise KnowledgeGraphException(f"New user info invalid: {e}")
-        graph.user_info = validated_user_info
-
+        graph.user_info = validated
         await self._save_graph(graph)
-        
-        return validated_user_info
+        return validated

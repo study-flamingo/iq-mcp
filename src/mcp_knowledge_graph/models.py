@@ -6,7 +6,7 @@ including entities, relations, and temporal observations with durability metadat
 """
 
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Literal, Annotated, Union
 from uuid import uuid4
 from pydantic import (
     BaseModel,
@@ -14,6 +14,7 @@ from pydantic import (
     ConfigDict,
     field_validator,
     computed_field,
+    AliasChoices,
 )
 from enum import Enum
 import regex as re
@@ -41,6 +42,9 @@ def validate_id_simple(id: str) -> str:
     if not id or not isinstance(id, str) or not id.strip() or len(id) != 8 or not id.isalnum():
         raise ValueError(f"Invalid entity ID found: {id}")
     return id
+
+# Constrained ID type for entity/relation IDs (8-char alphanumeric)
+EntityID = Annotated[str, Field(min_length=8, max_length=8, pattern=r"^[A-Za-z0-9]{8}$", strict=True)]
 
 
 class KnowledgeGraphException(Exception):
@@ -91,8 +95,8 @@ class Observation(BaseModel):
         title="Durability",
         description="How long this observation is expected to remain relevant",
     )
-    timestamp: datetime | None = Field(
-        default=None,
+    timestamp: datetime = Field(
+        default_factory=get_current_datetime,
         title="Timestamp",
         description="Timestamp of when the observation was created",
     )
@@ -102,8 +106,8 @@ class Observation(BaseModel):
         """Create a new timestamped observation from content and durability. The current datetime in ISO format (UTC) is used as the timestamp."""
 
         content = data.get("content")
-        durability = data.get("durability")
-        timestamp = get_current_datetime
+        durability = data.get("durability", DurabilityType.SHORT_TERM)
+        timestamp = data.get("timestamp") or get_current_datetime()
         return cls(content=content, timestamp=timestamp, durability=durability)
 
     @classmethod
@@ -116,12 +120,7 @@ class Observation(BaseModel):
         observation = cls(content=content, durability=durability, timestamp=get_current_datetime())
         return observation
 
-    @field_validator("timestamp", mode="after")
-    @staticmethod
-    def check_timestamp(v: datetime | None) -> datetime:
-        if v is None or v == "" or not isinstance(v, datetime):
-            return get_current_datetime()
-        return v
+    # Timestamp defaults are handled by default_factory and pydantic parsing
 
     def save(self) -> dict:
         """Convert the observation to a dictionary for writing to storage."""
@@ -153,8 +152,8 @@ class Entity(BaseModel):
         validate_by_name=True,
         validate_by_alias=True,
     )
-    id: str | None = Field(
-        default=str(uuid4())[:8],
+    id: EntityID = Field(
+        default_factory=lambda: str(uuid4())[:8],
         title="Entity ID",
         description="Unique identifier for the entity",
     )
@@ -260,15 +259,16 @@ class Entity(BaseModel):
                 pass
             else:
                 logger.warning(f"Invalid emoji '{icon}' given for new entity '{name}'")
-        e = cls(
+        kwargs: dict[str, Any] = dict(
             name=name,
             entity_type=entity_type,
             observations=observations or [],
             aliases=aliases or [],
             icon=icon,
-            _icon=icon,
-            id=id,
         )
+        if id:
+            kwargs["id"] = id
+        e = cls(**kwargs)
         return e
 
 
@@ -298,8 +298,7 @@ class Relation(BaseModel):
         title="To entity",
         description="Target entity name (in-memory convenience only; not persisted)",
     )
-    from_id: str = Field(
-        default=None,
+    from_id: EntityID = Field(
         title="From entity ID",
         description="Unique identifier for the source entity",
     )
@@ -307,10 +306,9 @@ class Relation(BaseModel):
         ...,
         title="Relation type",
         description="Relationship content/description in active voice. Example: (A) is really interested in (B)",
-        alias="relation_type",
+        validation_alias=AliasChoices("relation", "relation_type", "content"),
     )
-    to_id: str = Field(
-        default=None,
+    to_id: EntityID = Field(
         title="To entity ID",
         description="Unique identifier for the target entity",
     )
@@ -327,18 +325,11 @@ class Relation(BaseModel):
         """Initialize the relation from a dictionary of values. Ideal for reading from storage.
         """
         content = data.get("relation") or data.get("content") or data.get("relation_type") # compat with old data format
-        if not content.strip():
+        if not isinstance(content, str) or not content.strip():
             raise ValueError("Relation content invalid or missing")
-        elif not isinstance(content, str):
-            raise ValueError(f"Invalid relation content: {content}")
-
-        # Check IDs
-        from_id = validate_id_simple(data.get("from_id"))
-        to_id = validate_id_simple(data.get("to_id"))
-
         return cls(
-            from_id=from_id,
-            to_id=to_id,
+            from_id=data.get("from_id"),
+            to_id=data.get("to_id"),
             relation=content,
         )
 
@@ -395,7 +386,7 @@ class UserIdentifier(BaseModel):
         validate_by_name=True,
     )
 
-    linked_entity_id: str | None = Field(
+    linked_entity_id: EntityID | None = Field(
         default=None,
         title="Linked entity ID",
         description="The ID of the entity that is linked to the user. This entity will be used to store observations about the user.",
@@ -451,11 +442,32 @@ class UserIdentifier(BaseModel):
         title="Base name",
         description="The base name of the user - first, middle, and last name without any prefixes or suffixes. Organized as a list of strings with each part.",
     )
-    names: list[str] = Field(
-        ...,
-        title="Full name",
-        description="Various full name forms for the user, depending on the provided information. Index 0 is the first, middle, and last name without any prefixes or suffixes.",
-    )
+
+    @computed_field(return_type=list[str])
+    def names(self) -> list[str]:
+        first = (self.first_name or "").strip() if self.first_name else ""
+        last = (self.last_name or "").strip() if self.last_name else ""
+        middle = " ".join(self.middle_names) if self.middle_names else ""
+        names: list[str] = []
+        if first or last:
+            names.append(f"{first} {last}".strip())
+        if first or middle or last:
+            names.append(f"{first} {middle} {last}".strip())
+        if self.prefixes:
+            for pfx in self.prefixes:
+                if last:
+                    names.append(f"{pfx} {last}".strip())
+                if first and last:
+                    names.append(f"{pfx} {first} {last}".strip())
+                if self.suffixes and first and last:
+                    for sfx in self.suffixes:
+                        names.append(f"{pfx} {first} {last}, {sfx}".strip())
+                        names.append(f"{pfx} {last}, {sfx}".strip())
+                        names.append(f"{first} {last}, {sfx}".strip())
+        # Fallback to preferred_name if nothing else
+        if not names and self.preferred_name:
+            names.append(self.preferred_name)
+        return [n for n in names if n]
 
     @classmethod
     def from_values(
@@ -535,21 +547,6 @@ class UserIdentifier(BaseModel):
             else:
                 raise ValueError("Not enough data to compose a preferred name for the user")
 
-        # Compose alternate names list
-        names = []
-        names.append(f"{first_name} {last_name}")
-        names.append(f"{first_name} {' '.join(middle_names) if middle_names else ""} {last_name}")
-        
-        if prefixes:
-            for pfx in prefixes:
-                names.append(f"{pfx} {last_name}")
-                names.append(f"{pfx} {first_name} {last_name}")
-                if suffixes:
-                    for sfx in suffixes:
-                        names.append(f"{pfx} {first_name} {last_name}, {sfx}")
-                        names.append(f"{pfx} {last_name}, {sfx}")
-                        names.append(f"{first_name} {last_name}, {sfx}")
-
         base_name = None  # deprecated
 
         return cls(
@@ -562,7 +559,6 @@ class UserIdentifier(BaseModel):
             suffixes=suffixes,
             pronouns=pronouns,
             emails=emails,
-            names=names,
             base_name=base_name,
             linked_entity_id=linked_entity_id,
         )
@@ -574,7 +570,6 @@ class UserIdentifier(BaseModel):
             first_name="user",
             preferred_name="user",
             pronouns="they/them",
-            names=["user", "user"],
         )
 
     @classmethod
@@ -599,17 +594,17 @@ class UserIdentifier(BaseModel):
                 user_info[k] = data[k]
         
         # Quick validation of list types
-        if user_info["middle_names"]:
-            user_info["middle_names"] = [str(m) for m in user_info["middle_names"]]
-        if user_info["prefixes"]:
-            user_info["prefixes"] = [str(p) for p in user_info["prefixes"]]
-        if user_info["suffixes"]:
-            user_info["suffixes"] = [str(s) for s in user_info["suffixes"]]
-        if user_info["emails"]:
-            user_info["emails"] = [str(e) for e in user_info["emails"]]
+        if user_info.get("middle_names"):
+            user_info["middle_names"] = [str(m) for m in user_info.get("middle_names", [])]
+        if user_info.get("prefixes"):
+            user_info["prefixes"] = [str(p) for p in user_info.get("prefixes", [])]
+        if user_info.get("suffixes"):
+            user_info["suffixes"] = [str(s) for s in user_info.get("suffixes", [])]
+        if user_info.get("emails"):
+            user_info["emails"] = [str(e) for e in user_info.get("emails", [])]
         
         # Quick ID validation if provided - should be fully validated first by the manager
-        if user_info["linked_entity_id"]:
+        if user_info.get("linked_entity_id"):
             validate_id_simple(user_info["linked_entity_id"])
 
         # Create the user info object
@@ -666,6 +661,11 @@ class KnowledgeGraph(BaseModel):
     )
     user_info: UserIdentifier = Field(
         ..., title="User info", description="Information about the user"
+    )
+    meta: Any | None = Field(
+        default=None,
+        title="Graph metadata",
+        description="Optional metadata about the knowledge graph (schema versioning, ids, etc.)",
     )
     entities: list[Entity] | None = Field(
         default=None, title="Entities", description="All entities in the knowledge graph"
@@ -820,6 +820,14 @@ class CreateEntityRequest(BaseModel):
         description="The icon of the entity. Must be a single valid emoji. Optional, but recommended.",
     )
 
+    @field_validator("name", "entity_type", mode="before")
+    @classmethod
+    def _strip_and_require(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            raise ValueError("must not be empty")
+        return v
+
 
 class CreateEntityResult(BaseModel):
     """Model for the result of creating an entity."""
@@ -844,13 +852,11 @@ class CreateRelationRequest(BaseModel):
         validate_by_name=True,
     )
 
-    from_entity_id: str | None = Field(
-        ...,
+    from_entity_id: EntityID | None = Field(
         title="Originating entity ID",
         description="The name of the entity to create a relation from",
     )
-    to_entity_id: str | None = Field(
-        ...,
+    to_entity_id: EntityID | None = Field(
         title="Destination entity ID",
         description="The id of the entity to create a relation to",
     )
@@ -870,37 +876,7 @@ class CreateRelationRequest(BaseModel):
         description="Description of the relation. Should be in active voice and concise. Example: 'is the father of'",
     )
 
-    @field_validator("from_entity_id")
-    def _validate_from_entity_id(cls, v: str) -> str:
-        """Validate the provided originating entity ID."""
-        if v == "user":
-            return v
-        elif (
-            not v
-            or v == ""
-            or not isinstance(v, str)
-            or not v.strip()
-            or len(v) != 8
-            or not v.isalnum()
-        ):
-            raise ValueError(f"Invalid originating entity ID: {v}")
-        return v
-
-    @field_validator("to_entity_id")
-    def _validate_to_entity_id(cls, v: str) -> str:
-        """Validate the provided destination entity ID."""
-        if v == "user":
-            return v
-        elif (
-            not v
-            or v == ""
-            or not isinstance(v, str)
-            or not v.strip()
-            or len(v) != 8
-            or not v.isalnum()
-        ):
-            raise ValueError(f"Invalid destination entity ID: {v}")
-        return v
+    # ID validation handled by constrained types above
 
     @classmethod
     def from_objects(
@@ -1028,3 +1004,14 @@ class CreateRelationResult(BaseModel):
         title="Relations",
         description="The relations that were successfully created",
     )
+
+
+# Structured JSONL record for storage IO
+class MemoryRecord(BaseModel):
+    type: Literal['meta', 'user_info', 'entity', 'relation']
+    data: Any
+
+
+class GraphMeta(BaseModel):
+    schema_version: int = Field(default=1, description="Schema/memory record version")
+    graph_id: EntityID = Field(default_factory=lambda: str(uuid4())[:8], description="Graph identifier")
