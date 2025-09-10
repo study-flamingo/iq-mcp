@@ -364,10 +364,19 @@ async def print_relations_from_graph(
     except Exception as e:
         raise ToolError(f"Failed to load relation data for printing: {e}")
     try:
+        # Build ID -> Entity map for fast lookup
+        id_to_entity: dict[str, Entity] = {}
+        try:
+            for ent in entities:
+                if isinstance(ent, Entity) and ent.id:
+                    id_to_entity[ent.id] = ent
+        except Exception:
+            pass
+
         for r in relations:
             try:
-                a: Entity = entities.get(r.from_id)
-                b: Entity = entities.get(r.to_id)
+                a: Entity | None = id_to_entity.get(r.from_id)
+                b: Entity | None = id_to_entity.get(r.to_id)
                 if not a or not isinstance(a, Entity):
                     raise ToolError("Failed to get 'from' entity from relation")
                 if not b or not isinstance(b, Entity):
@@ -925,13 +934,25 @@ async def open_nodes(
 
         # Print the result
         result_str = ""
+        # Build ID -> Entity map for relation rendering
+        id_to_entity: dict[str, Entity] = {}
+        for ent in (result.entities or []):
+            if isinstance(ent, Entity) and ent.id:
+                id_to_entity[ent.id] = ent
+
         for e in result.entities:
             result_str += f"Entity: {e.name} ({e.entity_type})\n"
             result_str += "Observations:\n"
             for o in e.observations:
                 result_str += f"  - {o.content} ({str(o.timestamp)}, {str(o.durability)})\n"
-            for r in e.relations:
-                result_str += f"  - {r.from_entity} {r.relation} {r.to_entity}\n"
+            # Include relations involving this entity
+            for r in (result.relations or []):
+                if r.from_id == e.id or r.to_id == e.id:
+                    a = id_to_entity.get(r.from_id)
+                    b = id_to_entity.get(r.to_id)
+                    a_name = a.name if a and a.name else "unknown"
+                    b_name = b.name if b and b.name else "unknown"
+                    result_str += f"  - {a_name} {r.relation} {b_name}\n"
         return result_str
     except Exception as e:
         raise ToolError(f"Failed to open nodes: {e}")
