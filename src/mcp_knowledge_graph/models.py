@@ -37,14 +37,18 @@ def get_current_datetime() -> datetime:
     """Get the current datetime (UTC)."""
     return datetime.now(timezone.utc)
 
+
 def validate_id_simple(id: str) -> str:
     """Simple validation of the provided entity ID. Checks if the ID is a string, is not empty, is 8 characters long, and is alphanumeric. If invalid, raises a ValueError."""
     if not id or not isinstance(id, str) or not id.strip() or len(id) != 8 or not id.isalnum():
         raise ValueError(f"Invalid entity ID found: {id}")
     return id
 
+
 # Constrained ID type for entity/relation IDs (8-char alphanumeric)
-EntityID = Annotated[str, Field(min_length=8, max_length=8, pattern=r"^[A-Za-z0-9]{8}$", strict=True)]
+EntityID = Annotated[
+    str, Field(min_length=8, max_length=8, pattern=r"^[A-Za-z0-9]{8}$", strict=True)
+]
 
 
 class KnowledgeGraphException(Exception):
@@ -322,9 +326,10 @@ class Relation(BaseModel):
 
     @classmethod
     def from_dict(cls, data: dict) -> "Relation":
-        """Initialize the relation from a dictionary of values. Ideal for reading from storage.
-        """
-        content = data.get("relation") or data.get("content") or data.get("relation_type") # compat with old data format
+        """Initialize the relation from a dictionary of values. Ideal for reading from storage."""
+        content = (
+            data.get("relation") or data.get("content") or data.get("relation_type")
+        )  # compat with old data format
         if not isinstance(content, str) or not content.strip():
             raise ValueError("Relation content invalid or missing")
         return cls(
@@ -369,12 +374,12 @@ class UserIdentifier(BaseModel):
       - prefixes: The prefixes of the user
       - suffixes: The suffixes of the user
       - emails: The email addresses of the user
-      
+
     The following fields are computed automatically from the provided information, and should not be provided:
       - base_name: The base name of the user - first, middle, and last name without any prefixes or suffixes. Organized as a list of strings with each part.
       - names: Various full name forms for the user, depending on the provided information. Index 0 is the first, middle, and last name without any prefixes or suffixes.
       - linked_entity_id: The ID of the entity that is linked to the user. This entity will be used to store observations about the user.
-    
+
     Constructors:
       - from_values(): Create a UserIdentifier from individually-provided fields.
       - from_default(): Create a UserIdentifier with the default values.
@@ -496,15 +501,17 @@ class UserIdentifier(BaseModel):
             prefixes (list[str]): The prefixes of the user
             suffixes (list[str]): The suffixes of the user
             emails (list[str]): The email addresses of the user
-            
+
         User-linked Entity:
-        
+
             If specifying a new user entity, provide either the linked_entity_id or the linked_entity object itself.
             Warning: the new linked ID or Entity object should be validated prior to calling this function.
         """
 
         if linked_entity_id and linked_entity:
-            logger.warning("Both linked_entity_id and linked_entity provided - prioritizing linked_entity")
+            logger.warning(
+                "Both linked_entity_id and linked_entity provided - prioritizing linked_entity"
+            )
         elif linked_entity_id and not linked_entity:
             validate_id_simple(linked_entity_id)
         elif linked_entity and not linked_entity_id:
@@ -515,32 +522,26 @@ class UserIdentifier(BaseModel):
 
         # Compose preferred name from the provided information if not provided
         if not preferred_name:
-
             # Make sure there's enough data to work with
-            if (
-                not first_name
-                and not last_name
-                and not nickname
-                and not middle_names
-            ):
+            if not first_name and not last_name and not nickname and not middle_names:
                 raise ValueError("Not enough data to compose a preferred name")
 
             # First, try prefix + first name
             if prefixes and first_name:
                 preferred_name = f"{prefixes[0]} {first_name}"
-            
+
             # Then, try just first name
             elif first_name:
                 preferred_name = first_name
-            
+
             # Then, try just last name
             elif last_name:
                 preferred_name = last_name
-            
+
             # Then, try nickname
             elif nickname:
                 preferred_name = nickname
-            
+
             # Then, try middle names
             elif middle_names:
                 preferred_name = " ".join(middle_names)
@@ -576,7 +577,7 @@ class UserIdentifier(BaseModel):
     def from_dict(cls, data: dict) -> "UserIdentifier":
         """Create a UserIdentifier from a dictionary of values."""
         user_info: dict[str, Any] = {}
-        
+
         # Filter for accepted values
         for k in [
             "preferred_name",
@@ -592,7 +593,7 @@ class UserIdentifier(BaseModel):
         ]:
             if k in data and data[k]:
                 user_info[k] = data[k]
-        
+
         # Quick validation of list types
         if user_info.get("middle_names"):
             user_info["middle_names"] = [str(m) for m in user_info.get("middle_names", [])]
@@ -602,7 +603,7 @@ class UserIdentifier(BaseModel):
             user_info["suffixes"] = [str(s) for s in user_info.get("suffixes", [])]
         if user_info.get("emails"):
             user_info["emails"] = [str(e) for e in user_info.get("emails", [])]
-        
+
         # Quick ID validation if provided - should be fully validated first by the manager
         if user_info.get("linked_entity_id"):
             validate_id_simple(user_info["linked_entity_id"])
@@ -943,60 +944,60 @@ class DeleteObservationRequest(BaseModel):
 
 
 # DEPRECATED CLASSES
-# class DeleteEntryRequest(BaseModel):
-#     """Request model used to delete data from the knowledge graph.
+class DeleteEntryRequest(BaseModel):
+    """Request model used to delete data from the knowledge graph.
 
-#     Properties:
-#         - 'entry_type' (str): must be one of: 'observation', 'entity', or 'relation'
-#         - 'data' (list[AddObservationRequest] | list[str] | list[Relation]): must be a list of the appropriate object for each entry_type:
-#             - entry_type = 'entity': list of entity names
-#             - entry_type = 'observation': [{entity_name, [observation content]}]
-#             - entry_type = 'relation': [{from_entity, to_entity, relation}]
-#     """
+    Properties:
+        - 'entry_type' (str): must be one of: 'observation', 'entity', or 'relation'
+        - 'data' (list[AddObservationRequest] | list[str] | list[Relation]): must be a list of the appropriate object for each entry_type:
+            - entry_type = 'entity': list of entity IDs
+            - entry_type = 'observation': [{entity_id, [observation content]}]
+            - entry_type = 'relation': [{from_entity, to_entity, relation}]
+    """
 
-#     entry_type: Literal["observation", "entity", "relation"] = Field(
-#         description="Type of entry to create: 'observation', 'entity', or 'relation'"
-#     )
-#     data: list[ObservationRequest] | list[str] | list[Relation] | None = Field(
-#         description="""A list of the appropriate object for the given entry_type.
-        
-#         - entry_type = 'entity': list of entity names
-#         - entry_type = 'observation': list of DeleteObservationRequest objects
-#         - entry_type = 'relation': list of Relation objects
-#         """
-#     )
+    entry_type: Literal["observation", "entity", "relation"] = Field(
+        description="Type of entry to create: 'observation', 'entity', or 'relation'"
+    )
+    data: list[ObservationRequest] | list[EntityID] | list[Relation] | None = Field(
+        description="""A list of the appropriate object for the given entry_type.
+
+        - entry_type = 'entity': list of entity IDs
+        - entry_type = 'observation': list of DeleteObservationRequest objects
+        - entry_type = 'relation': list of Relation objects
+        """
+    )
 
 
-# class CreateEntryRequest(BaseModel):
-#     """Request model used to validate and add data to the knowledge graph.
+class CreateEntryRequest(BaseModel):
+    """Request model used to validate and add data to the knowledge graph.
 
-#     Properties:
-#         - 'entry_type' (str): must be one of: 'observation', 'entity', or 'relation'
-#         - 'data' (list[ObservationRequest] | list[Entity] | list[Relation])
+    Properties:
+        - 'entry_type' (str): must be one of: 'observation', 'entity', or 'relation'
+        - 'data' (list[ObservationRequest] | list[Entity] | list[Relation])
 
-#     'data' must be a list of the appropriate object for each entry_type:
+    'data' must be a list of the appropriate object for each entry_type:
 
-#         - observation: [{'entity_name': 'entity_name', 'content': list[{'content':'observation_content', 'durability': Literal['temporary', 'short-term', 'long-term', 'permanent']}]}]  (timestamp will be automatically added)
-#         - entity: [{'name': 'entity_name', 'entity_type': entity type, 'observations': [{'content': str, 'durability': Literal['temporary', 'short-term', 'long-term', 'permanent']}]}]
-#         - relation: [{'from': 'entity_name', 'to': 'entity_name', 'relation': 'relation'}]
-#     """
+        - observation: [{'entity_name': 'entity_name', 'content': list[{'content':'observation_content', 'durability': Literal['temporary', 'short-term', 'long-term', 'permanent']}]}]  (timestamp will be automatically added)
+        - entity: [{'name': 'entity_name', 'entity_type': entity type, 'observations': [{'content': str, 'durability': Literal['temporary', 'short-term', 'long-term', 'permanent']}]}]
+        - relation: [{'from': 'entity_name', 'to': 'entity_name', 'relation': 'relation'}]
+    """
 
-#     model_config = ConfigDict(
-#         deprecated=True,
-#         populate_by_name=True,
-#         validate_by_name=True,
-#     )
-#     entry_type: Literal["observation", "entity", "relation"] = Field(
-#         description="Type of entry to create: 'observation', 'entity', or 'relation'"
-#     )
-#     data: list[ObservationRequest] | list[Entity] | list[Relation] = Field(
-#         description="""Data to be added to the knowledge graph. Expected format depends on the entry_type:
-        
-#         - observation: list of ObservationRequest objects
-#         - entity: list of Entity objects
-#         - relation: list of Relation objects
-#         """
-#     )
+    model_config = ConfigDict(
+        deprecated=True,
+        populate_by_name=True,
+        validate_by_name=True,
+    )
+    entry_type: Literal["observation", "entity", "relation"] = Field(
+        description="Type of entry to create: 'observation', 'entity', or 'relation'"
+    )
+    data: list[ObservationRequest] | list[Entity] | list[Relation] = Field(
+        description="""Data to be added to the knowledge graph. Expected format depends on the entry_type:
+
+        - observation: list of ObservationRequest objects
+        - entity: list of Entity objects
+        - relation: list of Relation objects
+        """
+    )
 
 
 # class CreateEntityResult(BaseModel):
@@ -1025,10 +1026,12 @@ class CreateRelationResult(BaseModel):
 
 # Structured JSONL record for storage IO
 class MemoryRecord(BaseModel):
-    type: Literal['meta', 'user_info', 'entity', 'relation']
+    type: Literal["meta", "user_info", "entity", "relation"]
     data: Any
 
 
 class GraphMeta(BaseModel):
     schema_version: int = Field(default=1, description="Schema/memory record version")
-    graph_id: EntityID = Field(default_factory=lambda: str(uuid4())[:8], description="Graph identifier")
+    graph_id: EntityID = Field(
+        default_factory=lambda: str(uuid4())[:8], description="Graph identifier"
+    )

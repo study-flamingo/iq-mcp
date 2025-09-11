@@ -32,6 +32,7 @@
 - JSONL records are parsed via `MemoryRecord.model_validate_json()`.
 - The first line may be `meta`; attach it to `KnowledgeGraph.meta`.
 - Migration hook pattern:
+
 ```python
 CURRENT_SCHEMA = 1
 MIGRATIONS = { 1: migrate_v1_to_v2 }

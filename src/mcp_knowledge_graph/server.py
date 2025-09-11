@@ -10,14 +10,17 @@ import json
 from datetime import tzinfo
 from fastmcp import FastMCP
 from pydantic import Field
+from pydantic.dataclasses import dataclass
 from typing import Any
 from fastmcp.exceptions import ToolError, ValidationError
 
 from .manager import KnowledgeGraphManager
 from .models import (
     DeleteEntryRequest,
+    EntityID,
     KnowledgeGraph,
     KnowledgeGraphException,
+    Relation,
     UserIdentifier,
     CreateEntityRequest,
     CreateRelationRequest,
@@ -47,8 +50,57 @@ manager = KnowledgeGraphManager(settings.memory_path)
 mcp = FastMCP(name="iq-mcp", version="1.1.0")
 
 
+@dataclass
+class PrintOptions:
+    """
+    Options for printing things such as entities, relations, or observations from the knowledge graph.
+    All options are optional, and the default values are used if not specified.
+
+    Parameters:
+
+    - exclude_user: Whether to exclude the user from the entity list. Default is `True`.
+    - prologue: A string added before the entity list. Default is `None`.
+    - separator: The separator to use between list items (entities). Default is `\\n`.
+    - epilogue: A string added after the entity list. Default is `\\n`.
+    - md_links: Whether to use markdown-style links for the entities. Default is `True`.
+    - include_ids: Whether to include the IDs of the entities in the display. Default is `True`.
+    - include_types: Whether to include the types of the entities in the display. Default is `True`.
+    - include_observations: Whether to include observations of the entities in the display. Default is `False`.
+    - include_relations: Whether to include relations of the entities in the display. Default is `False`.
+    - indent: The number of spaces to indent the entity display. Default is `2`.
+    - ul: Whether to use a bulleted list. Default is `True`.
+    - ol: Whether to use a numbered list. Default is `False`.
+    - bullet: The bullet to use for the unordered list. Default is `-`.
+    - ordinal_separator: The separator to use between the ordinal and the entity. Default is `.`
+
+    Notes:
+
+    - `prologue` and `epilogue` strings should include newlines, unless inline display is desired
+    - `bullet` and `ordinal` are mutually exclusive
+    - `include_observations` and `include_relations` will select for items that are linked to the entity in question
+    - If a newline is not included in the `separator`, the list will print inline
+    - If both `md_links` and `include_ids` are `True`, the link will be the ID string e.g.: `[👤 John Doe](12345678)`
+    - If both `ul` and `ol` are `True` for some reason, an unordered list will be preferred
+    - `indent` is applied only to the entity list, not the prologue or epilogue
+    """
+
+    prologue: str = ""
+    separator: str = "\n"
+    epilogue: str = "\n\n"
+    md_links: bool = True
+    include_ids: bool = True
+    include_types: bool = True
+    include_observations: bool = False
+    include_relations: bool = False
+    indent: int = 0
+    ul: bool = True
+    ol: bool = False
+    bullet: str = "-"
+    ordinal_separator: str = "."
+
+
 #### Helper functions ####
-async def _print_user_info(
+async def print_user_info(
     graph: KnowledgeGraph, include_observations: bool = False, include_relations: bool = False
 ):
     """Get the user's info from the knowledge graph and print to a string.
@@ -154,46 +206,18 @@ async def _print_user_info(
         raise ToolError(f"Failed to print user relations: {e}")
 
 
-async def print_entities_from_graph(
-    graph: KnowledgeGraph = None,
-    exclude_user: bool = True,
-    prologue: str = "",
-    separator: str = "\n",
-    epilogue: str = "\n\n",
-    md_links: bool = True,
-    include_ids: bool = True,
-    include_types: bool = True,
-    include_observations: bool = False,
-    include_relations: bool = False,
-    indent: int = 2,
-    ul: bool = True,
-    ol: bool = False,
-    bullet: str = "-",
-    ordinal_separator: str = ".",
-):
+async def print_entities(entities: list[Entity], options: PrintOptions = PrintOptions()):
     """
-    Print entities from the graph in a readable format.
+    Print entities data from a list of entities in a readable format.
 
-    Various options are available to customize the display. All options except for graph are optional, and the
+    Various options are available to customize the display. All options are optional, and the
     default values are used if not specified.
 
     Args:
 
-        - graph: The knowledge graph to print entities from. Required.
-        - exclude_user: Whether to exclude the user from the entity list. Default is `True`.
-        - prologue: A string added before the entity list. Default is `None`.
-        - separator: The separator to use between list items (entities). Default is `\\n`.
-        - epilogue: A string added after the entity list. Default is `\\n`.
-        - md_links: Whether to use markdown-style links for the entities. Default is `True`.
-        - include_ids: Whether to include the IDs of the entities in the display. Default is `True`.
-        - include_types: Whether to include the types of the entities in the display. Default is `True`.
-        - include_observations: Whether to include observations of the entities in the display. Default is `False`.
-        - include_relations: Whether to include relations of the entities in the display. Default is `False`.
-        - indent: The number of spaces to indent the entity display. Default is `2`.
-        - ul: Whether to use a bulleted list. Default is `True`.
-        - ol: Whether to use a numbered list. Default is `False`.
-        - bullet: The bullet to use for the unordered list. Default is `-`.
-        - ordinal_separator: The separator to use between the ordinal and the entity. Default is `.`
+    - graph: The knowledge graph to print entities from. Required if entities is not provided.
+    - entities: The list of entities to print. Required if graph is not provided.
+    - options: The options to use for printing the entities. If not provided, default values will be used.
 
     Display format:
 
@@ -221,24 +245,26 @@ async def print_entities_from_graph(
         - If both `ul` and `ol` are `True` for some reason, an unordered list will be preferred
         - `indent` is applied only to the entity list, not the prologue or epilogue
     """
-    if not graph:
-        raise ValueError("No graph provided to print entities from")
-    try:
-        # Get the data
-        entities = graph.entities
-        # observations = graph.observations if include_observations else []
-        # relations = graph.relations if include_relations else []
 
-        # TODO: Implement relative observations and relations printing
+    exclude_user = options.exclude_user
+    prologue = options.prologue
+    separator = options.separator
+    epilogue = options.epilogue
+    md_links = options.md_links
+    include_ids = options.include_ids
+    include_types = options.include_types
+    indent = options.indent
+    ul = options.ul
+    ol = False if ul else options.ol
+    bullet = options.bullet
+    ordinal_separator = options.ordinal_separator
 
-        result = ""
+    result = ""
 
-        # Resolve options
-        ind: str = " " * indent
-        os = ordinal_separator
-        ord: str = "" if ol else bullet
-    except Exception as e:
-        raise ToolError(f"Failed to load entity data for printing: {e}")
+    # Resolve options
+    ind: str = " " * indent
+    os = ordinal_separator
+    ord: str = "" if ol else bullet
 
     # Start rendering
     result = prologue
@@ -260,7 +286,11 @@ async def print_entities_from_graph(
             ord = str(i) if ol else bullet
 
             # Compose pre-entity string (list stuff like indentation, bullet, ordinal, etc.)
-            display_pre: str = f"{ind}{ord}{os} "
+            # Special case: if both ul and ol are False, omit pre-entity string
+            if not ul and not ol:
+                display_pre = ""
+            else:
+                display_pre: str = f"{ind}{ord}{os} "
 
             # Compose entity string (entity icon, name, id, type)
             display = ""
@@ -290,46 +320,20 @@ async def print_entities_from_graph(
         raise ToolError(f"Failed to print entities: {e}")
 
 
-async def print_relations_from_graph(
-    graph: KnowledgeGraph = None,
-    exclude_user: bool = True,
-    prologue: str = "",
-    separator: str = "\n",
-    epilogue: str = "\n\n",
-    md_links: bool = True,
-    include_ids: bool = True,
-    include_types: bool = True,
-    include_observations: bool = False,
-    include_relations: bool = False,
-    indent: int = 2,
-    ul: bool = True,
-    ol: bool = False,
-    bullet: str = "-",
-    ordinal_separator: str = ".",
+async def print_relations(
+    relations: list[Relation] = Field(description="The list of relations to print."),
+    options: PrintOptions = Field(
+        default=PrintOptions(), description="The options to use for printing the relations."
+    ),
 ):
     """
-    Print relations from the graph in a readable format.
-
-    Various options are available to customize the display. All options except for graph are optional, and the
-    default values are used if not specified.
+    Print relations from the graph in a readable format. Resolves entity IDs to names wherever possible.
 
     Args:
 
-        - graph: The knowledge graph to print entities from. Required.
-        - exclude_user: Whether to exclude the user from the entity list. Default is `True`.
-        - prologue: A string added before the entity list. Default is `None`.
-        - separator: The separator to use between list items (entities). Default is `\\n`.
-        - epilogue: A string added after the entity list. Default is `\\n`.
-        - md_links: Whether to use markdown-style links for the entities. Default is `True`.
-        - include_ids: Whether to include the IDs of the entities in the display. Default is `True`.
-        - include_types: Whether to include the types of the entities in the display. Default is `True`.
-        - include_observations: Whether to include observations of the entities in the display. Default is `False`.
-        - include_relations: Whether to include relations of the entities in the display. Default is `False`.
-        - indent: The number of spaces to indent the entity display. Default is `2`.
-        - ul: Whether to use a bulleted list. Default is `True`.
-        - ol: Whether to use a numbered list. Default is `False`.
-        - bullet: The bullet to use for the unordered list. Default is `-`.
-        - ordinal_separator: The separator to use between the ordinal and the entity. Default is `.`
+    - graph: The knowledge graph to print entities from. Required if relations is not provided.
+    - relations: The list of relations to print. Required if graph is not provided.
+    - options: The options to use for printing the relations. If not provided, default values will be used.
 
     Display format:
 
@@ -345,87 +349,125 @@ async def print_relations_from_graph(
       ...
     <epilogue is double newline>
     ```
-
-    Notes:
-
-        - `prologue` and `epilogue` strings should include newlines, unless inline display is desired
-        - `bullet` and `ordinal` are mutually exclusive
-        - `include_observations` and `include_relations` will select for items that are linked to the entity in question
-        - If a newline is not included in the `separator`, the list will print inline
-        - If both `md_links` and `include_ids` are `True`, the link will be the ID string e.g.: `[👤 John Doe](12345678)`
-        - If both `ul` and `ol` are `True` for some reason, an unordered list will be preferred
-        - `indent` is applied only to the entity list, not the prologue or epilogue
     """
-    if not graph:
-        raise ValueError("No graph provided to print relations from")
+    # Get an id:entity map for display
+    id_to_entity = await manager.get_entity_id_map()
+    user_info = await manager.get_user_info()
+
+    prologue = options.prologue
+    epilogue = options.epilogue
+    md_links = options.md_links
+    include_ids = options.include_ids
+    include_types = options.include_types
+    ind = options.indent
+    ul = options.ul
+    ol = False if ul else options.ol
+    bullet = options.bullet
+    os = options.ordinal_separator
+    separator = options.separator
+
     result = prologue
-    try:
-        relations = graph.relations
-        entities = graph.entities
-    except Exception as e:
-        raise ToolError(f"Failed to load relation data for printing: {e}")
-    try:
-        # Build ID -> Entity map for fast lookup
-        id_to_entity: dict[str, Entity] = {}
+
+    i = 1  # for ordered list ordinals
+
+    # Resolve options
+    if ol:
+        ord = str(i)
+    else:
+        ord = bullet
+        os = ""
+
+    for r in relations:
         try:
-            for ent in entities:
-                if isinstance(ent, Entity) and ent.id:
-                    id_to_entity[ent.id] = ent
-        except Exception:
-            pass
+            a: Entity | None = id_to_entity.get(r.from_id)
+            b: Entity | None = id_to_entity.get(r.to_id)
+            if not a or not isinstance(a, Entity):
+                raise ToolError("Failed to get 'from' entity from relation")
+            if not b or not isinstance(b, Entity):
+                raise ToolError("Failed to get 'to' entity from relation")
+        except Exception as e:
+            logger.error(f"Failed to get relation entities: {e}")
 
-        for r in relations:
-            try:
-                a: Entity | None = id_to_entity.get(r.from_id)
-                b: Entity | None = id_to_entity.get(r.to_id)
-                if not a or not isinstance(a, Entity):
-                    raise ToolError("Failed to get 'from' entity from relation")
-                if not b or not isinstance(b, Entity):
-                    raise ToolError("Failed to get 'to' entity from relation")
-            except Exception as e:
-                raise ToolError(f"Failed to get relation entities: {e}")
+        # If this is the user-linked entity, use the preferred name instead; if name is missing, use "unknown"
+        if a.name.lower().strip() == "__user__" or a.name.lower().strip() == "user":
+            a_name = user_info.preferred_name
+        else:
+            a_name = a.name if a else "unknown"
+        if b.name.lower().strip() == "__user__" or b.name.lower().strip() == "user":
+            b_name = user_info.preferred_name
+        else:
+            b_name = b.name if b else "unknown"
 
-            # If this is the user-linked entity, use the preferred name instead; if name is missing, use "unknown"
-            if a.name.lower().strip() == "__user__" or a.name.lower().strip() == "user":
-                a_name = graph.user_info.preferred_name
-            else:
-                a_name = a.name if a.name else "unknown"
-            if b.name.lower().strip() == "__user__" or b.name.lower().strip() == "user":
-                b_name = graph.user_info.preferred_name
-            else:
-                b_name = b.name if b.name else "unknown"
+        # Compose pre-entity string (list stuff like indentation, bullet, ordinal, etc.)
+        # Special case: if both ul and ol are False, omit pre-relation string
+        if not ul and not ol:
+            display_pre = ""
+        else:
+            display_pre: str = f"{ind}{ord}{os} "
 
-            # Compose strings
-            if md_links and include_ids:
-                link_from = f"[{a.icon_()}{a_name}]({a.id})"
-                link_to = f"[{b.icon_()}{b_name}]({b.id})"
-            elif md_links and not include_ids:
-                link_from = f"{a.icon_()}{a_name}"
-                link_to = f"{b.icon_()}{b_name}"
-            else:
-                link_from = f"{a.icon_()}{a_name}"
-                link_to = f"{b.icon_()}{b_name}"
-                if include_ids:
-                    link_from += f" ({a.id})"
-                    link_to += f" ({b.id})"
-            if include_types:
-                link_from += f" ({a.entity_type})"
-                link_to += f" ({b.entity_type})"
+        # Resolve entity properties
+        a_icon = a.icon_() or ""
+        b_icon = b.icon_() or ""
+        a_id = a.id if a else str(r.from_id)
+        b_id = b.id if b else str(r.to_id)
+        a_type = a.entity_type if a else "unknown"
+        b_type = b.entity_type if b else "unknown"
 
-            # Add to result
-            result += f"  - {link_from} {r.relation} {link_to}\n"
+        # Compose relation to and from strings
+        if md_links and include_ids:
+            link_from = f"[{a_icon}{a_name}]({a_id})"
+            link_to = f"[{b_icon}{b_name}]({b_id})"
+        elif md_links and not include_ids:
+            link_from = f"{a_icon}{a_name}"
+            link_to = f"{b_icon}{b_name}"
+        else:
+            link_from = f"{a_icon}{a_name}"
+            link_to = f"{b_icon}{b_name}"
+            if include_ids:
+                link_from += f" ({a_id})"
+                link_to += f" ({b_id})"
+        if include_types:
+            link_from += f" ({a_type})"
+            link_to += f" ({b_type})"
 
-        # Finally, add the epilogue
-        result += epilogue
+        # Compose entity string (entity icon, name, id, type)
+        display = f"{link_from} {r.relation} {link_to}"
 
-        return result
-    except Exception as e:
-        raise ToolError(f"Failed to print graph relations: {e}")
+        # Compose post-entity string (separator)
+        display_post = f"{separator}"
+
+        result += f"{display_pre}{display}{display_post}"
+        i += 1
+
+    # Finally, add the epilogue
+    result += epilogue
+
+    return result
+
+
+async def print_relations_between_entities(
+    entities: list[Entity] = Field(description="The list of entities to print."),
+    relations: list[Relation] = Field(description="The list of relations to print."),
+    options: PrintOptions = Field(
+        default=PrintOptions(), description="The options to use for printing the relations."
+    ),
+):
+    """
+    Print all the relations between a list of two or more entities in a readable format.
+
+    Args:
+
+    - entities: The list of entities to print. Required if relations is not provided.
+    - relations: The list of relations to print. Required if entities is not provided.
+    - options: The options to use for printing the relations. If not provided, default values will be used.
+    """
+
 
 def __this_is_a_fake_function_to_separate_sections_in_the_outline_in_cursor_do_not_use_me() -> None:
     pass
 
-@mcp.tool  # TODO: Split into read_user_info and read_graph tools
+
+@mcp.tool
 async def read_graph(
     exclude_user_info: bool = Field(
         default=False,
@@ -463,7 +505,7 @@ async def read_graph(
 
         try:
             if not exclude_user_info:
-                result += await _print_user_info(
+                result += await print_user_info(
                     graph, not exclude_observations, not exclude_relations
                 )
         except Exception as e:
@@ -473,17 +515,17 @@ async def read_graph(
         try:
             if not exclude_entities:
                 result += f"\n👤 You've made observations about {len(graph.entities)} entities:\n"
-                result += await print_entities_from_graph(graph)
+                result += await print_entities(graph)
         except Exception as e:
             raise ToolError(f"Error while printing entities: {e}")
 
         # Print all relations
         try:
             if not exclude_relations:
-                obs_result = await print_relations_from_graph(graph)
-                if obs_result:
+                rel_result = await print_relations(graph)
+                if rel_result:
                     result += f"\n🔗 You've learned about {len(graph.relations)} relations between these entities:\n"
-                    result += obs_result
+                    result += rel_result
         except Exception as e:
             raise ToolError(f"Error while printing relations: {e}")
         return result
@@ -505,7 +547,7 @@ async def read_user_info(include_observations: bool = False, include_relations: 
         if "default_user" in graph.user_info.model_dump().values():
             return "It looks like the user info hasn't been set yet! Update the user info using the update_user_info tool."
 
-        result_str = await _print_user_info(graph, include_observations, include_relations)
+        result_str = await print_user_info(graph, include_observations, include_relations)
         return result_str
     except Exception as e:
         raise ToolError(f"Failed to read user info: {e}")
@@ -695,48 +737,45 @@ async def add_observations(new_observations: list[ObservationRequest]):
     except Exception as e:
         raise ToolError(f"Failed to add observations: {e}")
 
-    try:
-        if not results or len(results) == 0:
-            return "Request successful; however, no new observations were added!"
-        elif len(results) == 1:
-            result = "Observation added:\n"
-        else:
-            result = f"Added {len(result)} observations:\n"
+    if not results or len(results) == 0:
+        return "Request successful; however, no new observations were added!"
+    elif len(results) == 1:
+        result = "Observation added:\n"
+    else:
+        result = f"Added {len(result)} observations:\n"
 
-        for r in results:
-            e = r.entity
-            result += f"{e.icon_()}{e.name} ({e.entity_type})\n"
+    for r in results:
+        e = r.entity
+        result += f"{e.icon_()}{e.name} ({e.entity_type})\n"
 
-            result += "  Observation(s): "
-            for o in r.added_observations:
-                result += f"  - {o.content} ({o.durability.value})\n"
-            result += "\n"
+        result += "  Observation(s): "
+        for o in r.added_observations:
+            result += f"  - {o.content} ({o.durability.value})\n"
+        result += "\n"
 
-        return result
-    except Exception as e:
-        raise ToolError(f"Failed to print observations: {e}")
+    return result
 
 
-@mcp.tool  # TODO: remove from interface and bury/automate in manager
-async def cleanup_outdated_observations():
-    """Remove observations that are likely outdated based on their durability and age.
+# @mcp.tool  # TODO: remove from interface and bury/automate in manager
+# async def cleanup_outdated_observations():
+#     """Remove observations that are likely outdated based on their durability and age.
 
-    Returns:
-        Summary of cleanup operation
-    """
-    try:
-        cleanup_result = await manager.cleanup_outdated_observations()
-        ent = cleanup_result.entities_processed_count
-        obs = cleanup_result.observations_removed_count
-        obs_detail = cleanup_result.removed_observations
-        result = (
-            "" if settings.no_emojis else "🧹 "
-        ) + f"Cleaned up {obs} observations from {ent} entities"
-        logger.info(result)
-        logger.debug(f"Removed observations: {obs_detail}")
-        return result
-    except Exception as e:
-        raise ToolError(f"Failed to cleanup observations: {e}")
+#     Returns:
+#         Summary of cleanup operation
+#     """
+#     try:
+#         cleanup_result = await manager.cleanup_outdated_observations()
+#         ent = cleanup_result.entities_processed_count
+#         obs = cleanup_result.observations_removed_count
+#         obs_detail = cleanup_result.removed_observations
+#         result = (
+#             "" if settings.no_emojis else "🧹 "
+#         ) + f"Cleaned up {obs} observations from {ent} entities"
+#         logger.info(result)
+#         logger.debug(f"Removed observations: {obs_detail}")
+#         return result
+#     except Exception as e:
+#         raise ToolError(f"Failed to cleanup observations: {e}")
 
 
 @mcp.tool
@@ -759,11 +798,11 @@ async def get_observations_by_durability(  # TODO: add other sort options, maybe
 
 
 @mcp.tool
-async def delete_entry(request: DeleteEntryRequest):  # TODO: deprecate!
+async def delete_entry(request: DeleteEntryRequest):  # TODO: deprecate! ...or not?
     """Unified deletion tool for observations, entities, and relations. Data must be a list of the appropriate object for each entry_type:
 
-    - 'entity': list of entity names or aliases
-    - 'observation': [{entity_name_or_alias, [observation content]}]
+    - 'entity': list of entity IDs
+    - 'observation': [{entity_id, [observation content]}]
     - 'relation': [{from_entity(name or alias), to_entity(name or alias), relation}]
 
     ***CRITICAL: THIS ACTION IS DESTRUCTIVE AND IRREVERSIBLE - ENSURE THAT THE USER CONSENTS PRIOR TO EXECUTION!!!***
@@ -774,17 +813,17 @@ async def delete_entry(request: DeleteEntryRequest):  # TODO: deprecate!
     try:
         if entry_type == "entity":
             try:
-                await manager.delete_entities(data or [])  # type: ignore[arg-type]
+                await manager.delete_entities(data or [])
             except Exception as e:
                 raise ToolError(f"Failed to delete entities: {e}")
             return "Entities deleted successfully"
 
         elif entry_type == "observation":
-            await manager.delete_observations(data or [])  # type: ignore[arg-type]
+            await manager.delete_observations(data or [])
             return "Observations deleted successfully"
 
         elif entry_type == "relation":
-            await manager.delete_relations(data or [])  # type: ignore[arg-type]
+            await manager.delete_relations(data or [])
             return "Relations deleted successfully"
 
         else:
@@ -877,7 +916,9 @@ async def update_user_info(  # NOTE: feels weird, re-evaluate
         - Email address(es): "john.doe@example.com", "john.doe@work.com"
     """
     if not preferred_name and not first_name and not nickname and not last_name:
-        raise ValueError("Either a preferred name, first name, last name, or nickname are required")
+        raise ValidationError(
+            "Either a preferred name, first name, last name, or nickname are required"
+        )
 
     new_user_info_dict = {
         "preferred_name": preferred_name,
@@ -923,53 +964,48 @@ async def search_nodes(  # TODO: improve search
 
 @mcp.tool
 async def open_nodes(
-    entity_names: list[str] = Field(description="List of entity names or aliases to retrieve"),
+    entity_names: list[str] | str | None = Field(
+        default=None,
+        description="List of entity names or aliases to retrieve",
+    ),
+    entity_ids: list[str | EntityID] | str | EntityID | None = Field(
+        default=None,
+        description="List of entity IDs to retrieve",
+    ),
 ):
     """
-    Open specific nodes (entities) in the knowledge graph by their names or aliases.
+    Open specific nodes (entities) in the knowledge graph by their IDs, names, or aliases.
 
     Args:
         entity_names: List of entity names or aliases to retrieve
+        entity_ids: List of entity IDs to retrieve
+
+    If both entity_names and entity_ids are provided, both will be used to filter the entities.
 
     Returns:
-        Retrieved node data - observations about the entity.
+        Data (observations) about the nodes (entities) and their relationships (relations) with other nodes in the graph.
     """
+
     try:
-        result = await manager.open_nodes(entity_names)
-
-        # Print the result
-        result_str = ""
-        # Build ID -> Entity map for relation rendering
-        id_to_entity: dict[str, Entity] = {}
-        for ent in (result.entities or []):
-            if isinstance(ent, Entity) and ent.id:
-                id_to_entity[ent.id] = ent
-
-        for e in result.entities:
-            result_str += f"Entity: {e.name} ({e.entity_type})\n"
-            result_str += "Observations:\n"
-            for o in e.observations:
-                result_str += f"  - {o.content} ({str(o.timestamp)}, {str(o.durability)})\n"
-            # Include relations involving this entity
-            for r in (result.relations or []):
-                if r.from_id == e.id or r.to_id == e.id:
-                    a = id_to_entity.get(r.from_id)
-                    b = id_to_entity.get(r.to_id)
-                    a_name = a.name if a and a.name else "unknown"
-                    b_name = b.name if b and b.name else "unknown"
-                    result_str += f"  - {a_name} {r.relation} {b_name}\n"
-        return result_str
+        opened_nodes, node_relations = await manager.open_nodes(entity_names, entity_ids)
     except Exception as e:
         raise ToolError(f"Failed to open nodes: {e}")
 
+    # Print the results
+    result_str = ""
+    result_str += await print_entities(entities=opened_nodes, options=PrintOptions())
+    result_str += await print_relations(relations=node_relations, options=PrintOptions())
+
+    return result_str
+
 
 @mcp.tool
-async def merge_entities(  # TODO: refactor
+async def merge_entities(
     new_entity_name: str = Field(
         description="Name of the new merged entity (must not conflict with an existing name or alias unless part of the merge)"
     ),
-    entity_names: list[str] | str = Field(
-        description="Names or aliases of entities to merge into the new entity"
+    entity_ids: list[EntityID | str] | EntityID | str = Field(
+        description="IDs of entities to merge into the new entity"
     ),
 ):
     """Merge a list of entities into a new entity with the provided name.
@@ -977,14 +1013,15 @@ async def merge_entities(  # TODO: refactor
     The manager will combine observations and update relations to point to the new entity.
     """
     try:
-        names: list[str] = [entity_names] if isinstance(entity_names, str) else entity_names
-        merged = await manager.merge_entities(new_entity_name, names)
-        return merged.model_dump()
+        entities: list[Entity] = await manager.get_entities(entity_ids)
+        merged = await manager.merge_entities(new_entity_name, entities)
     except Exception as e:
         raise ToolError(f"Failed to merge entities: {e}")
+    return_str = f"Successfully merged {len(entities)} entities into a new entity:\n"
+    return_str += print_entities(entities=[merged])
+    return return_str
 
 
-# --- UPDATE ENTITY TOOL ---
 @mcp.tool
 async def update_entity(
     identifier: str | None = Field(
