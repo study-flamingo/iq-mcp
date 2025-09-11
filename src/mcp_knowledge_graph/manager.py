@@ -833,10 +833,24 @@ class KnowledgeGraphManager:
         results: list[AddObservationResult] = []
 
         for request in requests:
-            # Find the entity by name or alias
-            entity = self._get_entity_by_name_or_alias(graph, request.entity_name)
+            # Resolve entity by ID first, else by name/alias; support 'user' shortcut in name
+            entity: Entity | None = None
+            try:
+                if getattr(request, "entity_id", None):
+                    entity = self._get_entity_by_id(graph, request.entity_id)  # type: ignore[arg-type]
+                if entity is None:
+                    name = (request.entity_name or "").strip()
+                    if name.lower() in {"user", "__user__"} and graph.user_info and graph.user_info.linked_entity_id:
+                        entity = self._get_entity_by_id(graph, graph.user_info.linked_entity_id)
+                    else:
+                        entity = self._get_entity_by_name_or_alias(graph, name)
+            except Exception as e:
+                logger.error(f"Error resolving entity for observations: {e}")
+                entity = None
             if entity is None:
-                logger.error(f"Entity with name {request.entity_name} not found")
+                logger.error(
+                    f"Entity not found for request (name='{getattr(request,'entity_name',None)}', id='{getattr(request,'entity_id',None)}')"
+                )
                 continue
 
             # Create observations with timestamps from the request
@@ -999,7 +1013,21 @@ class KnowledgeGraphManager:
         graph = await self._load_graph()
 
         for deletion in deletions:
-            entity = self._get_entity_by_name_or_alias(graph, deletion.entity_name)
+            # Resolve entity by ID first, else by name/alias; support 'user' shortcut in name
+            entity: Entity | None = None
+            try:
+                if getattr(deletion, "entity_id", None):
+                    entity = self._get_entity_by_id(graph, deletion.entity_id)  # type: ignore[arg-type]
+                if entity is None:
+                    name = (deletion.entity_name or "").strip()
+                    if name.lower() in {"user", "__user__"} and graph.user_info and graph.user_info.linked_entity_id:
+                        entity = self._get_entity_by_id(graph, graph.user_info.linked_entity_id)
+                    else:
+                        entity = self._get_entity_by_name_or_alias(graph, name)
+            except Exception as e:
+                logger.error(f"Error resolving entity for deletion: {e}")
+                entity = None
+
             if entity:
                 # Create set of observations to delete
                 to_delete = set(deletion.observations)

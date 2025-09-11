@@ -659,12 +659,14 @@ async def add_observations(new_observations: list[ObservationRequest]):
     Add observations about entities or the user (via the user-linked entity) to the knowledge graph.
 
     Args:
-      - new_observations: list of ObservationRequest objects
+      - new_observations: list of ObservationRequest objects. Each item may specify either
+        `entity_id` or `entity_name`. Special-case: `entity_name` may be "user" to target the
+        user-linked entity.
 
     Each observation must be a ObservationRequest object with the following properties:
 
-      - entity_name (str): Entity name (optional, deprecated)
-      - entity_id (str): Entity id (required), or 'user' for the user-linked entity
+      - entity_id (str, preferred) or entity_name (str): Target entity; if entity_name is 'user',
+        the user-linked entity is used
       - content (str): Observation content (required)
       - durability (Literal['temporary', 'short-term', 'long-term', 'permanent']): Durability of the observation (optional, defaults to 'short-term')
 

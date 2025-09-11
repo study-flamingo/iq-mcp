@@ -768,6 +768,12 @@ class ObservationRequest(BaseModel):
         title="Entity name",
         description="The name of the entity to add observations to",
     )
+    entity_id: EntityID | None = Field(
+        default=None,
+        title="Entity ID",
+        description="The ID of the entity to add observations to",
+        validation_alias=AliasChoices("entity_id", "id"),
+    )
     observations: list[Observation] = Field(
         ...,
         title="Observations",
@@ -854,21 +860,25 @@ class CreateRelationRequest(BaseModel):
 
     from_entity_id: EntityID | None = Field(
         title="Originating entity ID",
-        description="The name of the entity to create a relation from",
+        description="The ID of the entity to create a relation from",
+        validation_alias=AliasChoices("from_entity_id", "from_id", "fromId"),
     )
     to_entity_id: EntityID | None = Field(
         title="Destination entity ID",
-        description="The id of the entity to create a relation to",
+        description="The ID of the entity to create a relation to",
+        validation_alias=AliasChoices("to_entity_id", "to_id", "toId"),
     )
     from_entity_name: str | None = Field(
         default=None,
         title="Originating entity name",
         description="The name of the entity to create a relation from",
+        validation_alias=AliasChoices("from_entity_name", "from_name", "from"),
     )
     to_entity_name: str | None = Field(
         default=None,
         title="Destination entity name",
         description="The name of the entity to create a relation to",
+        validation_alias=AliasChoices("to_entity_name", "to_name", "to"),
     )
     relation: str = Field(
         ...,
@@ -916,6 +926,12 @@ class DeleteObservationRequest(BaseModel):
         title="Entity name",
         description="The name of the entity containing the observations",
     )
+    entity_id: EntityID | None = Field(
+        default=None,
+        title="Entity ID",
+        description="The ID of the entity containing the observations",
+        validation_alias=AliasChoices("entity_id", "id"),
+    )
     observations: list[str] = Field(
         ...,
         title="Observations",
@@ -926,60 +942,61 @@ class DeleteObservationRequest(BaseModel):
         return f"DeleteObservationRequest(entity_name={self.entity_name}, observations={self.observations})"
 
 
-class DeleteEntryRequest(BaseModel):
-    """Request model used to delete data from the knowledge graph.
+# DEPRECATED CLASSES
+# class DeleteEntryRequest(BaseModel):
+#     """Request model used to delete data from the knowledge graph.
 
-    Properties:
-        - 'entry_type' (str): must be one of: 'observation', 'entity', or 'relation'
-        - 'data' (list[AddObservationRequest] | list[str] | list[Relation]): must be a list of the appropriate object for each entry_type:
-            - entry_type = 'entity': list of entity names
-            - entry_type = 'observation': [{entity_name, [observation content]}]
-            - entry_type = 'relation': [{from_entity, to_entity, relation}]
-    """
+#     Properties:
+#         - 'entry_type' (str): must be one of: 'observation', 'entity', or 'relation'
+#         - 'data' (list[AddObservationRequest] | list[str] | list[Relation]): must be a list of the appropriate object for each entry_type:
+#             - entry_type = 'entity': list of entity names
+#             - entry_type = 'observation': [{entity_name, [observation content]}]
+#             - entry_type = 'relation': [{from_entity, to_entity, relation}]
+#     """
 
-    entry_type: Literal["observation", "entity", "relation"] = Field(
-        description="Type of entry to create: 'observation', 'entity', or 'relation'"
-    )
-    data: list[ObservationRequest] | list[str] | list[Relation] | None = Field(
-        description="""A list of the appropriate object for the given entry_type.
+#     entry_type: Literal["observation", "entity", "relation"] = Field(
+#         description="Type of entry to create: 'observation', 'entity', or 'relation'"
+#     )
+#     data: list[ObservationRequest] | list[str] | list[Relation] | None = Field(
+#         description="""A list of the appropriate object for the given entry_type.
         
-        - entry_type = 'entity': list of entity names
-        - entry_type = 'observation': list of DeleteObservationRequest objects
-        - entry_type = 'relation': list of Relation objects
-        """
-    )
+#         - entry_type = 'entity': list of entity names
+#         - entry_type = 'observation': list of DeleteObservationRequest objects
+#         - entry_type = 'relation': list of Relation objects
+#         """
+#     )
 
 
-class CreateEntryRequest(BaseModel):
-    """Request model used to validate and add data to the knowledge graph.
+# class CreateEntryRequest(BaseModel):
+#     """Request model used to validate and add data to the knowledge graph.
 
-    Properties:
-        - 'entry_type' (str): must be one of: 'observation', 'entity', or 'relation'
-        - 'data' (list[ObservationRequest] | list[Entity] | list[Relation])
+#     Properties:
+#         - 'entry_type' (str): must be one of: 'observation', 'entity', or 'relation'
+#         - 'data' (list[ObservationRequest] | list[Entity] | list[Relation])
 
-    'data' must be a list of the appropriate object for each entry_type:
+#     'data' must be a list of the appropriate object for each entry_type:
 
-        - observation: [{'entity_name': 'entity_name', 'content': list[{'content':'observation_content', 'durability': Literal['temporary', 'short-term', 'long-term', 'permanent']}]}]  (timestamp will be automatically added)
-        - entity: [{'name': 'entity_name', 'entity_type': entity type, 'observations': [{'content': str, 'durability': Literal['temporary', 'short-term', 'long-term', 'permanent']}]}]
-        - relation: [{'from': 'entity_name', 'to': 'entity_name', 'relation': 'relation'}]
-    """
+#         - observation: [{'entity_name': 'entity_name', 'content': list[{'content':'observation_content', 'durability': Literal['temporary', 'short-term', 'long-term', 'permanent']}]}]  (timestamp will be automatically added)
+#         - entity: [{'name': 'entity_name', 'entity_type': entity type, 'observations': [{'content': str, 'durability': Literal['temporary', 'short-term', 'long-term', 'permanent']}]}]
+#         - relation: [{'from': 'entity_name', 'to': 'entity_name', 'relation': 'relation'}]
+#     """
 
-    model_config = ConfigDict(
-        deprecated=True,
-        populate_by_name=True,
-        validate_by_name=True,
-    )
-    entry_type: Literal["observation", "entity", "relation"] = Field(
-        description="Type of entry to create: 'observation', 'entity', or 'relation'"
-    )
-    data: list[ObservationRequest] | list[Entity] | list[Relation] = Field(
-        description="""Data to be added to the knowledge graph. Expected format depends on the entry_type:
+#     model_config = ConfigDict(
+#         deprecated=True,
+#         populate_by_name=True,
+#         validate_by_name=True,
+#     )
+#     entry_type: Literal["observation", "entity", "relation"] = Field(
+#         description="Type of entry to create: 'observation', 'entity', or 'relation'"
+#     )
+#     data: list[ObservationRequest] | list[Entity] | list[Relation] = Field(
+#         description="""Data to be added to the knowledge graph. Expected format depends on the entry_type:
         
-        - observation: list of ObservationRequest objects
-        - entity: list of Entity objects
-        - relation: list of Relation objects
-        """
-    )
+#         - observation: list of ObservationRequest objects
+#         - entity: list of Entity objects
+#         - relation: list of Relation objects
+#         """
+#     )
 
 
 # class CreateEntityResult(BaseModel):
