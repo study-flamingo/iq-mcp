@@ -853,11 +853,11 @@ class KnowledgeGraphManager:
 
         for request in requests:
             # Resolve entity by ID first, else by name/alias; support 'user' shortcut in name
-            entity: Entity | None = None
             try:
-                if getattr(request, "entity_id", None):
-                    entity = self._get_entity_by_id(graph, request.entity_id)  # type: ignore[arg-type]
-                if entity is None:
+                entity: Entity | None = None
+                if request.entity_id:
+                    entity = self._get_entity_by_id(graph, request.entity_id)
+                elif request.entity_name:
                     name = (request.entity_name or "").strip()
                     if (
                         name.lower() in {"user", "__user__"}
@@ -867,32 +867,29 @@ class KnowledgeGraphManager:
                         entity = self._get_entity_by_id(graph, graph.user_info.linked_entity_id)
                     else:
                         entity = self._get_entity_by_name_or_alias(graph, name)
+                if not entity:
+                    logger.error(
+                        f"Entity not found for request (name='{request.entity_name}', id='{request.entity_id}')"
+                    )
+                    continue
             except Exception as e:
-                logger.error(f"Error resolving entity for observations: {e}")
-                entity = None
-            if entity is None:
-                logger.error(
-                    f"Entity not found for request (name='{getattr(request, 'entity_name', None)}', id='{getattr(request, 'entity_id', None)}')"
-                )
+                logger.error(f"Error resolving entity to add observations: {e}")
                 continue
 
             # Create observations with timestamps from the request
-            observations_list: list[Observation] = []
+
+            observations: list[str] = [old_obs.content for old_obs in entity.observations] or []
+            new_observations: list[Observation] = []
             for o in request.observations:
-                observations_list.append(Observation.from_values(o.content.strip(), o.durability))
+                obs = Observation.from_values(o.content, o.durability)
+                # Avoid duplicates
+                if obs.content not in observations:
+                    new_observations.append(obs)
+            else:
+                new_observations.append(obs)
+            entity.observations.extend(new_observations)
 
-            # Get existing observation contents for duplicate checking
-            existing_contents = {obs.content for obs in entity.observations}
-
-            # Filter out duplicates
-            unique_new_obs = [
-                obs for obs in observations_list if obs.content not in existing_contents
-            ]
-
-            # Add new observations
-            entity.observations.extend(unique_new_obs)
-
-            results.append(AddObservationResult(entity=entity, added_observations=unique_new_obs))
+            results.append(AddObservationResult(entity=entity, added_observations=new_observations))
 
         await self._save_graph(graph)
         return results

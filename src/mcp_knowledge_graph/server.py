@@ -701,34 +701,35 @@ async def add_observations(new_observations: list[ObservationRequest]):
     Add observations about entities or the user (via the user-linked entity) to the knowledge graph.
 
     Args:
-      - new_observations: list of ObservationRequest objects. Each item may specify either
-        `entity_id` or `entity_name`. Special-case: `entity_name` may be "user" to target the
-        user-linked entity.
+
+    - new_observations: list of ObservationRequest objects. Each item may specify either
+    `entity_id` or `entity_name`. Special-case: `entity_name` may be "user" to target the
+    user-linked entity.
 
     Each observation must be a ObservationRequest object with the following properties:
 
-      - entity_id (str, preferred) or entity_name (str): Target entity; if entity_name is 'user',
-        the user-linked entity is used
-      - content (str): Observation content (required)
-      - durability (Literal['temporary', 'short-term', 'long-term', 'permanent']): Durability of the observation (optional, defaults to 'short-term')
+    - entity_id (str, preferred) or entity_name (str): Target entity; if entity_name is 'user',
+      the user-linked entity is used
+    - content (str): Observation content (required)
+    - durability (Literal['temporary', 'short-term', 'long-term', 'permanent']): Durability of the observation (optional, defaults to 'short-term')
 
     Either entity_name or entity_id must be provided. 'entity_name' is deprecated and will be removed in a future version.
 
-    Observation content must be lowercase, in active voice, exclude the 'from' entity, and concise. Examples:
+    Observation `content` must be lowercase, in active voice, exclude the 'from' entity, and concise. Examples:
 
-      - "likes chicken"
-      - "enjoys long walks on the beach"
-      - "can ride a bike with no handlebars"
-      - "wants to be a movie star"
-      - "dropped out of college to pursue a career in underwater basket weaving"
+    - "likes chicken"
+    - "enjoys long walks on the beach"
+    - "can ride a bike with no handlebars"
+    - "wants to be a movie star"
+    - "dropped out of college to pursue a career in underwater basket weaving"
 
-    Durability determines how long the observation is kept in the knowledge graph and should reflect
+    `durability` determines how long the observation is kept in the knowledge graph and should reflect
     the expected amount of time the observation is relevant.
 
-      - 'temporary': The observation is only relevant for a short period of time (1 month)
-      - 'short-term': The observation is relevant for a few months (3 months).
-      - 'long-term': The observation is relevant for a few months to a year. (1 year)
-      - 'permanent': The observation is relevant for a very long time, or indefinitely. (never expires)
+    - 'temporary': The observation is only relevant for a short period of time (1 month)
+    - 'short-term': The observation is relevant for a few months (3 months).
+    - 'long-term': The observation is relevant for a few months to a year. (1 year)
+    - 'permanent': The observation is relevant for a very long time, or indefinitely. (never expires)
 
     Observations added to non-existent entities will result in the creation of the entity.
     """
@@ -740,17 +741,15 @@ async def add_observations(new_observations: list[ObservationRequest]):
     if not results or len(results) == 0:
         return "Request successful; however, no new observations were added!"
     elif len(results) == 1:
-        result = "Observation added:\n"
+        result = f"Observations added to 1 entity:\n"
     else:
-        result = f"Added {len(result)} observations:\n"
+        result = f"Observations added to {len(results)} entities:\n"
 
     for r in results:
         e = r.entity
-        result += f"{e.icon_()}{e.name} ({e.entity_type})\n"
-
-        result += "  Observation(s): "
+        result += print_entities(entities=[e])
         for o in r.added_observations:
-            result += f"  - {o.content} ({o.durability.value})\n"
+            result += f"- {o.content} ({o.durability.value})\n"
         result += "\n"
 
     return result

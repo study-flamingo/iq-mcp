@@ -131,6 +131,14 @@ class Observation(BaseModel):
         record = self.model_dump()
         return record
 
+    def __str__(self) -> str:
+        """Return the observation content."""
+        return f"{self.content}"
+
+    def __eq__(self, other: "Observation") -> bool:
+        """Check if the observation is equal to another observation."""
+        return self.content == other.content and self.durability == other.durability
+
 
 class Entity(BaseModel):
     """
