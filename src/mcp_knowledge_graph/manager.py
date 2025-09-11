@@ -1285,3 +1285,130 @@ class KnowledgeGraphManager:
         graph.user_info = validated
         await self._save_graph(graph)
         return validated
+
+    async def update_entity(
+        self,
+        identifier: str | None = None,
+        entity_id: str | None = None,
+        name: str | None = None,
+        entity_type: str | None = None,
+        aliases: list[str] | None = None,
+        icon: str | None = None,
+        merge_aliases: bool = True,
+    ) -> Entity:
+        """
+        Update mutable properties of a single entity.
+
+        Args:
+            identifier: Canonical name or alias of the entity to update. Used if entity_id not provided.
+            entity_id: ID of the entity to update. Takes precedence over identifier when provided.
+            name: New canonical name for the entity
+            entity_type: New type for the entity
+            aliases: Aliases to add or replace (based on merge_aliases)
+            icon: New emoji icon. Use empty string to clear
+            merge_aliases: When True, merge provided aliases into existing list; when False, replace list
+
+        Returns:
+            The updated Entity
+
+        Raises:
+            KnowledgeGraphException or ValueError on invalid input or conflicts
+        """
+        graph = await self._load_graph()
+
+        # Locate entity
+        target: Entity | None = None
+        try:
+            if entity_id:
+                target = self._get_entity_by_id(graph, entity_id)
+            else:
+                if not identifier:
+                    raise ValueError("Either entity_id or identifier is required")
+                target = self._get_entity_by_name_or_alias(graph, identifier)
+        except Exception as e:
+            raise KnowledgeGraphException(f"Error locating entity: {e}")
+
+        if not target:
+            raise ValueError("Entity not found")
+
+        # Build fast lookups excluding the target entity
+        other_entities = [e for e in graph.entities if e is not target]
+        existing_names_lc = {e.name.strip().lower() for e in other_entities}
+        existing_aliases_lc: set[str] = set()
+        for e in other_entities:
+            try:
+                for a in e.aliases or []:
+                    if isinstance(a, str):
+                        existing_aliases_lc.add(a.strip().lower())
+            except Exception:
+                pass
+
+        # Apply name change
+        if name is not None:
+            new_name = (name or "").strip()
+            if not new_name:
+                raise ValueError("Entity name must not be empty")
+            # Prevent conflicts with other entities' names or aliases
+            if new_name.strip().lower() in existing_names_lc or new_name.strip().lower() in existing_aliases_lc:
+                raise KnowledgeGraphException(
+                    f"Cannot rename entity to '{new_name}': name conflicts with an existing entity or alias"
+                )
+            target.name = new_name
+
+        # Apply type change
+        if entity_type is not None:
+            new_type = (entity_type or "").strip()
+            if not new_type:
+                raise ValueError("Entity type must not be empty")
+            target.entity_type = new_type
+
+        # Apply icon change
+        if icon is not None:
+            # Allow clearing by empty string
+            target.icon = icon
+
+        # Apply alias updates
+        if aliases is not None:
+            # Normalize provided aliases
+            normalized_incoming: list[str] = [str(a).strip() for a in aliases if str(a).strip()]
+
+            # Ensure no incoming alias conflicts with other entities' canonical names or aliases
+            for a in normalized_incoming:
+                a_lc = a.lower()
+                if a_lc in existing_names_lc or a_lc in existing_aliases_lc:
+                    raise KnowledgeGraphException(
+                        f"Cannot set alias '{a}': conflicts with an existing entity or alias"
+                    )
+
+            if merge_aliases:
+                merged: list[str] = []
+                seen: set[str] = set()
+                # Start with current aliases
+                for a in (target.aliases or []):
+                    a_norm = (a or "").strip()
+                    if not a_norm:
+                        continue
+                    a_lc = a_norm.lower()
+                    if a_lc not in seen:
+                        seen.add(a_lc)
+                        merged.append(a_norm)
+                # Add incoming
+                for a in normalized_incoming:
+                    a_lc = a.lower()
+                    if a_lc not in seen:
+                        seen.add(a_lc)
+                        merged.append(a)
+                target.aliases = [a for a in merged if a.lower() != target.name.strip().lower()]
+            else:
+                # Replace aliases entirely
+                target.aliases = [a for a in normalized_incoming if a.lower() != target.name.strip().lower()]
+
+        # Final validation step for updated entity
+        try:
+            self._validate_entity(target, graph)
+        except Exception as e:
+            raise KnowledgeGraphException(f"Updated entity failed validation: {e}")
+
+        # Persist changes
+        await self._save_graph(graph)
+        return target

@@ -6,6 +6,7 @@ knowledge graph operations as tools for LLM integration using FastMCP 2.11.
 """
 
 import asyncio
+import json
 from datetime import tzinfo
 from fastmcp import FastMCP
 from pydantic import Field
@@ -421,6 +422,8 @@ async def print_relations_from_graph(
     except Exception as e:
         raise ToolError(f"Failed to print graph relations: {e}")
 
+def __this_is_a_fake_function_to_separate_sections_in_the_outline_in_cursor_do_not_use_me() -> None:
+    pass
 
 @mcp.tool  # TODO: Split into read_user_info and read_graph tools
 async def read_graph(
@@ -977,6 +980,76 @@ async def merge_entities(  # TODO: refactor
         return merged.model_dump()
     except Exception as e:
         raise ToolError(f"Failed to merge entities: {e}")
+
+
+# --- UPDATE ENTITY TOOL ---
+@mcp.tool
+async def update_entity(
+    identifier: str | None = Field(
+        default=None,
+        description="Entity name or alias to identify the target entity (used if entity_id not provided)",
+    ),
+    entity_id: str | None = Field(
+        default=None,
+        description="ID of the target entity (preferred over identifier if provided)",
+    ),
+    name: str | None = Field(default=None, description="New canonical name for the entity"),
+    entity_type: str | None = Field(default=None, description="New type for the entity"),
+    aliases: str | list[str] | None = Field(
+        default=None,
+        description="Aliases to set (merged by default; set merge_aliases=false to replace)",
+    ),
+    icon: str | None = Field(
+        default=None,
+        description="Emoji icon to set for the entity; use empty string to clear",
+    ),
+    merge_aliases: bool = Field(
+        default=True,
+        description="When true, merge provided aliases; when false, replace alias list",
+    ),
+):
+    """Update fields on an existing entity by ID or name/alias.
+
+    Provide at least one of: `name`, `entity_type`, `aliases`, or `icon`.
+    """
+    try:
+        if name is None and entity_type is None and aliases is None and icon is None:
+            raise ValidationError("No updates provided")
+
+        # Normalize aliases to a list[str] if provided as a string (e.g., stringified JSON array)
+        aliases_normalized: list[str] | None
+        if isinstance(aliases, str):
+            try:
+                parsed = json.loads(aliases)
+                if isinstance(parsed, list):
+                    aliases_normalized = [str(a) for a in parsed]
+                else:
+                    # Fallback: comma-separated string
+                    aliases_normalized = [s.strip() for s in aliases.split(",") if s.strip()]
+            except Exception:
+                aliases_normalized = [s.strip() for s in aliases.split(",") if s.strip()]
+        else:
+            aliases_normalized = aliases
+
+        updated = await manager.update_entity(
+            identifier=identifier,
+            entity_id=entity_id,
+            name=name,
+            entity_type=entity_type,
+            aliases=aliases_normalized,
+            icon=icon,
+            merge_aliases=merge_aliases,
+        )
+
+        # Build a concise human-readable summary
+        result = f"Updated entity: {updated.icon_()}{updated.name} ({updated.entity_type})\n"
+        if updated.aliases:
+            result += "  Aliases: " + ", ".join(updated.aliases) + "\n"
+        return result
+    except (KnowledgeGraphException, ValueError) as e:
+        raise ToolError(f"Failed to update entity: {e}")
+    except Exception as e:
+        raise ToolError(f"Unexpected error during entity update: {e}")
 
 
 # ----- DEBUG/EXPERIMENTAL TOOLS -----#
