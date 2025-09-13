@@ -670,13 +670,13 @@ class KnowledgeGraphManager:
         except Exception as e:
             raise RuntimeError(f"Failed to save graph: {e}")
 
-    async def _get_entity_id_map(self, graph: KnowledgeGraph = None) -> dict[EntityID, list[str]]:
+    async def _get_entity_id_map(self, graph: KnowledgeGraph) -> dict[EntityID, Entity]:
         """
         (Internal) Returns a map of entity IDs to entity names, including aliases.
 
-        Map format: dict[EntityID(str), list[str]]
+        Map format: dict[EntityID(str), Entity]
         """
-        if isinstance(graph, KnowledgeGraph):
+        if graph:
             try:
                 entities_list = graph.entities or None
             except Exception as e:
@@ -687,19 +687,18 @@ class KnowledgeGraphManager:
         entity_id_map = {}
         for e in entities_list or []:
             if e.id:
-                names = [e.name]
-                names.extend(e.aliases or [])
-                entity_id_map[e.id] = names
+                entity_id_map[e.id] = e
             else:
                 logger.error(f"Entity {e.name} has no ID, skipping")
 
         return entity_id_map
 
-    async def get_entity_id_map(self) -> dict[EntityID, list[str]]:
+    async def get_entity_id_map(self, graph: KnowledgeGraph | None = None) -> dict[EntityID, Entity]:
         """
-        Returns a simplified map of entity IDs to entity names, including aliases.
+        Returns a map of entity IDs to entity objects from the provided knowledge graph or the default graph from the manager.
         """
-        graph = await self._load_graph()
+        if graph is None:
+            graph = await self._load_graph()
         return await self._get_entity_id_map(graph)
 
     async def create_entities(

@@ -84,6 +84,7 @@ class PrintOptions:
     - `indent` is applied only to the entity list, not the prologue or epilogue
     """
 
+    exclude_user: bool = True
     prologue: str = ""
     separator: str = "\n"
     epilogue: str = "\n\n"
@@ -101,15 +102,34 @@ class PrintOptions:
 
 #### Helper functions ####
 async def print_user_info(
-    graph: KnowledgeGraph, include_observations: bool = False, include_relations: bool = False
+    graph: KnowledgeGraph | None = None, include_observations: bool = False, include_relations: bool = False, options: PrintOptions = PrintOptions()
 ):
-    """Get the user's info from the knowledge graph and print to a string.
+    """Get the user's info from the provided knowledge graph (or the default graph from the manager) and print to a string.
 
     Args:
+      - graph: The knowledge graph to print user info from. Will load default graph from manager if not provided.
       - include_observations: Include observations related to the user in the response.
       - include_relations: Include relations related to the user in the response.
+      - options: The options to use for printing the user info. If not provided, default values will be used.
     """
-    logger.setLevel("DEBUG")
+    
+    if graph is None:
+        graph = await manager.read_graph()
+    entity_id_map = await manager.get_entity_id_map(graph)
+    
+    # Resolve options
+    prologue = options.prologue
+    separator = options.separator
+    indent = options.indent
+    ul = options.ul
+    ol = False if ul else options.ol
+    bullet = options.bullet
+    ordinal_separator = options.ordinal_separator
+    
+    ind = " " * indent if indent > 0 else ""
+    os = ordinal_separator
+    ord = "" if ol else bullet
+    
     try:
         # Compose a sensible display name for the user, based on available data and preferences
         last_name = graph.user_info.last_name or ""
@@ -125,20 +145,18 @@ async def print_user_info(
         prefixes = graph.user_info.prefixes or []
         suffixes = graph.user_info.suffixes or []
         names = graph.user_info.names or [preferred_name]
-
     except Exception as e:
         raise ToolError(f"Failed to load user info: {e}")
+
     linked_entity = None
     if linked_entity_id:
-        linked_entity = await manager.get_entity_by_id(linked_entity_id)
+        linked_entity = entity_id_map.get(linked_entity_id, None)
     if not linked_entity:
-        logger.warning("User-linked entity not found; proceeding without observations section")
+        logger.error("User-linked entity not found; proceeding without observations section")
 
+    result = prologue
     try:
         # Start with printing the user's info
-        result = (
-            "" if settings.no_emojis else "🧠 "
-        ) + "You remember the following information about the user:\n"
         result += f"**{preferred_name}** ({names[0]})\n"
         if middle_names:
             result += f"Middle name(s): {', '.join(middle_names)}\n"
@@ -153,7 +171,7 @@ async def print_user_info(
         if names[1:]:
             result += "May also go by:\n"
             for name in names[1:]:
-                result += f"  - {name}\n"
+                result += f"{ind}{ord}{os} {name}\n"
         if emails:
             result += f"Email addresses: {', '.join(emails)}\n"
 
@@ -169,7 +187,7 @@ async def print_user_info(
                 ) + "Observations (times in UTC):\n"
                 for o in linked_entity.observations:
                     ts = o.timestamp.strftime("%Y-%m-%d %H:%M:%S")
-                    result += f"  - {o.content} ({ts}, {o.durability.value})\n"
+                    result +=   f"{ind}{ord}{os} {o.content} ({ts}, {o.durability.value}{separator}"
             else:
                 pass  # No observations found in user-linked entity
     except Exception as e:
@@ -179,22 +197,22 @@ async def print_user_info(
     try:
         if include_relations:
             for r in graph.relations:
-                ents: tuple[
-                    Entity | None, Entity | None
-                ] = await manager.get_entities_from_relation(r)
-                if not isinstance(ents[0], Entity) or not isinstance(ents[1], Entity):
+                # skip if either entity is not found or not the user-linked entity
+                a: Entity | None = entity_id_map.get(r.from_id, None)
+                b: Entity | None = entity_id_map.get(r.to_id, None)
+                if not a or not b:
                     logger.error(f"Failed to get entities from relation: {str(r)[:20]}...")
                     continue
-                else:
-                    a: Entity = ents[0]
-                    b: Entity = ents[1]
-
-                # Special case for user-linked entity
-                if r.from_id == linked_entity_id:
+                elif linked_entity_id not in [a.id, b.id]:
+                    logger.debug(f"User-linked entity not found in relation {str(r)[:20]} - skipping")
+                    continue
+                
+                # replace the user-linked entity name with the user's preferred name
+                if linked_entity_id == a.id:
                     from_record = f"{preferred_name} (user)"
                 else:
                     from_record = f"{a.icon_()}{a.name} ({a.entity_type})"
-                if r.to_id == linked_entity_id:
+                if linked_entity_id == b.id:
                     to_record = f"{preferred_name} (user)"
                 else:
                     to_record = f"{b.icon_()}{b.name} ({b.entity_type})"
@@ -206,7 +224,7 @@ async def print_user_info(
         raise ToolError(f"Failed to print user relations: {e}")
 
 
-async def print_entities(entities: list[Entity], options: PrintOptions = PrintOptions()):
+async def print_entities(graph: KnowledgeGraph | None = None, entities: list[Entity] | None = None, options: PrintOptions = PrintOptions()):
     """
     Print entities data from a list of entities in a readable format.
 
@@ -246,6 +264,11 @@ async def print_entities(entities: list[Entity], options: PrintOptions = PrintOp
         - `indent` is applied only to the entity list, not the prologue or epilogue
     """
 
+    if not graph:
+        graph = await manager.read_graph()
+    if not entities:
+        entities = graph.entities
+
     exclude_user = options.exclude_user
     prologue = options.prologue
     separator = options.separator
@@ -262,9 +285,9 @@ async def print_entities(entities: list[Entity], options: PrintOptions = PrintOp
     result = ""
 
     # Resolve options
-    ind: str = " " * indent
+    ind = " " * indent if indent > 0 else ""
     os = ordinal_separator
-    ord: str = "" if ol else bullet
+    ord = "" if ol else bullet
 
     # Start rendering
     result = prologue
@@ -321,18 +344,17 @@ async def print_entities(entities: list[Entity], options: PrintOptions = PrintOp
 
 
 async def print_relations(
-    relations: list[Relation] = Field(description="The list of relations to print."),
-    options: PrintOptions = Field(
-        default=PrintOptions(), description="The options to use for printing the relations."
-    ),
-):
+    graph: KnowledgeGraph | None = None,
+    relations: list[Relation] | None = None,
+    options: PrintOptions = PrintOptions(),
+) -> str:
     """
     Print relations from the graph in a readable format. Resolves entity IDs to names wherever possible.
 
     Args:
 
-    - graph: The knowledge graph to print entities from. Required if relations is not provided.
-    - relations: The list of relations to print. Required if graph is not provided.
+    - graph: The knowledge graph to print relations from. Required if relations is not provided.
+    - relations: The list of relations to print. Required.
     - options: The options to use for printing the relations. If not provided, default values will be used.
 
     Display format:
@@ -350,16 +372,19 @@ async def print_relations(
     <epilogue is double newline>
     ```
     """
-    # Get an id:entity map for display
-    id_to_entity = await manager.get_entity_id_map()
-    user_info = await manager.get_user_info()
+    if not graph:
+        graph = await manager.read_graph()
+    if not relations:
+        relations = graph.relations
+    entity_id_map = await manager.get_entity_id_map(graph)
+    user_info = graph.user_info
 
     prologue = options.prologue
     epilogue = options.epilogue
     md_links = options.md_links
     include_ids = options.include_ids
     include_types = options.include_types
-    ind = options.indent
+    indent = options.indent
     ul = options.ul
     ol = False if ul else options.ol
     bullet = options.bullet
@@ -368,9 +393,10 @@ async def print_relations(
 
     result = prologue
 
-    i = 1  # for ordered list ordinals
-
     # Resolve options
+    i = 1  # for ordered list ordinals
+    ind = " " * indent if indent > 0 else ""  # no negatives allowed
+
     if ol:
         ord = str(i)
     else:
@@ -379,24 +405,43 @@ async def print_relations(
 
     for r in relations:
         try:
-            a: Entity | None = id_to_entity.get(r.from_id)
-            b: Entity | None = id_to_entity.get(r.to_id)
-            if not a or not isinstance(a, Entity):
-                raise ToolError("Failed to get 'from' entity from relation")
-            if not b or not isinstance(b, Entity):
-                raise ToolError("Failed to get 'to' entity from relation")
+            a = entity_id_map.get(r.from_id, None)
+            b = entity_id_map.get(r.to_id, None)
         except Exception as e:
-            logger.error(f"Failed to get relation entities: {e}")
+            raise ToolError(f"Failed to get relation entities: {e}")
+        if not a or not isinstance(a, Entity):
+            logger.error(f"Failed to get 'from' entity ({r.from_id}) from relation")
+        if not b or not isinstance(b, Entity):
+            logger.error(f"Failed to get 'to' entity ({r.to_id}) from relation")
 
         # If this is the user-linked entity, use the preferred name instead; if name is missing, use "unknown"
-        if a.name.lower().strip() == "__user__" or a.name.lower().strip() == "user":
-            a_name = user_info.preferred_name
+        if a:
+            if a.name.lower().strip() == "__user__" or a.name.lower().strip() == "user":
+                a_name = user_info.preferred_name + " (user)"
+            else:
+                a_name = a.name
+            a_icon = a.icon_()
+            a_id = a.id
+            a_type = a.entity_type
         else:
-            a_name = a.name if a else "unknown"
-        if b.name.lower().strip() == "__user__" or b.name.lower().strip() == "user":
-            b_name = user_info.preferred_name
+            a_name = "unknown"
+            a_icon = ""
+            a_id = str(r.from_id)
+            a_type = "unknown"
+        if b:
+            if b.name.lower().strip() == "__user__" or b.name.lower().strip() == "user":
+                b_name = user_info.preferred_name
+            else:
+                b_name = b.name
+            b_icon = b.icon_()
+            b_id = b.id
+            b_type = b.entity_type
+
         else:
-            b_name = b.name if b else "unknown"
+            b_name = "unknown"
+            b_icon = ""
+            b_id = str(r.to_id)
+            b_type = "unknown"
 
         # Compose pre-entity string (list stuff like indentation, bullet, ordinal, etc.)
         # Special case: if both ul and ol are False, omit pre-relation string
@@ -406,12 +451,7 @@ async def print_relations(
             display_pre: str = f"{ind}{ord}{os} "
 
         # Resolve entity properties
-        a_icon = a.icon_() or ""
-        b_icon = b.icon_() or ""
-        a_id = a.id if a else str(r.from_id)
-        b_id = b.id if b else str(r.to_id)
-        a_type = a.entity_type if a else "unknown"
-        b_type = b.entity_type if b else "unknown"
+        
 
         # Compose relation to and from strings
         if md_links and include_ids:
@@ -446,12 +486,10 @@ async def print_relations(
 
 
 async def print_relations_between_entities(
-    entities: list[Entity] = Field(description="The list of entities to print."),
-    relations: list[Relation] = Field(description="The list of relations to print."),
-    options: PrintOptions = Field(
-        default=PrintOptions(), description="The options to use for printing the relations."
-    ),
-):
+    entities: list[Entity],
+    relations: list[Relation],
+    options: PrintOptions = PrintOptions()
+) -> str:
     """
     Print all the relations between a list of two or more entities in a readable format.
 
@@ -515,7 +553,7 @@ async def read_graph(
         try:
             if not exclude_entities:
                 result += f"\n👤 You've made observations about {len(graph.entities)} entities:\n"
-                result += await print_entities(graph)
+                result += await print_entities(graph.entities)
         except Exception as e:
             raise ToolError(f"Error while printing entities: {e}")
 
@@ -543,14 +581,10 @@ async def read_user_info(include_observations: bool = False, include_relations: 
       - include_relations: Include relations related to the user in the response.
     """
     try:
-        graph = await manager.read_graph()
-        if "default_user" in graph.user_info.model_dump().values():
-            return "It looks like the user info hasn't been set yet! Update the user info using the update_user_info tool."
-
-        result_str = await print_user_info(graph, include_observations, include_relations)
-        return result_str
+        result_str = await print_user_info(include_observations, include_relations)
     except Exception as e:
         raise ToolError(f"Failed to read user info: {e}")
+    return result_str
 
 
 @mcp.tool
@@ -992,8 +1026,8 @@ async def open_nodes(
 
     # Print the results
     result_str = ""
-    result_str += await print_entities(entities=opened_nodes, options=PrintOptions())
-    result_str += await print_relations(relations=node_relations, options=PrintOptions())
+    result_str += await print_entities(entities=opened_nodes)
+    result_str += await print_relations(relations=node_relations)
 
     return result_str
 
