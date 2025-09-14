@@ -354,6 +354,23 @@ class KnowledgeGraphManager:
         except Exception as e:
             raise KnowledgeGraphException(f"Error getting entities from relation: {e}")
 
+    def _get_relations_from_entities(
+        self, entities: list[Entity], graph: KnowledgeGraph
+    ) -> list[Relation]:
+        """
+        Get the relations to and from each entity in a list of entities.
+        """
+        relations = []
+        for entity in entities:
+            try:
+                for r in graph.relations:
+                    if r.from_id == entity.id or r.to_id == entity.id:
+                        relations.append(r)
+            except Exception as e:
+                logger.error(f"Error getting relations from entity {entity.name}: {e}")
+                continue
+        return relations
+
     def _process_memory_line(self, line: str) -> UserIdentifier | Entity | Relation | None:
         """
         Produces a UserIdentifier, Entity, or Relation from a line of the memory file.
@@ -693,7 +710,9 @@ class KnowledgeGraphManager:
 
         return entity_id_map
 
-    async def get_entity_id_map(self, graph: KnowledgeGraph | None = None) -> dict[EntityID, Entity]:
+    async def get_entity_id_map(
+        self, graph: KnowledgeGraph | None = None
+    ) -> dict[EntityID, Entity]:
         """
         Returns a map of entity IDs to entity objects from the provided knowledge graph or the default graph from the manager.
         """
@@ -1148,15 +1167,19 @@ class KnowledgeGraphManager:
         )
 
     async def open_nodes(
-        self, names: list[str], ids: list[str | EntityID] | None = None
+        self,
+        ids: list[str | EntityID] | str | EntityID | None = None,
+        names: list[str] | str | None = None,
+        # include_observations: bool = True,
+        # include_relations: bool = True,
     ) -> tuple[list[Entity], list[Relation]]:
         """
         Open specific nodes (entities) in the knowledge graph by their names or IDs.
         If both names and ids are provided, both will be used to filter the entities.
 
         Args:
-            names: list of entity names to retrieve
             ids: list of entity IDs to retrieve
+            names: list of entity names to retrieve
 
         Returns:
             List of entities that match the provided names or IDs, and a list of relations to and from the entities, per entity.
@@ -1165,8 +1188,8 @@ class KnowledgeGraphManager:
 
         opened_nodes: list[Entity] = []
         # Get the entities that match the provided names
-        names_list: list[str] = [names] if isinstance(names, str) else names
-        for ident in names_list:
+        names_list = [names] if isinstance(names, str) else names
+        for ident in names_list if names_list else []:
             entity = self._get_entity_by_name_or_alias(graph, ident)
             if entity:
                 opened_nodes.append(entity)
@@ -1174,7 +1197,7 @@ class KnowledgeGraphManager:
                 logger.error(f"Entity not found: {ident}")
 
         # Get the entities that match the provided IDs
-        for id in ids:
+        for id in ids if ids else []:
             entity = self._get_entity_by_id(graph, id)
             if entity:
                 opened_nodes.append(entity)
@@ -1182,11 +1205,7 @@ class KnowledgeGraphManager:
                 logger.error(f"Entity not found: {id}")
 
         # Get the relations that involve the opened nodes. Returns only unique relations.
-        node_relations: list[Relation] = []
-        for node in opened_nodes:
-            for r in graph.relations:
-                if r.from_id == node.id or r.to_id == node.id:
-                    node_relations.append(r if r not in node_relations else None)
+        node_relations: list[Relation] = self._get_relations_from_entities(opened_nodes, graph)
 
         return opened_nodes, node_relations
 

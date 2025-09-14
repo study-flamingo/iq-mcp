@@ -102,7 +102,10 @@ class PrintOptions:
 
 #### Helper functions ####
 async def print_user_info(
-    graph: KnowledgeGraph | None = None, include_observations: bool = False, include_relations: bool = False, options: PrintOptions = PrintOptions()
+    graph: KnowledgeGraph | None = None,
+    include_observations: bool = False,
+    include_relations: bool = False,
+    options: PrintOptions = PrintOptions(),
 ):
     """Get the user's info from the provided knowledge graph (or the default graph from the manager) and print to a string.
 
@@ -112,11 +115,11 @@ async def print_user_info(
       - include_relations: Include relations related to the user in the response.
       - options: The options to use for printing the user info. If not provided, default values will be used.
     """
-    
+
     if graph is None:
         graph = await manager.read_graph()
     entity_id_map = await manager.get_entity_id_map(graph)
-    
+
     # Resolve options
     prologue = options.prologue
     separator = options.separator
@@ -125,11 +128,11 @@ async def print_user_info(
     ol = False if ul else options.ol
     bullet = options.bullet
     ordinal_separator = options.ordinal_separator
-    
+
     ind = " " * indent if indent > 0 else ""
     os = ordinal_separator
     ord = "" if ol else bullet
-    
+
     try:
         # Compose a sensible display name for the user, based on available data and preferences
         last_name = graph.user_info.last_name or ""
@@ -187,7 +190,7 @@ async def print_user_info(
                 ) + "Observations (times in UTC):\n"
                 for o in linked_entity.observations:
                     ts = o.timestamp.strftime("%Y-%m-%d %H:%M:%S")
-                    result +=   f"{ind}{ord}{os} {o.content} ({ts}, {o.durability.value}{separator}"
+                    result += f"{ind}{ord}{os} {o.content} ({ts}, {o.durability.value}{separator}"
             else:
                 pass  # No observations found in user-linked entity
     except Exception as e:
@@ -204,9 +207,11 @@ async def print_user_info(
                     logger.error(f"Failed to get entities from relation: {str(r)[:20]}...")
                     continue
                 elif linked_entity_id not in [a.id, b.id]:
-                    logger.debug(f"User-linked entity not found in relation {str(r)[:20]} - skipping")
+                    logger.debug(
+                        f"User-linked entity not found in relation {str(r)[:20]} - skipping"
+                    )
                     continue
-                
+
                 # replace the user-linked entity name with the user's preferred name
                 if linked_entity_id == a.id:
                     from_record = f"{preferred_name} (user)"
@@ -224,7 +229,11 @@ async def print_user_info(
         raise ToolError(f"Failed to print user relations: {e}")
 
 
-async def print_entities(graph: KnowledgeGraph | None = None, entities: list[Entity] | None = None, options: PrintOptions = PrintOptions()):
+async def print_entities(
+    entities: list[Entity] | None = None,
+    graph: KnowledgeGraph | None = None,
+    options: PrintOptions = PrintOptions(),
+):
     """
     Print entities data from a list of entities in a readable format.
 
@@ -344,8 +353,8 @@ async def print_entities(graph: KnowledgeGraph | None = None, entities: list[Ent
 
 
 async def print_relations(
-    graph: KnowledgeGraph | None = None,
     relations: list[Relation] | None = None,
+    graph: KnowledgeGraph | None = None,
     options: PrintOptions = PrintOptions(),
 ) -> str:
     """
@@ -451,7 +460,6 @@ async def print_relations(
             display_pre: str = f"{ind}{ord}{os} "
 
         # Resolve entity properties
-        
 
         # Compose relation to and from strings
         if md_links and include_ids:
@@ -486,9 +494,7 @@ async def print_relations(
 
 
 async def print_relations_between_entities(
-    entities: list[Entity],
-    relations: list[Relation],
-    options: PrintOptions = PrintOptions()
+    entities: list[Entity], relations: list[Relation], options: PrintOptions = PrintOptions()
 ) -> str:
     """
     Print all the relations between a list of two or more entities in a readable format.
@@ -539,7 +545,7 @@ async def read_graph(
     try:
         graph = await manager.read_graph()
 
-        result = ""
+        result = "💭 You remember the following about the user:\n"
 
         try:
             if not exclude_user_info:
@@ -553,14 +559,14 @@ async def read_graph(
         try:
             if not exclude_entities:
                 result += f"\n👤 You've made observations about {len(graph.entities)} entities:\n"
-                result += await print_entities(graph.entities)
+                result += await print_entities(graph=graph)
         except Exception as e:
             raise ToolError(f"Error while printing entities: {e}")
 
         # Print all relations
         try:
             if not exclude_relations:
-                rel_result = await print_relations(graph)
+                rel_result = await print_relations(graph=graph)
                 if rel_result:
                     result += f"\n🔗 You've learned about {len(graph.relations)} relations between these entities:\n"
                     result += rel_result
@@ -602,7 +608,7 @@ async def create_entities(new_entities: list[CreateEntityRequest]):
 
         Observations require:
         - content: str (required)
-        - durability: Literal['temporary', 'short-term', 'long-term', 'permanent'] (optional, defaults to 'short-term')
+        - durability: Literal['temporary', 'short-term', 'long-term', 'permanent'] (optional but recommended, defaults to 'short-term')
 
         * The timestamp will be added automatically
 
@@ -617,32 +623,34 @@ async def create_entities(new_entities: list[CreateEntityRequest]):
             "entity_type": "person",
             "observations": [
                 {
-                    "content": "John Doe is a software engineer",
+                    "content": "John Doe is a normal human being",
                     "durability": "permanent",
                 }
             ],
             "aliases": ["John Smith", "John S."],
-            "icon": "🥴",
+            "icon": "👽",
         }
     ]
     ```
+
+    ## Entity IDs
+
+    Entity IDs are automatically generated by the knowledge graph manager and are unique to each entity. They are not provided in the request.
+    Entity IDs provide a way to easily reference specific entities in the knowledge graph.
     """
     try:
         entities_created = await manager.create_entities(new_entities)
 
         succeeded: list[CreateEntityResult] = []
         failed: list[CreateEntityResult] = []
-        for r in entities_created:
-            if r.errors:
-                failed.append(r)
-            else:
-                succeeded.append(r)
 
-        if len(succeeded) == 0:
-            if len(failed) == 0:
-                result = "The request was received; however, no new entities were created!\n"
-            result = "Request received; however, no new entities were created, due to the following errors:\n"
-        elif len(succeeded) == 1:
+        for e in entities_created:
+            if e.errors:
+                failed.append(e)
+            else:
+                succeeded.append(e)
+
+        if len(succeeded) == 1:
             result = "Entity created successfully:\n"
         elif len(succeeded) > 1:
             result = f"Created {len(succeeded)} entities successfully:\n"
@@ -658,6 +666,18 @@ async def create_entities(new_entities: list[CreateEntityRequest]):
                 for o in e.observations:
                     result += f"  - {o.content} ({o.durability.value})\n"
             result += "\n"
+        if len(succeeded) == 0:
+            if len(failed) > 0:
+                errmsg = "Request received; however, no new entities were created, due to the following errors:\n"
+                for e in failed:
+                    errmsg += f"- {e.entity.name} {e.entity.id} ({e.entity.entity_type})\n"
+                    if e.errors:
+                        errmsg += "  Error(s):\n"
+                        for err in e.errors:
+                            errmsg += f"  - {err}\n"
+                raise ToolError(errmsg)
+            else:
+                raise ToolError(result)
 
         if len(failed) == 0:
             return result
@@ -775,13 +795,13 @@ async def add_observations(new_observations: list[ObservationRequest]):
     if not results or len(results) == 0:
         return "Request successful; however, no new observations were added!"
     elif len(results) == 1:
-        result = f"Observations added to 1 entity:\n"
+        result = "Observations added to 1 entity:\n"
     else:
         result = f"Observations added to {len(results)} entities:\n"
 
     for r in results:
         e = r.entity
-        result += print_entities(entities=[e])
+        result += await print_entities(entities=[e])
         for o in r.added_observations:
             result += f"- {o.content} ({o.durability.value})\n"
         result += "\n"
@@ -811,23 +831,23 @@ async def add_observations(new_observations: list[ObservationRequest]):
 #         raise ToolError(f"Failed to cleanup observations: {e}")
 
 
-@mcp.tool
-async def get_observations_by_durability(  # TODO: add other sort options, maybe absorb into other tools
-    entity_name: str = Field(description="The name or alias of the entity to get observations for"),
-) -> str:
-    """Get observations for an entity grouped by their durability type.
+# @mcp.tool
+# async def get_observations_by_durability(  # TODO: add other sort options, maybe absorb into other tools
+#     entity_name: str = Field(description="The name or alias of the entity to get observations for"),
+# ) -> str:
+#     """Get observations for an entity grouped by their durability type.
 
-    Args:
-        entity_name: The name or alias of the entity to get observations for
+#     Args:
+#         entity_name: The name or alias of the entity to get observations for
 
-    Returns:
-        Observations grouped by durability type
-    """
-    try:
-        result = await manager.get_observations_by_durability(entity_name)
-        return str(result)
-    except Exception as e:
-        raise ToolError(f"Failed to get observations: {e}")
+#     Returns:
+#         Observations grouped by durability type
+#     """
+#     try:
+#         result = await manager.get_observations_by_durability(entity_name)
+#         return str(result)
+#     except Exception as e:
+#         raise ToolError(f"Failed to get observations: {e}")
 
 
 @mcp.tool
@@ -997,21 +1017,21 @@ async def search_nodes(  # TODO: improve search
 
 @mcp.tool
 async def open_nodes(
-    entity_names: list[str] | str | None = Field(
-        default=None,
-        description="List of entity names or aliases to retrieve",
-    ),
     entity_ids: list[str | EntityID] | str | EntityID | None = Field(
         default=None,
-        description="List of entity IDs to retrieve",
+        description="List of IDs of entities to retrieve",
+    ),
+    entity_names: list[str] | str | None = Field(
+        default=None,
+        description="List of names or aliases of entities to retrieve. Prefer to use IDs when appropriate.",
     ),
 ):
     """
     Open specific nodes (entities) in the knowledge graph by their IDs, names, or aliases.
 
     Args:
-        entity_names: List of entity names or aliases to retrieve
-        entity_ids: List of entity IDs to retrieve
+        entity_names: List of names or aliases of entities to retrieve. Prefer to use IDs when appropriate.
+        entity_ids: List of IDs of entities to retrieve.
 
     If both entity_names and entity_ids are provided, both will be used to filter the entities.
 
