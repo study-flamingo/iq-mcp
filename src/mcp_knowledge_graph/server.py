@@ -247,7 +247,7 @@ async def print_entities(
     - entities: The list of entities to print. Required if graph is not provided.
     - options: The options (PrintOptions object)to use for printing the entities. If not provided, default values will be used.
     - exclude_user: Whether to skip printing the user-linked entity data. If not provided, default PrintOptions value will be used.
-    
+
     Display format:
 
     ```
@@ -284,7 +284,7 @@ async def print_entities(
         for e in entities:
             e_names.append(e.name)
         logger.debug(f"Printing provided entities: {', '.join(e_names)}")
-    
+
     if not entities:
         raise ToolError("No entities provided")
     else:
@@ -677,18 +677,6 @@ async def create_entities(new_entities: list[CreateEntityRequest]):
             result = "Entity created successfully:\n"
         elif len(succeeded) > 1:
             result = f"Created {len(succeeded)} entities successfully:\n"
-        for r in succeeded:
-            e = Entity.from_dict(r.entity or {})
-            icon = e.icon_()
-            result += f"{icon}{e.name} ({e.entity_type})\n"
-            if e.aliases:
-                result += "  Alias(es): "
-                result += f"{', '.join([str(a) for a in e.aliases])}\n"
-            if e.observations:
-                result += "  Observation(s): "
-                for o in e.observations:
-                    result += f"  - {o.content} ({o.durability.value})\n"
-            result += "\n"
         if len(succeeded) == 0:
             if len(failed) > 0:
                 errmsg = "Request received; however, no new entities were created, due to the following errors:\n"
@@ -700,7 +688,11 @@ async def create_entities(new_entities: list[CreateEntityRequest]):
                             errmsg += f"  - {err}\n"
                 raise ToolError(errmsg)
             else:
-                raise ToolError(result)
+                raise ToolError("Unknown error while creating entities!")
+
+        # Print observations
+        options = PrintOptions(include_observations=True)
+        result += await print_entities(entities=succeeded, options=options)
 
         if len(failed) == 0:
             return result
@@ -716,6 +708,10 @@ async def create_entities(new_entities: list[CreateEntityRequest]):
                 for err in r.errors:
                     result += f"  - {err}\n"
             result += "\n"
+
+        # Don't print observations
+        options = PrintOptions(include_observations=False)
+        result += await print_entities(entities=failed, options=options)
 
         return result
     except Exception as exc:
@@ -1072,24 +1068,25 @@ async def open_nodes(
         # Check if entity_ids is a string representation of a list
         try:
             import json
+
             # Try to parse as JSON list
             resolved_ids.extend(json.loads(entity_ids))
             logger.warning(f"Entity IDs provided are not a valid JSON list: {entity_ids}")
         except (json.JSONDecodeError, ValueError):
             # If not valid JSON, it's probably a single str id
             resolved_ids.append(EntityID(entity_ids))
-    
+
     resolved_names = []
     if isinstance(entity_names, list):
         resolved_names = entity_names
     else:
         resolved_names.append(entity_names)
-    
+
     try:
         ents = await manager.open_nodes(names=resolved_names, ids=resolved_ids)
     except Exception as e:
         raise ToolError(f"Failed to open nodes: {e}")
-    
+
     if not exclude_relations:
         rels = await manager.get_relations_from_entities(entities=ents)
     else:
@@ -1111,9 +1108,11 @@ async def open_nodes(
         else:
             logger.debug(f"Skipped loading relations for {str(ents)} per llm request")
     else:
-        result_str += "🔗 You've learned about the following relationships between these entities:\n"
+        result_str += (
+            "🔗 You've learned about the following relationships between these entities:\n"
+        )
         result_str += await print_relations(relations=rels)
-   
+
     return result_str
 
 

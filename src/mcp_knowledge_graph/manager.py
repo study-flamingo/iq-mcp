@@ -13,7 +13,7 @@ from typing import Any, Annotated
 from pathlib import Path
 from uuid import uuid4
 from .settings import Settings as settings, Logger as logger
-from pydantic import  Field
+from pydantic import Field
 
 from .models import (
     Entity,
@@ -1197,7 +1197,7 @@ class KnowledgeGraphManager:
             names: list of entity names to retrieve
 
         Returns:
-            
+
             A list of entities that match the provided names or IDs.
         """
         graph = await self._load_graph()
