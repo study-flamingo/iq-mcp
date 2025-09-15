@@ -9,7 +9,6 @@
 }
 ```
 
-
 ## user_info
 
 ```json

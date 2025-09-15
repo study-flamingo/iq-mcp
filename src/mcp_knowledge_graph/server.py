@@ -11,7 +11,7 @@ from datetime import tzinfo
 from fastmcp import FastMCP
 from pydantic import Field
 from pydantic.dataclasses import dataclass
-from typing import Any
+from typing import Any, Annotated
 from fastmcp.exceptions import ToolError, ValidationError
 
 from .manager import KnowledgeGraphManager
@@ -233,9 +233,10 @@ async def print_entities(
     entities: list[Entity] | None = None,
     graph: KnowledgeGraph | None = None,
     options: PrintOptions = PrintOptions(),
+    exclude_user: bool | None = None,
 ):
     """
-    Print entities data from a list of entities in a readable format.
+    Print entity data from a list of entities in a readable format. If no entities are provided, all entities from the graph will be printed.
 
     Various options are available to customize the display. All options are optional, and the
     default values are used if not specified.
@@ -244,8 +245,9 @@ async def print_entities(
 
     - graph: The knowledge graph to print entities from. Required if entities is not provided.
     - entities: The list of entities to print. Required if graph is not provided.
-    - options: The options to use for printing the entities. If not provided, default values will be used.
-
+    - options: The options (PrintOptions object)to use for printing the entities. If not provided, default values will be used.
+    - exclude_user: Whether to skip printing the user-linked entity data. If not provided, default PrintOptions value will be used.
+    
     Display format:
 
     ```
@@ -273,12 +275,27 @@ async def print_entities(
         - `indent` is applied only to the entity list, not the prologue or epilogue
     """
 
-    if not graph:
-        graph = await manager.read_graph()
     if not entities:
+        graph = graph or await manager.read_graph()
         entities = graph.entities
+        logger.debug(f"Printing all entities from graph {str(graph)}")
+    else:
+        e_names = []
+        for e in entities:
+            e_names.append(e.name)
+        logger.debug(f"Printing provided entities: {', '.join(e_names)}")
+    
+    if not entities:
+        raise ToolError("No entities provided")
+    else:
+        e_names = []
+        for e in entities:
+            e_names.append(e.name)
+        logger.debug(f"Printing entities: {', '.join(e_names)}")
 
-    exclude_user = options.exclude_user
+    if exclude_user is None:
+        exclude_user = options.exclude_user
+
     prologue = options.prologue
     separator = options.separator
     epilogue = options.epilogue
@@ -304,20 +321,26 @@ async def print_entities(
         i = 1
         os = ordinal_separator if ol else ""
         for e in entities:
-            if (
-                exclude_user
-                and e.name.lower().strip() == "__user__"
-                or e.name.lower().strip() == "user"
-            ):
-                logger.debug("User-linked entity found during entity printing, skipping")
-                continue
-            id = e.id
-            icon = e.icon_()
-            name = e.name
-            type = e.entity_type
             ord = str(i) if ol else bullet
+            if e.name.lower().strip() == "__user__" or e.name.lower().strip() == "user":
+                if exclude_user is True:
+                    logger.debug("User-linked entity found during entity printing, skipping")
+                    continue
+                else:
+                    logger.debug("User-linked entity found during entity printing, including")
+                    graph = graph or await manager.read_graph()
+                    user_info = graph.user_info
+                    id = user_info.linked_entity_id
+                    icon = e.icon_()
+                    name = user_info.preferred_name
+                    type = "user"
+            else:
+                id = e.id
+                icon = e.icon_()
+                name = e.name
+                type = e.entity_type
 
-            # Compose pre-entity string (list stuff like indentation, bullet, ordinal, etc.)
+            # Compose pre-entity string (indentation, bullet, ordinal, spacer)
             # Special case: if both ul and ol are False, omit pre-entity string
             if not ul and not ol:
                 display_pre = ""
@@ -1017,13 +1040,17 @@ async def search_nodes(  # TODO: improve search
 
 @mcp.tool
 async def open_nodes(
-    entity_ids: list[str | EntityID] | str | EntityID | None = Field(
+    entity_ids: list[str] | str | None = Field(
         default=None,
         description="List of IDs of entities to retrieve",
     ),
     entity_names: list[str] | str | None = Field(
         default=None,
         description="List of names or aliases of entities to retrieve. Prefer to use IDs when appropriate.",
+    ),
+    exclude_relations: bool = Field(
+        default=False,
+        description="Whether to exclude relations from the summary. Relations are included by default.",
     ),
 ):
     """
@@ -1038,17 +1065,55 @@ async def open_nodes(
     Returns:
         Data (observations) about the nodes (entities) and their relationships (relations) with other nodes in the graph.
     """
-
+    # If entity_ids are passed, ensure they are valid IDs; sometimes we get list[str] in str format,
+    # so we check if it is a JSON-parseable list of strings too
+    resolved_ids = []
+    if entity_ids:
+        # Check if entity_ids is a string representation of a list
+        try:
+            import json
+            # Try to parse as JSON list
+            resolved_ids.extend(json.loads(entity_ids))
+            logger.warning(f"Entity IDs provided are not a valid JSON list: {entity_ids}")
+        except (json.JSONDecodeError, ValueError):
+            # If not valid JSON, it's probably a single str id
+            resolved_ids.append(EntityID(entity_ids))
+    
+    resolved_names = []
+    if isinstance(entity_names, list):
+        resolved_names = entity_names
+    else:
+        resolved_names.append(entity_names)
+    
     try:
-        opened_nodes, node_relations = await manager.open_nodes(entity_names, entity_ids)
+        ents = await manager.open_nodes(names=resolved_names, ids=resolved_ids)
     except Exception as e:
         raise ToolError(f"Failed to open nodes: {e}")
+    
+    if not exclude_relations:
+        rels = await manager.get_relations_from_entities(entities=ents)
+    else:
+        rels = []
 
-    # Print the results
-    result_str = ""
-    result_str += await print_entities(entities=opened_nodes)
-    result_str += await print_relations(relations=node_relations)
-
+    if not ents:
+        raise ToolError("No entities found")
+    else:
+        if len(ents) == 1:
+            result_str = "💭 You remember the following information about this entity:\n"
+        elif len(ents) > 1:
+            result_str = "💭 You remember the following information about these entities:\n"
+        else:
+            raise ToolError("No entities found")
+        result_str += await print_entities(entities=ents, exclude_user=False)
+    if not rels:
+        if not exclude_relations:
+            logger.error(f"No relations found for the opened nodes {str(ents)}")
+        else:
+            logger.debug(f"Skipped loading relations for {str(ents)} per llm request")
+    else:
+        result_str += "🔗 You've learned about the following relationships between these entities:\n"
+        result_str += await print_relations(relations=rels)
+   
     return result_str
 
 

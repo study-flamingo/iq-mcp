@@ -229,8 +229,8 @@ class IQSettings:
 
     def get_logger(self) -> logging.Logger:
         """Get the logger for the IQ-MCP server, configured by the settings object."""
-        logging.basicConfig(level=logging.DEBUG if self.debug else logging.INFO)
         logger = logging.getLogger("iq-mcp")
+        logger.setLevel(logging.DEBUG if self.debug else logging.INFO)
         logger.debug("Retrieved debug logger")
         return logger
 

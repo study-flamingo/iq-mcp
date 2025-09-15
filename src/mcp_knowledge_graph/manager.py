@@ -9,10 +9,11 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Annotated
 from pathlib import Path
 from uuid import uuid4
 from .settings import Settings as settings, Logger as logger
+from pydantic import  Field
 
 from .models import (
     Entity,
@@ -67,7 +68,7 @@ class KnowledgeGraphManager:
 
     # ---------- Alias helpers ----------
     def _get_entity_by_name_or_alias(self, graph: KnowledgeGraph, identifier: str) -> Entity | None:
-        """Return the first entity whose name or aliases match the identifier (case-insensitive)."""
+        """Return the first entity whose name or aliases match the identifier (case-insensitive). If no entity is found, returns None."""
         ident_lower = (identifier or "").strip().lower()
         if not ident_lower:
             return None
@@ -97,6 +98,13 @@ class KnowledgeGraphManager:
             if e.id == id:
                 return e
         return None
+
+    def _get_user_linked_entity(self, graph: KnowledgeGraph) -> Entity | None:
+        """Return the user-linked entity if it exists. It should exist, so an error is raised if it doesn't."""
+        if graph.user_info and graph.user_info.linked_entity_id:
+            return self._get_entity_by_id(graph=graph, id=graph.user_info.linked_entity_id)
+        else:
+            raise KnowledgeGraphException("User-linked entity not found! This should not happen!")
 
     def _canonicalize_entity_name(self, graph: KnowledgeGraph, identifier: str) -> str:
         """Return canonical entity name if identifier matches a name or alias; otherwise return identifier unchanged."""
@@ -358,7 +366,7 @@ class KnowledgeGraphManager:
         self, entities: list[Entity], graph: KnowledgeGraph
     ) -> list[Relation]:
         """
-        Get the relations to and from each entity in a list of entities.
+        (Internal) Get the relations to and from each entity in a list of entities.
         """
         relations = []
         for entity in entities:
@@ -370,6 +378,13 @@ class KnowledgeGraphManager:
                 logger.error(f"Error getting relations from entity {entity.name}: {e}")
                 continue
         return relations
+
+    async def get_relations_from_entities(self, entities: list[Entity]) -> list[Relation]:
+        """
+        Get the relations to and from each entity in a list of entities.
+        """
+        graph = await self._load_graph()
+        return self._get_relations_from_entities(entities=entities, graph=graph)
 
     def _process_memory_line(self, line: str) -> UserIdentifier | Entity | Relation | None:
         """
@@ -1168,11 +1183,11 @@ class KnowledgeGraphManager:
 
     async def open_nodes(
         self,
-        ids: list[str | EntityID] | str | EntityID | None = None,
-        names: list[str] | str | None = None,
+        ids: list[EntityID] | None = None,
+        names: list[str] | None = None,
         # include_observations: bool = True,
         # include_relations: bool = True,
-    ) -> tuple[list[Entity], list[Relation]]:
+    ) -> list[Entity]:
         """
         Open specific nodes (entities) in the knowledge graph by their names or IDs.
         If both names and ids are provided, both will be used to filter the entities.
@@ -1182,32 +1197,42 @@ class KnowledgeGraphManager:
             names: list of entity names to retrieve
 
         Returns:
-            List of entities that match the provided names or IDs, and a list of relations to and from the entities, per entity.
+            
+            A list of entities that match the provided names or IDs.
         """
         graph = await self._load_graph()
+        user_info = graph.user_info
+        if not ids and not names:
+            raise ValueError("Either ids or names must be provided")
 
         opened_nodes: list[Entity] = []
+
         # Get the entities that match the provided names
-        names_list = [names] if isinstance(names, str) else names
-        for ident in names_list if names_list else []:
-            entity = self._get_entity_by_name_or_alias(graph, ident)
-            if entity:
-                opened_nodes.append(entity)
-            else:
-                logger.error(f"Entity not found: {ident}")
+        if names and isinstance(names, list) and len(names) > 0:
+            logger.debug(f"Getting entities: {names}")
+            for ident in names:
+                # Special case for user
+                logger.debug(f"Getting entity: {ident}")
+                if ident.lower() in {"user", "__user__"} and user_info.linked_entity_id:
+                    entity = self._get_user_linked_entity(graph=graph)
+                else:
+                    entity = self._get_entity_by_name_or_alias(graph, ident)
+                if entity:
+                    opened_nodes.append(entity)
+                else:
+                    logger.error(f"Entity not found: {ident}")
 
         # Get the entities that match the provided IDs
-        for id in ids if ids else []:
-            entity = self._get_entity_by_id(graph, id)
-            if entity:
-                opened_nodes.append(entity)
-            else:
-                logger.error(f"Entity not found: {id}")
+        if ids and isinstance(ids, list) and len(ids) > 0:
+            for id in ids:
+                entity = self._get_entity_by_id(graph, id)
+                if entity:
+                    opened_nodes.append(entity)
+                else:
+                    logger.error(f"Entity not found: {id}")
 
-        # Get the relations that involve the opened nodes. Returns only unique relations.
-        node_relations: list[Relation] = self._get_relations_from_entities(opened_nodes, graph)
-
-        return opened_nodes, node_relations
+        result = opened_nodes
+        return result
 
     async def merge_entities(self, new_entity_name: str, entity_names: list[str]) -> Entity:
         """

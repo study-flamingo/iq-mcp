@@ -1,3 +1,4 @@
+<!-- markdownlint-disable -->
 ## Collaborating with an LLM — Guidelines
 
 ### Mission & Guardrails

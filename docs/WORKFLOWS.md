@@ -1,3 +1,4 @@
+<!-- markdownlint-disable -->
 ## Workflows — Tools, Manager Methods, and Models
 
 ### Read Graph

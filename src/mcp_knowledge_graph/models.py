@@ -6,7 +6,7 @@ including entities, relations, and temporal observations with durability metadat
 """
 
 from datetime import datetime, timezone
-from typing import Any, Literal, Annotated, Union
+from typing import Any, Literal, Annotated
 from uuid import uuid4
 from pydantic import (
     BaseModel,

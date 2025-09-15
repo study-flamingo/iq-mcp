@@ -1,3 +1,4 @@
+<!-- markdownlint-disable -->
 # Review recent code changes for quality
 _Exported on 9/7/2025 at 21:00:40 MDT from Cursor (1.5.11)_
 
