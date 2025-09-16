@@ -10,6 +10,7 @@ import json
 from datetime import tzinfo
 from fastmcp import FastMCP
 from pydantic import Field
+from pydantic.main import IncEx
 from pydantic.dataclasses import dataclass
 from typing import Any, Annotated
 from fastmcp.exceptions import ToolError, ValidationError
@@ -27,6 +28,8 @@ from .models import (
     ObservationRequest,
     Entity,
     CreateEntityResult,
+    Observation,
+    AddObservationResult,
 )
 from .settings import Settings as settings, Logger as logger
 
@@ -61,7 +64,7 @@ class PrintOptions:
     - exclude_user: Whether to exclude the user from the entity list. Default is `True`.
     - prologue: A string added before the entity list. Default is `None`.
     - separator: The separator to use between list items (entities). Default is `\\n`.
-    - epilogue: A string added after the entity list. Default is `\\n`.
+    - epilogue: A string added after the entity list. Default is `\\n\\n`.
     - md_links: Whether to use markdown-style links for the entities. Default is `True`.
     - include_ids: Whether to include the IDs of the entities in the display. Default is `True`.
     - include_types: Whether to include the types of the entities in the display. Default is `True`.
@@ -72,6 +75,8 @@ class PrintOptions:
     - ol: Whether to use a numbered list. Default is `False`.
     - bullet: The bullet to use for the unordered list. Default is `-`.
     - ordinal_separator: The separator to use between the ordinal and the entity. Default is `.`
+    - include_durability: Whether to include the durability of the observations in the display, if applicable. Default is `True`.
+    - include_ts: Whether to include the timestamp of the observations in the display, if applicable. Default is `True`.
 
     Notes:
 
@@ -246,7 +251,7 @@ async def print_entities(
     - graph: The knowledge graph to print entities from. Required if entities is not provided.
     - entities: The list of entities to print. Required if graph is not provided.
     - options: The options (PrintOptions object)to use for printing the entities. If not provided, default values will be used.
-    - exclude_user: Whether to skip printing the user-linked entity data. If not provided, default PrintOptions value will be used.
+    - exclude_user: Whether to skip printing the user-linked entity data. If not provided, default PrintOptions value will be used. Provided here for convenience, but can be set in the options object.
 
     Display format:
 
@@ -308,20 +313,16 @@ async def print_entities(
     bullet = options.bullet
     ordinal_separator = options.ordinal_separator
 
-    result = ""
-
     # Resolve options
     ind = " " * indent if indent > 0 else ""
-    os = ordinal_separator
-    ord = "" if ol else bullet
+    os = ordinal_separator if ol else ""
 
     # Start rendering
     result = prologue
     try:
         i = 1
-        os = ordinal_separator if ol else ""
         for e in entities:
-            ord = str(i) if ol else bullet
+            ord = i if ol else bullet
             if e.name.lower().strip() == "__user__" or e.name.lower().strip() == "user":
                 if exclude_user is True:
                     logger.debug("User-linked entity found during entity printing, skipping")
@@ -348,18 +349,16 @@ async def print_entities(
                 display_pre: str = f"{ind}{ord}{os} "
 
             # Compose entity string (entity icon, name, id, type)
-            display = ""
-            if md_links and include_ids:
-                display += f"[{icon}{name}]({id})"
-            elif md_links and not include_ids:
-                # TODO: figure out more uses for md links here
-                display += f"{icon}{name}"
-            elif not md_links and include_ids:
-                display += f"{icon}{name} ({id})"
-            elif not md_links and not include_ids:
-                display += f"{icon}{name}"
-            if include_types:
-                display += f" ({type})"
+            display = (
+                f"{'[' if md_links else ''}{icon}{name}{']' if md_links else ' '}"
+                f"{'(' if include_types or include_ids else ''}"
+                f"{type + ', ' if include_types and not md_links else ''}"
+                f"{'ID: ' if include_ids and not md_links else ''}{id if include_ids else ''}"
+                f"{')' if include_types or include_ids else ''}"
+                f"{' (' + type + ')' if include_types and md_links else ''}"
+            )
+            # With default options: [👤 John Doe](12345678) (person)
+            # Example with md_links=False: 👤 John Doe (person, ID: 12345678)
 
             # Compose post-entity string (separator)
             display_post = f"{separator}"
@@ -516,18 +515,53 @@ async def print_relations(
     return result
 
 
-async def print_relations_between_entities(
-    entities: list[Entity], relations: list[Relation], options: PrintOptions = PrintOptions()
+async def print_observations(
+    observations: list[Observation], options: PrintOptions = PrintOptions()
 ) -> str:
     """
-    Print all the relations between a list of two or more entities in a readable format.
+    Print all the observations between a list of two or more entities in a readable format.
 
     Args:
 
-    - entities: The list of entities to print. Required if relations is not provided.
-    - relations: The list of relations to print. Required if entities is not provided.
-    - options: The options to use for printing the relations. If not provided, default values will be used.
+    - observations: The list of observations to print. Required.
+    - options: The options to use for printing the observations. If not provided, default values will be used.
     """
+
+    # Resolve options
+    prologue = options.prologue
+    epilogue = options.epilogue
+    ul = options.ul
+    ol = False if ul else options.ol
+    bullet = options.bullet
+    separator = options.separator
+    
+    os = options.ordinal_separator if ol else ""
+    ind = " " * options.indent if options.indent > 0 else ""
+    
+    
+    result_str = prologue
+    i = 1
+    for o in observations:
+        try:
+            ord = str(i) if ol else bullet
+            pre = f"{ind}{ord}{os} "
+            content = o.content
+            
+            # Optional display of durability and timestamp (enabled by default)
+            if options.include_durability or options.include_ts:
+                content_items = []
+                if options.include_ts:
+                    content_items.append(o.timestamp.strftime('%Y-%m-%d %H:%M:%S'))
+                if options.include_durability:
+                    content_items.append(o.durability.value)
+                content += f" ({', '.join(content_items)})"
+            post = f"{separator}"
+            result_str += f"{pre}{content}{post}"
+            i += 1
+        except Exception as e:
+            logger.error(f"Error printing observation {i} from list of {len(observations)} observations: {e}")
+    result_str += epilogue
+    return result_str
 
 
 def __this_is_a_fake_function_to_separate_sections_in_the_outline_in_cursor_do_not_use_me() -> None:
@@ -811,21 +845,72 @@ async def add_observations(new_observations: list[ObservationRequest]):
     except Exception as e:
         raise ToolError(f"Failed to add observations: {e}")
 
-    if not results or len(results) == 0:
-        return "Request successful; however, no new observations were added!"
-    elif len(results) == 1:
-        result = "Observations added to 1 entity:\n"
+    failed = [r for r in results if r.errors]
+    for r in failed:
+        logger.error(f"Error adding observations to entity: {'; '.join(r.errors)}")
+    succeeded = [r for r in results if not r.errors]
+
+    def dump_bad_entity(entity: Any) -> str:
+        if isinstance(entity, dict):
+            try:
+                _ = Entity.from_dict(entity)
+            except Exception:
+                pass
+            else:
+                logger.warning(f"Dumping entity {str(entity)[:20]}... as bad entity; however, it may be valid")
+                return json.dumps(
+                    entity.model_dump(
+                        indent=0,
+                        include=IncEx("name","id","entity_type"),
+                        exclude_none=True,
+                        exclude_defaults=True,
+                        exclude_unset=True,
+                        warnings=False
+                    ),
+                    indent=0, separators=(',', ':')
+                )
+                
+        elif isinstance(entity, Entity):
+            logger.error(f"Dumping entity {str(entity)[:20]}... as bad entity; however, it is valid")
+            return json.dumps(
+                entity.model_dump(
+                    exclude_none=True,
+                    exclude_defaults=True,
+                    exclude_unset=True,
+                    warnings=False
+                    ),
+                    indent=0, separators=(',', ':')
+                )
+        else:
+            return str(entity)
+        
+    result_str = ""
+    if len(succeeded) == 1:
+        ident = f"{succeeded[0].entity.name} (ID: {succeeded[0].entity.id})"
+        result_str = f"Succcessfully added observations to {ident}:\n"
+    elif len(succeeded) > 1:
+        idents = [f"{s.entity.name} ({s.entity.id})" for s in succeeded]
+        result_str = f"Succcessfully added observations to {', '.join(idents)}:\n"
+    elif len(succeeded) == 0 and len(failed) > 0:
+        result_str = "Request successful; however, no new observations were added, due to the following errors:\n"
+        for f in failed:
+            result_str += f"- {dump_bad_entity(f.entity)}: {'; '.join(f.errors)}\n"
+        return result_str
+    elif len(succeeded) > 0 and len(failed) > 0:
+        idents_succeeded = [f"{s.entity.name} (ID: {s.entity.id})" for s in succeeded]
+        result_str = f"Successfully added observations to {', '.join(idents_succeeded)}:\n"
+        for s in succeeded:
+            result_str += f"- {s.entity.name} (ID: {s.entity.id}):\n"
+            result_str += print_observations(s.added_observations)
+        
+        result_str += f"However, failed to add observations to {len(failed)} entities:\n"
+        for r in failed:
+            result_str += f"- {r.entity.name} (ID: {r.entity.id}): {'; '.join(r.errors)}\n"
+        return result_str
     else:
-        result = f"Observations added to {len(results)} entities:\n"
+        raise ToolError("No observations were added to any entities!")
 
-    for r in results:
-        e = r.entity
-        result += await print_entities(entities=[e])
-        for o in r.added_observations:
-            result += f"- {o.content} ({o.durability.value})\n"
-        result += "\n"
-
-    return result
+    return result_str
 
 
 # @mcp.tool  # TODO: remove from interface and bury/automate in manager

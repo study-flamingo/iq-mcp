@@ -1,17 +1,11 @@
 [
     {
-        "name": "John Doe",
-        "entity_type": "person",
-        "observations": [
+    "entity_name": "test",
+    "observations": [
             {
-                "content": "John Doe is a software engineer",
-                "durability": "permanent"
+        "content": "test",
+        "durability": "temporary"
             }
-        ],
-        "aliases": [
-            "John Smith",
-            "John S."
-        ],
-        "icon": "🥴"
+        ]
     }
 ]

@@ -915,7 +915,7 @@ class CreateRelationRequest(BaseModel):
 class AddObservationResult(BaseModel):
     """Result of adding observations to an entity."""
 
-    entity: Entity = Field(
+    entity: Entity | dict[str, Any] = Field(
         ...,
         title="Entity",
         description="The entity that was updated",

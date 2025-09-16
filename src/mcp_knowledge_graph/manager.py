@@ -922,7 +922,11 @@ class KnowledgeGraphManager:
                 new_observations.append(obs)
             entity.observations.extend(new_observations)
 
-            results.append(AddObservationResult(entity=entity, added_observations=new_observations))
+            try:
+                results.append(AddObservationResult(entity=entity, added_observations=new_observations))
+            except Exception as e:
+                logger.error(f"Error appending observations to entity: {e}")
+                continue
 
         await self._save_graph(graph)
         return results
