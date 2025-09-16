@@ -121,7 +121,7 @@ async def print_user_info(
       - options: The options to use for printing the user info. If not provided, default values will be used.
     """
 
-    if graph is None:
+    if not graph:
         graph = await manager.read_graph()
     entity_id_map = await manager.get_entity_id_map(graph)
 
@@ -534,11 +534,10 @@ async def print_observations(
     ol = False if ul else options.ol
     bullet = options.bullet
     separator = options.separator
-    
+
     os = options.ordinal_separator if ol else ""
     ind = " " * options.indent if options.indent > 0 else ""
-    
-    
+
     result_str = prologue
     i = 1
     for o in observations:
@@ -546,12 +545,12 @@ async def print_observations(
             ord = str(i) if ol else bullet
             pre = f"{ind}{ord}{os} "
             content = o.content
-            
+
             # Optional display of durability and timestamp (enabled by default)
             if options.include_durability or options.include_ts:
                 content_items = []
                 if options.include_ts:
-                    content_items.append(o.timestamp.strftime('%Y-%m-%d %H:%M:%S'))
+                    content_items.append(o.timestamp.strftime("%Y-%m-%d %H:%M:%S"))
                 if options.include_durability:
                     content_items.append(o.durability.value)
                 content += f" ({', '.join(content_items)})"
@@ -559,7 +558,9 @@ async def print_observations(
             result_str += f"{pre}{content}{post}"
             i += 1
         except Exception as e:
-            logger.error(f"Error printing observation {i} from list of {len(observations)} observations: {e}")
+            logger.error(
+                f"Error printing observation {i} from list of {len(observations)} observations: {e}"
+            )
     result_str += epilogue
     return result_str
 
@@ -857,33 +858,36 @@ async def add_observations(new_observations: list[ObservationRequest]):
             except Exception:
                 pass
             else:
-                logger.warning(f"Dumping entity {str(entity)[:20]}... as bad entity; however, it may be valid")
+                logger.warning(
+                    f"Dumping entity {str(entity)[:20]}... as bad entity; however, it may be valid"
+                )
                 return json.dumps(
                     entity.model_dump(
                         indent=0,
-                        include=IncEx("name","id","entity_type"),
+                        include=IncEx("name", "id", "entity_type"),
                         exclude_none=True,
                         exclude_defaults=True,
                         exclude_unset=True,
-                        warnings=False
+                        warnings=False,
                     ),
-                    indent=0, separators=(',', ':')
+                    indent=0,
+                    separators=(",", ":"),
                 )
-                
+
         elif isinstance(entity, Entity):
-            logger.error(f"Dumping entity {str(entity)[:20]}... as bad entity; however, it is valid")
+            logger.error(
+                f"Dumping entity {str(entity)[:20]}... as bad entity; however, it is valid"
+            )
             return json.dumps(
                 entity.model_dump(
-                    exclude_none=True,
-                    exclude_defaults=True,
-                    exclude_unset=True,
-                    warnings=False
-                    ),
-                    indent=0, separators=(',', ':')
-                )
+                    exclude_none=True, exclude_defaults=True, exclude_unset=True, warnings=False
+                ),
+                indent=0,
+                separators=(",", ":"),
+            )
         else:
             return str(entity)
-        
+
     result_str = ""
     if len(succeeded) == 1:
         ident = f"{succeeded[0].entity.name} (ID: {succeeded[0].entity.id})"
@@ -902,7 +906,7 @@ async def add_observations(new_observations: list[ObservationRequest]):
         for s in succeeded:
             result_str += f"- {s.entity.name} (ID: {s.entity.id}):\n"
             result_str += print_observations(s.added_observations)
-        
+
         result_str += f"However, failed to add observations to {len(failed)} entities:\n"
         for r in failed:
             result_str += f"- {r.entity.name} (ID: {r.entity.id}): {'; '.join(r.errors)}\n"

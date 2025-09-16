@@ -708,16 +708,12 @@ class KnowledgeGraphManager:
 
         Map format: dict[EntityID(str), Entity]
         """
-        if graph:
-            try:
-                entities_list = graph.entities or None
-            except Exception as e:
-                raise ValueError(f"Error getting entities from graph: {e}")
-        else:
-            raise ValueError("Invalid graph provided")
+        if not graph.entities:
+            raise ValueError("Invalid graph provided!")
+        entities_list = graph.entities
 
         entity_id_map = {}
-        for e in entities_list or []:
+        for e in entities_list:
             if e.id:
                 entity_id_map[e.id] = e
             else:
@@ -887,7 +883,6 @@ class KnowledgeGraphManager:
         for request in requests:
             # Resolve entity by ID first, else by name/alias; support 'user' shortcut in name
             try:
-                entity: Entity | None = None
                 if request.entity_id:
                     entity = self._get_entity_by_id(graph, request.entity_id)
                 elif request.entity_name:
@@ -900,13 +895,29 @@ class KnowledgeGraphManager:
                         entity = self._get_entity_by_id(graph, graph.user_info.linked_entity_id)
                     else:
                         entity = self._get_entity_by_name_or_alias(graph, name)
+
+                # If we didn't find an entity, append an error to the results and continue
                 if not entity:
-                    logger.error(
-                        f"Entity not found for request (name='{request.entity_name}', id='{request.entity_id}')"
+                    results.append(
+                        AddObservationResult(
+                            entity=entity,
+                            errors=[
+                                f"Entity not found for request (name='{request.entity_name}', id='{request.entity_id}')"
+                            ],
+                        )
                     )
                     continue
+
+            # If we encountered an error, append an error to the results and continue
             except Exception as e:
-                logger.error(f"Error resolving entity to add observations: {e}")
+                (
+                    results.append(
+                        AddObservationResult(
+                            entity=entity,
+                            errors=[f"Error resolving entity to add observations: {e}"],
+                        )
+                    ),
+                )
                 continue
 
             # Create observations with timestamps from the request
@@ -923,9 +934,15 @@ class KnowledgeGraphManager:
             entity.observations.extend(new_observations)
 
             try:
-                results.append(AddObservationResult(entity=entity, added_observations=new_observations))
+                results.append(
+                    AddObservationResult(entity=entity, added_observations=new_observations)
+                )
             except Exception as e:
-                logger.error(f"Error appending observations to entity: {e}")
+                results.append(
+                    AddObservationResult(
+                        entity=entity, errors=[f"Error appending observations to entity: {e}"]
+                    )
+                )
                 continue
 
         await self._save_graph(graph)
@@ -1188,7 +1205,7 @@ class KnowledgeGraphManager:
     async def open_nodes(
         self,
         ids: list[EntityID] | None = None,
-        names: list[str] | None = None,
+        names: list[str] | str | None = None,
         # include_observations: bool = True,
         # include_relations: bool = True,
     ) -> list[Entity]:
@@ -1208,6 +1225,20 @@ class KnowledgeGraphManager:
         user_info = graph.user_info
         if not ids and not names:
             raise ValueError("Either ids or names must be provided")
+
+        # Check if `names` is a list in str formnat
+        resolved_names: list[str] = []
+        if isinstance(names, str):
+            try:
+                resolved_names = json.loads(names)
+            except Exception:
+                try:
+                    # If that didn't work, parse as a single string
+                    resolved_names.append(names)
+                except Exception as e:
+                    raise ValueError(f"Error parsing provided names: {e}")
+        else:
+            resolved_names = names
 
         opened_nodes: list[Entity] = []
 

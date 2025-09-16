@@ -920,10 +920,15 @@ class AddObservationResult(BaseModel):
         title="Entity",
         description="The entity that was updated",
     )
-    added_observations: list[Observation] = Field(
-        ...,
+    added_observations: list[Observation] | None = Field(
+        default=None,
         title="Added observations",
         description="The observations that were actually added (excluding duplicates and errors)",
+    )
+    errors: list[str] | None = Field(
+        default=None,
+        title="Errors",
+        description="Messages, warnings, or errors to return to the LLM or user, if applicable",
     )
 
 
