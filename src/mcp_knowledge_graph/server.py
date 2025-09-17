@@ -31,6 +31,8 @@ from .models import (
     CreateEntityResult,
     Observation,
     AddObservationResult,
+    UpdateEntityRequest,
+    UpdateEntityResult,
 )
 from .settings import Settings as settings, Logger as logger
 
@@ -332,10 +334,14 @@ async def print_entities(
             ord = i if ol else bullet
             if e.name.lower().strip() == "__user__" or e.name.lower().strip() == "user":
                 if exclude_user is True:
-                    logger.debug("print_entities: User-linked entity found during entity printing, skipping")
+                    logger.debug(
+                        "print_entities: User-linked entity found during entity printing, skipping"
+                    )
                     continue
                 else:
-                    logger.debug("print_entities: User-linked entity found during entity printing, including")
+                    logger.debug(
+                        "print_entities: User-linked entity found during entity printing, including"
+                    )
                     graph = graph or await manager.read_graph()
                     user_info = graph.user_info
                     id = user_info.linked_entity_id
@@ -370,14 +376,15 @@ async def print_entities(
             display_post = f"{separator}"
 
             result += f"{display_pre}{display}{display_post}"
-            
+
             # Print the entity's observations
             if include_observations:
                 result += print_observations(
-                    e.observations, options=PrintOptions(
+                    e.observations,
+                    options=PrintOptions(
                         include_durability=include_durability,
                         include_ts=include_ts,
-                    )
+                    ),
                 )
 
             # Print relations about the entity (dynamic, from graph relations)
@@ -665,8 +672,7 @@ async def read_user_info(include_observations: bool = False, include_relations: 
     """
     try:
         result_str = await print_user_info(
-            include_observations=include_observations, 
-            include_relations=include_relations
+            include_observations=include_observations, include_relations=include_relations
         )
     except Exception as e:
         raise ToolError(f"Failed to read user info: {e}")
@@ -722,7 +728,7 @@ async def create_entities(new_entities: list[CreateEntityRequest]):
         entities_created = await manager.create_entities(new_entities)
     except Exception as e:
         raise ToolError(f"Failed to create entities: {e}")
-    
+
     succeeded: list[CreateEntityResult] = []
     failed: list[CreateEntityResult] = []
 
@@ -734,7 +740,7 @@ async def create_entities(new_entities: list[CreateEntityRequest]):
 
     # FIX: Variable name collision - use different variable name for result string
     result_str = ""
-    
+
     if len(succeeded) == 1:
         result_str = "Entity created successfully:\n"
     elif len(succeeded) > 1:
@@ -763,8 +769,10 @@ async def create_entities(new_entities: list[CreateEntityRequest]):
                 successful_entities.append(entity)
             except Exception as e:
                 logger.error(f"Failed to convert entity dict to Entity: {e}")
-    
-    result_str += await print_entities(entities=successful_entities, options=PrintOptions(include_observations=True))
+
+    result_str += await print_entities(
+        entities=successful_entities, options=PrintOptions(include_observations=True)
+    )
 
     if len(failed) == 0:
         return result_str
@@ -918,35 +926,40 @@ async def add_observations(new_observations: list[ObservationRequest]):
         else:
             return str(entity)
 
+    # Print the results of adding observations to entities
     result_str = ""
-    if len(succeeded) == 1:
-        ident = f"{succeeded[0].entity.name} (ID: {succeeded[0].entity.id})"
-        result_str = f"Succcessfully added observations to {ident}:\n"
-        result_str += await print_observations(succeeded[0].added_observations)
-    elif len(succeeded) > 1:
-        idents = [f"{s.entity.name} ({s.entity.id})" for s in succeeded]
-        result_str = f"Succcessfully added observations to {', '.join(idents)}:\n"
-        for s in succeeded:
-            result_str += f"- {s.entity.name} (ID: {s.entity.id}):\n"
-            result_str += await print_observations(s.added_observations)
-    elif len(succeeded) == 0 and len(failed) > 0:
-        result_str = "Request successful; however, no new observations were added, due to the following errors:\n"
-        for f in failed:
-            result_str += f"- {dump_bad_entity(f.entity)}: {'; '.join(f.errors)}\n"
-        return result_str
-    elif len(succeeded) > 0 and len(failed) > 0:
-        idents_succeeded = [f"{s.entity.name} (ID: {s.entity.id})" for s in succeeded]
-        result_str = f"Successfully added observations to {', '.join(idents_succeeded)}:\n"
-        for s in succeeded:
-            result_str += f"- {s.entity.name} (ID: {s.entity.id}):\n"
-            result_str += await print_observations(s.added_observations)
+    if len(failed) == 0 or not failed:
+        if len(succeeded) == 1:
+            ident = f"{succeeded[0].entity.name} (ID: {succeeded[0].entity.id})"
+            result_str = f"Succcessfully added observations to {ident}:\n"
+            result_str += await print_observations(succeeded[0].added_observations)
+        elif len(succeeded) > 1:
+            idents = [f"{s.entity.name} ({s.entity.id})" for s in succeeded]
+            result_str = f"Succcessfully added observations to {', '.join(idents)}:\n"
+            for s in succeeded:
+                result_str += f"- {s.entity.name} (ID: {s.entity.id}):\n"
+                result_str += await print_observations(s.added_observations)
+        else:
+            raise ToolError(
+                "Unknown issue while printing observation addition results, however no errors were returned!"
+            )
+    elif len(failed) > 0:
+        if len(succeeded) == 0 and len(failed) > 0:
+            result_str = "Request successful; however, no new observations were added, due to the following errors:\n"
+            for f in failed:
+                result_str += f"- {dump_bad_entity(f.entity)}: {'; '.join(f.errors)}\n"
+            return result_str
+        elif len(succeeded) > 0:
+            idents_succeeded = [f"{s.entity.name} (ID: {s.entity.id})" for s in succeeded]
+            result_str = f"Successfully added observations to {', '.join(idents_succeeded)}:\n"
+            for s in succeeded:
+                result_str += f"- {s.entity.name} (ID: {s.entity.id}):\n"
+                result_str += await print_observations(s.added_observations)
 
-        result_str += f"However, failed to add observations to {len(failed)} entities:\n"
-        for r in failed:
-            result_str += f"- {r.entity.name} (ID: {r.entity.id}): {'; '.join(r.errors)}\n"
-        return result_str
-    else:
-        raise ToolError("No observations were added to any entities!")
+            result_str += f"However, failed to add observations to {len(failed)} entities:\n"
+            for r in failed:
+                result_str += f"- {r.entity.name} (ID: {r.entity.id}): {'; '.join(r.errors)}\n"
+            return result_str
 
     return result_str
 
@@ -1270,81 +1283,67 @@ async def merge_entities(
         # Convert entity_ids to a list if it's a single value
         if isinstance(entity_ids, (str, EntityID)):
             entity_ids = [entity_ids]
-        
+
         # Get entities by IDs to get their names
         entities = await manager.open_nodes(ids=entity_ids)
         if not entities:
             raise ToolError("No entities found with the provided IDs")
-        
+
         # Extract entity names for the merge operation
         entity_names = [entity.name for entity in entities]
-        
+
         # Merge entities using their names
         merged = await manager.merge_entities(new_entity_name, entity_names)
     except Exception as e:
         raise ToolError(f"Failed to merge entities: {e}")
-    
+
     return_str = f"Successfully merged {len(entities)} entities into a new entity:\n"
     return_str += await print_entities(entities=[merged])
     return return_str
 
 
 @mcp.tool
-async def update_entity(
-    identifier: str | None = Field(
-        default=None,
-        description="Entity name or alias to identify the target entity (used if entity_id not provided)",
-    ),
-    entity_id: str | None = Field(
-        default=None,
-        description="ID of the target entity (preferred over identifier if provided)",
-    ),
-    name: str | None = Field(default=None, description="New canonical name for the entity"),
-    entity_type: str | None = Field(default=None, description="New type for the entity"),
-    aliases: str | list[str] | None = Field(
-        default=None,
-        description="Aliases to set (merged by default; set merge_aliases=false to replace)",
-    ),
-    icon: str | None = Field(
-        default=None,
-        description="Emoji icon to set for the entity; use empty string to clear",
-    ),
-    merge_aliases: bool = Field(
-        default=True,
-        description="When true, merge provided aliases; when false, replace alias list",
-    ),
-):
+async def update_entity(request: UpdateEntityRequest):
     """Update fields on an existing entity by ID or name/alias.
 
     Provide at least one of: `name`, `entity_type`, `aliases`, or `icon`.
     """
     try:
-        if name is None and entity_type is None and aliases is None and icon is None:
+        if all(
+            request.new_name is None
+            and request.new_type is None
+            and request.new_aliases is None
+            and request.new_icon is None
+        ):
             raise ValidationError("No updates provided")
 
         # Normalize aliases to a list[str] if provided as a string (e.g., stringified JSON array)
         aliases_normalized: list[str] | None
-        if isinstance(aliases, str):
+        if isinstance(request.new_aliases, str):
             try:
-                parsed = json.loads(aliases)
+                parsed = json.loads(request.new_aliases)
                 if isinstance(parsed, list):
                     aliases_normalized = [str(a) for a in parsed]
                 else:
                     # Fallback: comma-separated string
-                    aliases_normalized = [s.strip() for s in aliases.split(",") if s.strip()]
+                    aliases_normalized = [
+                        s.strip() for s in request.new_aliases.split(",") if s.strip()
+                    ]
             except Exception:
-                aliases_normalized = [s.strip() for s in aliases.split(",") if s.strip()]
+                aliases_normalized = [
+                    s.strip() for s in request.new_aliases.split(",") if s.strip()
+                ]
         else:
-            aliases_normalized = aliases
+            aliases_normalized = request.new_aliases
 
         updated = await manager.update_entity(
-            identifier=identifier,
-            entity_id=entity_id,
-            name=name,
-            entity_type=entity_type,
+            identifier=request.identifier,
+            entity_id=request.entity_id,
+            name=request.new_name,
+            entity_type=request.new_type,
             aliases=aliases_normalized,
-            icon=icon,
-            merge_aliases=merge_aliases,
+            icon=request.new_icon,
+            merge_aliases=request.merge_aliases,
         )
 
         # Build a concise human-readable summary

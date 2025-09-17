@@ -194,6 +194,21 @@ class Entity(BaseModel):
         title="Icon",
         description="The emoji to provide a visual representation of the entity. Must be a single valid emoji.",
     )
+    ctime: datetime = Field(
+        default_factory=get_current_datetime,
+        title="Creation time",
+        description="The time the entity was created, in UTC",
+    )
+    mtime: datetime = Field(
+        default_factory=get_current_datetime,
+        title="Modification time",
+        description="The time the entity was last modified, in UTC",
+    )
+
+    @staticmethod
+    def update_mtime(entity: "Entity") -> None:
+        """Update the modification timestamp of the entity to the current time in UTC."""
+        entity.mtime = get_current_datetime()
 
     @field_validator("icon", mode="after")
     @classmethod
@@ -856,6 +871,62 @@ class CreateEntityResult(BaseModel):
         default=None,
         title="Errors",
         description="Messages, warnings, or errors to return to the LLM or user, if applicable",
+    )
+
+
+class UpdateEntityRequest(BaseModel):
+    """Request model used to update an entity in the knowledge graph."""
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        validate_by_name=True,
+        validate_by_alias=True,
+    )
+    identifiers: list[str] | list[EntityID] = (
+        Field(
+            default=None,
+            description="Entity names, aliases, or IDs to identify the target entities to update",
+        ),
+    )
+    new_name: str = (Field(default=None, description="New canonical name for the updated entity"),)
+    new_type: str | None = (Field(default=None, description="New type for the updated entity"),)
+    new_aliases: str | list[str] | None = (
+        Field(
+            default=None,
+            description="Aliases to set for the merged entity (merged by default; set merge_aliases=false to replace)",
+        ),
+    )
+    new_icon: str | None = (
+        Field(
+            default=None,
+            description="Emoji icon to set for the merged entity; use empty string to clear",
+        ),
+    )
+    merge_aliases: bool = (
+        Field(
+            default=True,
+            description="When true, merge provided aliases for the merged entity; when false, replace alias list",
+        ),
+    )
+
+
+class UpdateEntityResult(BaseModel):
+    """Data model for the result of updating an entity."""
+
+    entity: Entity | None = Field(
+        ...,
+        title="Entity",
+        description="The resulting merged entity, or None if the update failed",
+    )
+    errors: list[str] | None = Field(
+        default=None,
+        title="Errors",
+        description="Messages, warnings, or errors to return to the LLM or user, if applicable",
+    )
+    success: bool = Field(
+        ...,
+        title="Success",
+        description="Whether the entity was updated successfully",
     )
 
 

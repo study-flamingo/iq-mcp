@@ -297,6 +297,13 @@ class KnowledgeGraphManager:
                     )
                     entity.name = "unknown"
 
+            # Make sure mtime is after ctime for weird edge cases
+            if entity.mtime <= entity.ctime:
+                logger.warning(
+                    f"_validate_entity: Entity {entity.name} has mtime before ctime: {entity.mtime} <= {entity.ctime}. Corrected."
+                )
+                entity.mtime = entity.ctime
+
             # Return the validated entity
             return entity
         except Exception as e:
@@ -751,11 +758,11 @@ class KnowledgeGraphManager:
 
         # FIX: Create proper name-based lookups instead of ID-based lookups
         results: list[CreateEntityResult] = []
-        
+
         # Create a lookup for existing entity names and aliases (case-insensitive)
         existing_names_lower = set()
         existing_aliases_lower = set()
-        
+
         for entity in graph.entities:
             existing_names_lower.add(entity.name.lower().strip())
             try:
@@ -769,7 +776,7 @@ class KnowledgeGraphManager:
         # Process new entity requests
         for new_entity in new_entities:
             name_lc = (new_entity.name or "").strip().lower()
-            
+
             if not name_lc:
                 results.append(
                     CreateEntityResult(
@@ -796,7 +803,7 @@ class KnowledgeGraphManager:
                         pass
                     if existing_entity:
                         break
-                
+
                 if existing_entity:
                     results.append(
                         CreateEntityResult(
@@ -825,10 +832,10 @@ class KnowledgeGraphManager:
                     icon=new_entity.icon,
                     id=self._generate_new_valid_entity_id(graph),
                 )
-                
+
                 # Add the entity to the graph
                 graph.entities.append(entity)
-                
+
                 # Add to existing lookups to prevent duplicates in this batch
                 existing_names_lower.add(entity.name.lower().strip())
                 try:
@@ -837,11 +844,9 @@ class KnowledgeGraphManager:
                             existing_aliases_lower.add(alias.lower().strip())
                 except Exception:
                     pass
-                
+
                 # Add the success to the results
-                results.append(
-                    CreateEntityResult(entity=entity, errors=None)
-                )
+                results.append(CreateEntityResult(entity=entity, errors=None))
             except Exception as e:
                 results.append(
                     CreateEntityResult(
@@ -978,7 +983,6 @@ class KnowledgeGraphManager:
                 continue
 
             # Create observations with timestamps from the request
-
             observations: list[str] = [old_obs.content for old_obs in entity.observations] or []
             new_observations: list[Observation] = []
             for o in request.observations:
@@ -1283,7 +1287,6 @@ class KnowledgeGraphManager:
         if not ids and not names:
             raise ValueError("Either ids or names must be provided")
 
-        
         # Check if ids is a string representation of a list
         resolved_ids: list[str] = []
         if ids is not None:
@@ -1301,7 +1304,9 @@ class KnowledgeGraphManager:
                 except (json.JSONDecodeError, ValueError):
                     # If JSON parsing fails, treat as single string
                     resolved_ids = [ids]
-                    logger.debug(f"open_nodes: JSON parsing failed, treating as single string: {resolved_ids}")
+                    logger.debug(
+                        f"open_nodes: JSON parsing failed, treating as single string: {resolved_ids}"
+                    )
             elif isinstance(ids, list):
                 # Handle case where list contains JSON-encoded strings
                 for id_item in ids:
@@ -1361,16 +1366,22 @@ class KnowledgeGraphManager:
                     if not ident or not isinstance(ident, str):
                         logger.warning(f"Skipping invalid identifier: {ident}")
                         continue
-                        
+
                     # Special case for user
                     logger.debug(f"Getting entity: {ident}")
-                    if ident.lower() in {"user", "__user__"} and user_info and user_info.linked_entity_id:
+                    if (
+                        ident.lower() in {"user", "__user__"}
+                        and user_info
+                        and user_info.linked_entity_id
+                    ):
                         try:
                             entity = self._get_user_linked_entity(graph=graph)
                             if entity:
                                 opened_nodes.append(entity)
                             else:
-                                logger.error(f"User-linked entity not found for identifier: {ident}")
+                                logger.error(
+                                    f"User-linked entity not found for identifier: {ident}"
+                                )
                         except Exception as e:
                             logger.error(f"Error getting user-linked entity for {ident}: {e}")
                     else:
@@ -1391,7 +1402,7 @@ class KnowledgeGraphManager:
                     if not entity_id:
                         logger.warning(f"Skipping empty ID: {entity_id}")
                         continue
-                        
+
                     entity = self._get_entity_by_id(graph, str(entity_id))
                     if entity:
                         opened_nodes.append(entity)
@@ -1694,6 +1705,9 @@ class KnowledgeGraphManager:
                 target.aliases = [
                     a for a in normalized_incoming if a.lower() != target.name.strip().lower()
                 ]
+
+        # Update modification time
+        target.update_mtime()
 
         # Final validation step for updated entity
         try:
