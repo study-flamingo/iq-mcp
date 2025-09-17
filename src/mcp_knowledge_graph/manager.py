@@ -643,6 +643,7 @@ class KnowledgeGraphManager:
 
         For information on the format of the graph, see the README.md file.
         """
+        logger.debug(f"manager._save_graph() called, saving to {self.memory_file_path}")
         # Note: Avoid calling cleanup here to prevent recursive save cycles.
 
         try:
@@ -699,8 +700,11 @@ class KnowledgeGraphManager:
             except Exception as e:
                 raise RuntimeError(f"Failed to write graph to {self.memory_file_path}: {e}")
 
+            logger.debug(f"💾 Successfully saved graph to {self.memory_file_path}")
+
         except Exception as e:
-            raise RuntimeError(f"Failed to save graph: {e}")
+            logger.error(f"⛔ Failed to save graph: {e}")
+            raise RuntimeError(f"⛔ Failed to save graph: {e}")
 
     async def _get_entity_id_map(self, graph: KnowledgeGraph) -> dict[EntityID, Entity]:
         """
@@ -1279,13 +1283,8 @@ class KnowledgeGraphManager:
         if not ids and not names:
             raise ValueError("Either ids or names must be provided")
 
-        # DEBUG: Force print to see what we're getting
-        print(f"\n=== OPEN_NODES DEBUG ===")
-        print(f"ids parameter: {ids} (type: {type(ids)})")
-        print(f"names parameter: {names} (type: {type(names)})")
-        print(f"=== END DEBUG ===\n")
         
-        # FIX: Properly handle ids parameter - check if it's a string representation of a list
+        # Check if ids is a string representation of a list
         resolved_ids: list[str] = []
         if ids is not None:
             if isinstance(ids, str):
@@ -1295,14 +1294,14 @@ class KnowledgeGraphManager:
                     parsed = json.loads(ids)
                     if isinstance(parsed, list):
                         resolved_ids = [str(item) for item in parsed]
-                        logger.debug(f"DEBUG: parsed ids as JSON list: {resolved_ids}")
+                        logger.debug(f"open_nodes: parsed ids as JSON list: {resolved_ids}")
                     else:
                         resolved_ids = [ids]
-                        logger.debug(f"DEBUG: treating ids as single string: {resolved_ids}")
+                        logger.debug(f"open_nodes: treating ids as single string: {resolved_ids}")
                 except (json.JSONDecodeError, ValueError):
                     # If JSON parsing fails, treat as single string
                     resolved_ids = [ids]
-                    logger.debug(f"DEBUG: JSON parsing failed, treating as single string: {resolved_ids}")
+                    logger.debug(f"open_nodes: JSON parsing failed, treating as single string: {resolved_ids}")
             elif isinstance(ids, list):
                 # Handle case where list contains JSON-encoded strings
                 for id_item in ids:
@@ -1319,12 +1318,9 @@ class KnowledgeGraphManager:
                     except (json.JSONDecodeError, ValueError):
                         # If JSON parsing fails, treat as regular string
                         resolved_ids.append(id_str)
-                logger.debug(f"DEBUG: ids is already a list, resolved to: {resolved_ids}")
-            else:
-                resolved_ids = []
-                logger.debug(f"DEBUG: ids is neither string nor list, setting to empty: {resolved_ids}")
+                logger.debug(f"open_nodes: ids received as a list, resolved to: {resolved_ids}")
 
-        # FIX: Properly handle names parameter processing
+        # Check if names is a string representation of a list
         resolved_names: list[str] = []
         if names is not None:
             if isinstance(names, str):
@@ -1354,8 +1350,6 @@ class KnowledgeGraphManager:
                     except (json.JSONDecodeError, ValueError):
                         # If JSON parsing fails, treat as regular string
                         resolved_names.append(name_str)
-            else:
-                resolved_names = []
 
         opened_nodes: list[Entity] = []
 

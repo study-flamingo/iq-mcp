@@ -71,13 +71,13 @@ class PrintOptions:
     - include_types: Whether to include the types of the entities in the display. Default is `True`.
     - include_observations: Whether to include observations of the entities in the display. Default is `False`.
     - include_relations: Whether to include relations of the entities in the display. Default is `False`.
+    - include_durability: Whether to include the durability of the observations in the display, if applicable. Default is `True`.
+    - include_ts: Whether to include the timestamp of the observations in the display, if applicable. Default is `True`.
     - indent: The number of spaces to indent the entity display. Default is `2`.
     - ul: Whether to use a bulleted list. Default is `True`.
     - ol: Whether to use a numbered list. Default is `False`.
     - bullet: The bullet to use for the unordered list. Default is `-`.
     - ordinal_separator: The separator to use between the ordinal and the entity. Default is `.`
-    - include_durability: Whether to include the durability of the observations in the display, if applicable. Default is `True`.
-    - include_ts: Whether to include the timestamp of the observations in the display, if applicable. Default is `True`.
 
     Notes:
 
@@ -99,6 +99,8 @@ class PrintOptions:
     include_types: bool = True
     include_observations: bool = False
     include_relations: bool = False
+    include_durability: bool = True
+    include_ts: bool = True
     indent: int = 0
     ul: bool = True
     ol: bool = False
@@ -308,6 +310,10 @@ async def print_entities(
     md_links = options.md_links
     include_ids = options.include_ids
     include_types = options.include_types
+    include_observations = options.include_observations
+    include_durability = options.include_durability
+    include_ts = options.include_ts
+    # include_relations = options.include_relations
     indent = options.indent
     ul = options.ul
     ol = False if ul else options.ol
@@ -326,10 +332,10 @@ async def print_entities(
             ord = i if ol else bullet
             if e.name.lower().strip() == "__user__" or e.name.lower().strip() == "user":
                 if exclude_user is True:
-                    logger.debug("User-linked entity found during entity printing, skipping")
+                    logger.debug("print_entities: User-linked entity found during entity printing, skipping")
                     continue
                 else:
-                    logger.debug("User-linked entity found during entity printing, including")
+                    logger.debug("print_entities: User-linked entity found during entity printing, including")
                     graph = graph or await manager.read_graph()
                     user_info = graph.user_info
                     id = user_info.linked_entity_id
@@ -351,12 +357,11 @@ async def print_entities(
 
             # Compose entity string (entity icon, name, id, type)
             display = (
-                f"{'[' if md_links else ''}{icon}{name}{']' if md_links else ' '}"
-                f"{'(' if include_types or include_ids else ''}"
-                f"{type + ', ' if include_types and not md_links else ''}"
-                f"{'ID: ' if include_ids and not md_links else ''}{id if include_ids else ''}"
-                f"{')' if include_types or include_ids else ''}"
-                f"{' (' + type + ')' if include_types and md_links else ''}"
+                f"{'[' if md_links else ''}"
+                f"{icon}{name}"
+                f"{' (' + type + ')' if include_types else ''}"
+                f"{']' if md_links else ' '}"
+                f"{'(' + id + ')' if include_ids else ''}"
             )
             # With default options: [👤 John Doe](12345678) (person)
             # Example with md_links=False: 👤 John Doe (person, ID: 12345678)
@@ -365,6 +370,19 @@ async def print_entities(
             display_post = f"{separator}"
 
             result += f"{display_pre}{display}{display_post}"
+            
+            # Print the entity's observations
+            if include_observations:
+                result += print_observations(
+                    e.observations, options=PrintOptions(
+                        include_durability=include_durability,
+                        include_ts=include_ts,
+                    )
+                )
+
+            # Print relations about the entity (dynamic, from graph relations)
+            # TODO: implement - probably want to robustly remove duplicates
+            # if include_relations: ...
             i += 1
 
         # Finally, add the epilogue
@@ -520,7 +538,7 @@ async def print_observations(
     observations: list[Observation], options: PrintOptions = PrintOptions()
 ) -> str:
     """
-    Print all the observations between a list of two or more entities in a readable format.
+    Print all the observations of an entity in a readable format.
 
     Args:
 
