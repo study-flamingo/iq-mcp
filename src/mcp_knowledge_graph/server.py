@@ -18,6 +18,7 @@ from fastmcp.exceptions import ToolError, ValidationError
 from .manager import KnowledgeGraphManager
 from .models import (
     DeleteEntryRequest,
+    DeleteObservationRequest,
     EntityID,
     KnowledgeGraph,
     KnowledgeGraphException,
@@ -645,7 +646,10 @@ async def read_user_info(include_observations: bool = False, include_relations: 
       - include_relations: Include relations related to the user in the response.
     """
     try:
-        result_str = await print_user_info(include_observations, include_relations)
+        result_str = await print_user_info(
+            include_observations=include_observations, 
+            include_relations=include_relations
+        )
     except Exception as e:
         raise ToolError(f"Failed to read user info: {e}")
     return result_str
@@ -698,59 +702,67 @@ async def create_entities(new_entities: list[CreateEntityRequest]):
     """
     try:
         entities_created = await manager.create_entities(new_entities)
+    except Exception as e:
+        raise ToolError(f"Failed to create entities: {e}")
+    
+    succeeded: list[CreateEntityResult] = []
+    failed: list[CreateEntityResult] = []
 
-        succeeded: list[CreateEntityResult] = []
-        failed: list[CreateEntityResult] = []
-
-        for e in entities_created:
-            if e.errors:
-                failed.append(e)
-            else:
-                succeeded.append(e)
-
-        if len(succeeded) == 1:
-            result = "Entity created successfully:\n"
-        elif len(succeeded) > 1:
-            result = f"Created {len(succeeded)} entities successfully:\n"
-        if len(succeeded) == 0:
-            if len(failed) > 0:
-                errmsg = "Request received; however, no new entities were created, due to the following errors:\n"
-                for e in failed:
-                    errmsg += f"- {e.entity.name} {e.entity.id} ({e.entity.entity_type})\n"
-                    if e.errors:
-                        errmsg += "  Error(s):\n"
-                        for err in e.errors:
-                            errmsg += f"  - {err}\n"
-                raise ToolError(errmsg)
-            else:
-                raise ToolError("Unknown error while creating entities!")
-
-        # Print observations
-        options = PrintOptions(include_observations=True)
-        result += await print_entities(entities=succeeded, options=options)
-
-        if len(failed) == 0:
-            return result
-        elif len(failed) == 1:
-            result += "Failed to create entity:\n"
+    for e in entities_created:
+        if e.errors:
+            failed.append(e)
         else:
-            result += f"Failed to create {len(failed)} entities:\n"
-        for r in failed:
-            ent = r.entity or {}
-            result += f"  - {ent.get('name', 'unknown')} ({ent.get('entity_type', 'unknown')})\n"
-            if r.errors:
-                result += "Error(s):\n"
-                for err in r.errors:
-                    result += f"  - {err}\n"
-            result += "\n"
+            succeeded.append(e)
 
-        # Don't print observations
-        options = PrintOptions(include_observations=False)
-        result += await print_entities(entities=failed, options=options)
+    # FIX: Variable name collision - use different variable name for result string
+    result_str = ""
+    
+    if len(succeeded) == 1:
+        result_str = "Entity created successfully:\n"
+    elif len(succeeded) > 1:
+        result_str = f"Created {len(succeeded)} entities successfully:\n"
+    if len(succeeded) == 0:
+        if len(failed) > 0:
+            errmsg = "Request received; however, no new entities were created, due to the following errors:\n"
+            for e in failed:
+                errmsg += f"- {str(e.entity)}:\n"
+                for err in e.errors:
+                    errmsg += f"  - {err}\n"
+            raise ToolError(errmsg)
+        else:
+            raise ToolError("Unknown error while creating entities!")
 
-        return result
-    except Exception as exc:
-        raise ToolError(f"Failed to create entities: {exc}")
+    # On success print the new entities and their observations
+    # Extract actual entities from the results
+    successful_entities = []
+    for result in succeeded:
+        if isinstance(result.entity, Entity):
+            successful_entities.append(result.entity)
+        elif isinstance(result.entity, dict):
+            # Convert dict to Entity if needed
+            try:
+                entity = Entity.from_dict(result.entity)
+                successful_entities.append(entity)
+            except Exception as e:
+                logger.error(f"Failed to convert entity dict to Entity: {e}")
+    
+    result_str += await print_entities(entities=successful_entities, options=PrintOptions(include_observations=True))
+
+    if len(failed) == 0:
+        return result_str
+    elif len(failed) == 1:
+        result_str += "Failed to create entity:\n"
+    else:
+        result_str += f"Failed to create {len(failed)} entities:\n"
+    for r in failed:
+        result_str += f"  - {str(r.entity)}:\n"
+        if r.errors:
+            result_str += "Error(s):\n"
+            for err in r.errors:
+                result_str += f"  - {err}\n"
+        result_str += "\n"
+
+    return result_str
 
 
 @mcp.tool
@@ -892,9 +904,13 @@ async def add_observations(new_observations: list[ObservationRequest]):
     if len(succeeded) == 1:
         ident = f"{succeeded[0].entity.name} (ID: {succeeded[0].entity.id})"
         result_str = f"Succcessfully added observations to {ident}:\n"
+        result_str += await print_observations(succeeded[0].added_observations)
     elif len(succeeded) > 1:
         idents = [f"{s.entity.name} ({s.entity.id})" for s in succeeded]
         result_str = f"Succcessfully added observations to {', '.join(idents)}:\n"
+        for s in succeeded:
+            result_str += f"- {s.entity.name} (ID: {s.entity.id}):\n"
+            result_str += await print_observations(s.added_observations)
     elif len(succeeded) == 0 and len(failed) > 0:
         result_str = "Request successful; however, no new observations were added, due to the following errors:\n"
         for f in failed:
@@ -905,7 +921,7 @@ async def add_observations(new_observations: list[ObservationRequest]):
         result_str = f"Successfully added observations to {', '.join(idents_succeeded)}:\n"
         for s in succeeded:
             result_str += f"- {s.entity.name} (ID: {s.entity.id}):\n"
-            result_str += print_observations(s.added_observations)
+            result_str += await print_observations(s.added_observations)
 
         result_str += f"However, failed to add observations to {len(failed)} entities:\n"
         for r in failed:
@@ -980,7 +996,24 @@ async def delete_entry(request: DeleteEntryRequest):  # TODO: deprecate! ...or n
             return "Entities deleted successfully"
 
         elif entry_type == "observation":
-            await manager.delete_observations(data or [])
+            # Ensure data is properly typed as DeleteObservationRequest objects
+            if data is None:
+                data = []
+            # Validate that data contains DeleteObservationRequest objects
+            validated_data = []
+            for item in data:
+                if isinstance(item, DeleteObservationRequest):
+                    validated_data.append(item)
+                else:
+                    # Try to convert dict to DeleteObservationRequest
+                    try:
+                        if isinstance(item, dict):
+                            validated_data.append(DeleteObservationRequest(**item))
+                        else:
+                            logger.error(f"Invalid observation deletion data: {item}")
+                    except Exception as e:
+                        logger.error(f"Failed to convert observation deletion data: {e}")
+            await manager.delete_observations(validated_data)
             return "Observations deleted successfully"
 
         elif entry_type == "relation":
@@ -1150,26 +1183,23 @@ async def open_nodes(
     Returns:
         Data (observations) about the nodes (entities) and their relationships (relations) with other nodes in the graph.
     """
-    # If entity_ids are passed, ensure they are valid IDs; sometimes we get list[str] in str format,
-    # so we check if it is a JSON-parseable list of strings too
+    # Handle entity_ids parameter
     resolved_ids = []
     if entity_ids:
-        # Check if entity_ids is a string representation of a list
-        try:
-            import json
+        if isinstance(entity_ids, list):
+            resolved_ids = entity_ids
+        else:
+            # Single string ID
+            resolved_ids = [entity_ids]
 
-            # Try to parse as JSON list
-            resolved_ids.extend(json.loads(entity_ids))
-            logger.warning(f"Entity IDs provided are not a valid JSON list: {entity_ids}")
-        except (json.JSONDecodeError, ValueError):
-            # If not valid JSON, it's probably a single str id
-            resolved_ids.append(EntityID(entity_ids))
-
+    # Handle entity_names parameter
     resolved_names = []
-    if isinstance(entity_names, list):
-        resolved_names = entity_names
-    else:
-        resolved_names.append(entity_names)
+    if entity_names:
+        if isinstance(entity_names, list):
+            resolved_names = entity_names
+        else:
+            # Single string name
+            resolved_names = [entity_names]
 
     try:
         ents = await manager.open_nodes(names=resolved_names, ids=resolved_ids)
@@ -1219,12 +1249,25 @@ async def merge_entities(
     The manager will combine observations and update relations to point to the new entity.
     """
     try:
-        entities: list[Entity] = await manager.get_entities(entity_ids)
-        merged = await manager.merge_entities(new_entity_name, entities)
+        # Convert entity_ids to a list if it's a single value
+        if isinstance(entity_ids, (str, EntityID)):
+            entity_ids = [entity_ids]
+        
+        # Get entities by IDs to get their names
+        entities = await manager.open_nodes(ids=entity_ids)
+        if not entities:
+            raise ToolError("No entities found with the provided IDs")
+        
+        # Extract entity names for the merge operation
+        entity_names = [entity.name for entity in entities]
+        
+        # Merge entities using their names
+        merged = await manager.merge_entities(new_entity_name, entity_names)
     except Exception as e:
         raise ToolError(f"Failed to merge entities: {e}")
+    
     return_str = f"Successfully merged {len(entities)} entities into a new entity:\n"
-    return_str += print_entities(entities=[merged])
+    return_str += await print_entities(entities=[merged])
     return return_str
 
 

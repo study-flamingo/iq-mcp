@@ -230,7 +230,7 @@ class IQSettings:
     def get_logger(self) -> logging.Logger:
         """Get the logger for the IQ-MCP server, configured by the settings object."""
         logger = logging.getLogger("iq-mcp")
-        logger.addHandler(logging.FileHandler("iq-mcp.log"))
+        logger.addHandler(logging.FileHandler(f"{self.project_root}/iq-mcp.log"))
         logger.setLevel(logging.DEBUG if self.debug else logging.INFO)
         logger.debug("Retrieved debug logger")
         return logger

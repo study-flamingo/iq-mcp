@@ -971,7 +971,7 @@ class DeleteEntryRequest(BaseModel):
     entry_type: Literal["observation", "entity", "relation"] = Field(
         description="Type of entry to create: 'observation', 'entity', or 'relation'"
     )
-    data: list[ObservationRequest] | list[EntityID] | list[Relation] | None = Field(
+    data: list[DeleteObservationRequest] | list[EntityID] | list[Relation] | None = Field(
         description="""A list of the appropriate object for the given entry_type.
 
         - entry_type = 'entity': list of entity IDs

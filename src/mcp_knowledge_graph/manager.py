@@ -745,63 +745,116 @@ class KnowledgeGraphManager:
         """
         graph = await self._load_graph()
 
-        # Build lookup of existing names and aliases (lowercased)
+        # FIX: Create proper name-based lookups instead of ID-based lookups
         results: list[CreateEntityResult] = []
-        existing: dict[str, Entity] = {}
-        for e in graph.entities:
-            existing[e.name.strip().lower()] = e
+        
+        # Create a lookup for existing entity names and aliases (case-insensitive)
+        existing_names_lower = set()
+        existing_aliases_lower = set()
+        
+        for entity in graph.entities:
+            existing_names_lower.add(entity.name.lower().strip())
             try:
-                for a in e.aliases or []:
-                    if isinstance(a, str):
-                        existing[a.strip().lower()] = e
+                for alias in entity.aliases or []:
+                    if isinstance(alias, str) and alias.strip():
+                        existing_aliases_lower.add(alias.lower().strip())
             except Exception:
+                # Handle cases where aliases might not be a list
                 pass
 
-        for req in new_entities:
-            name_lc = (req.name or "").strip().lower()
+        # Process new entity requests
+        for new_entity in new_entities:
+            name_lc = (new_entity.name or "").strip().lower()
+            
             if not name_lc:
                 results.append(
                     CreateEntityResult(
-                        entity={"name": req.name, "entity_type": req.entity_type},
-                        errors=["Invalid entity name"],
+                        entity=new_entity,
+                        errors=["Entity name cannot be empty"],
                     )
                 )
                 continue
 
-            if name_lc in existing:
-                ex = existing[name_lc]
+            # Check if the entity already exists by name or alias
+            if name_lc in existing_names_lower or name_lc in existing_aliases_lower:
+                # Find the existing entity for better error message
+                existing_entity = None
+                for entity in graph.entities:
+                    if entity.name.lower().strip() == name_lc:
+                        existing_entity = entity
+                        break
+                    try:
+                        for alias in entity.aliases or []:
+                            if isinstance(alias, str) and alias.lower().strip() == name_lc:
+                                existing_entity = entity
+                                break
+                    except Exception:
+                        pass
+                    if existing_entity:
+                        break
+                
+                if existing_entity:
+                    results.append(
+                        CreateEntityResult(
+                            entity=new_entity,
+                            errors=[
+                                f'Entity "{new_entity.name}" already exists as "{existing_entity.name}" ({existing_entity.id}); skipped'
+                            ],
+                        )
+                    )
+                else:
+                    results.append(
+                        CreateEntityResult(
+                            entity=new_entity,
+                            errors=[f'Entity "{new_entity.name}" already exists; skipped'],
+                        )
+                    )
+                continue
+
+            # If not existing, create the entity
+            try:
+                entity = Entity.from_values(
+                    name=new_entity.name,
+                    entity_type=new_entity.entity_type,
+                    observations=new_entity.observations or [],
+                    aliases=new_entity.aliases or [],
+                    icon=new_entity.icon,
+                    id=self._generate_new_valid_entity_id(graph),
+                )
+                
+                # Add the entity to the graph
+                graph.entities.append(entity)
+                
+                # Add to existing lookups to prevent duplicates in this batch
+                existing_names_lower.add(entity.name.lower().strip())
+                try:
+                    for alias in entity.aliases or []:
+                        if isinstance(alias, str) and alias.strip():
+                            existing_aliases_lower.add(alias.lower().strip())
+                except Exception:
+                    pass
+                
+                # Add the success to the results
+                results.append(
+                    CreateEntityResult(entity=entity, errors=None)
+                )
+            except Exception as e:
                 results.append(
                     CreateEntityResult(
-                        entity=ex.model_dump(mode="json", exclude_none=True),
-                        errors=[
-                            f'Entity "{req.name}" already exists as "{ex.name}" ({ex.id}); skipped'
-                        ],
+                        entity=new_entity,
+                        errors=[f"Failed to create entity: {str(e)}"],
                     )
                 )
-                continue
-
-            entity = Entity.from_values(
-                name=req.name,
-                entity_type=req.entity_type,
-                observations=req.observations or [],
-                aliases=req.aliases or [],
-                icon=req.icon,
-                id=self._generate_new_valid_entity_id(graph),
-            )
-            entity = self._validate_new_entity_id(entity, graph)
-            graph.entities.append(entity)
-            existing[entity.name.strip().lower()] = entity
-            for a in entity.aliases:
-                existing[a.strip().lower()] = entity
-            results.append(
-                CreateEntityResult(
-                    entity=entity.model_dump(mode="json", exclude_none=True), errors=None
-                )
-            )
-        try:
-            await self._save_graph(graph)
-        except Exception as exc:
-            raise RuntimeError(f"Failed to save graph during entity addition: {exc}")
+        # Save the graph only if there were successful creations
+        successful_creations = [r for r in results if not r.errors]
+        if successful_creations:
+            try:
+                await self._save_graph(graph)
+            except Exception as exc:
+                # If save fails, mark all successful creations as failed
+                for result in successful_creations:
+                    result.errors = [f"Failed to save graph: {str(exc)}"]
+                raise RuntimeError(f"Failed to save graph during entity addition: {exc}")
 
         return results
 
@@ -1226,47 +1279,142 @@ class KnowledgeGraphManager:
         if not ids and not names:
             raise ValueError("Either ids or names must be provided")
 
-        # Check if `names` is a list in str formnat
-        resolved_names: list[str] = []
-        if isinstance(names, str):
-            try:
-                resolved_names = json.loads(names)
-            except Exception:
+        # DEBUG: Force print to see what we're getting
+        print(f"\n=== OPEN_NODES DEBUG ===")
+        print(f"ids parameter: {ids} (type: {type(ids)})")
+        print(f"names parameter: {names} (type: {type(names)})")
+        print(f"=== END DEBUG ===\n")
+        
+        # FIX: Properly handle ids parameter - check if it's a string representation of a list
+        resolved_ids: list[str] = []
+        if ids is not None:
+            if isinstance(ids, str):
+                logger.debug(f"DEBUG: ids is a string, attempting to parse: {ids}")
                 try:
-                    # If that didn't work, parse as a single string
-                    resolved_names.append(names)
-                except Exception as e:
-                    raise ValueError(f"Error parsing provided names: {e}")
-        else:
-            resolved_names = names
+                    # Try to parse as JSON first (for string representations of lists)
+                    parsed = json.loads(ids)
+                    if isinstance(parsed, list):
+                        resolved_ids = [str(item) for item in parsed]
+                        logger.debug(f"DEBUG: parsed ids as JSON list: {resolved_ids}")
+                    else:
+                        resolved_ids = [ids]
+                        logger.debug(f"DEBUG: treating ids as single string: {resolved_ids}")
+                except (json.JSONDecodeError, ValueError):
+                    # If JSON parsing fails, treat as single string
+                    resolved_ids = [ids]
+                    logger.debug(f"DEBUG: JSON parsing failed, treating as single string: {resolved_ids}")
+            elif isinstance(ids, list):
+                # Handle case where list contains JSON-encoded strings
+                for id_item in ids:
+                    if id_item is None:
+                        continue
+                    id_str = str(id_item)
+                    try:
+                        # Try to parse each item as JSON in case it's a JSON-encoded list
+                        parsed = json.loads(id_str)
+                        if isinstance(parsed, list):
+                            resolved_ids.extend([str(item) for item in parsed])
+                        else:
+                            resolved_ids.append(id_str)
+                    except (json.JSONDecodeError, ValueError):
+                        # If JSON parsing fails, treat as regular string
+                        resolved_ids.append(id_str)
+                logger.debug(f"DEBUG: ids is already a list, resolved to: {resolved_ids}")
+            else:
+                resolved_ids = []
+                logger.debug(f"DEBUG: ids is neither string nor list, setting to empty: {resolved_ids}")
+
+        # FIX: Properly handle names parameter processing
+        resolved_names: list[str] = []
+        if names is not None:
+            if isinstance(names, str):
+                try:
+                    # Try to parse as JSON first (for string representations of lists)
+                    parsed = json.loads(names)
+                    if isinstance(parsed, list):
+                        resolved_names = [str(item) for item in parsed]
+                    else:
+                        resolved_names = [names]
+                except (json.JSONDecodeError, ValueError):
+                    # If JSON parsing fails, treat as single string
+                    resolved_names = [names]
+            elif isinstance(names, list):
+                # Handle case where list contains JSON-encoded strings
+                for name_item in names:
+                    if name_item is None:
+                        continue
+                    name_str = str(name_item)
+                    try:
+                        # Try to parse each item as JSON in case it's a JSON-encoded list
+                        parsed = json.loads(name_str)
+                        if isinstance(parsed, list):
+                            resolved_names.extend([str(item) for item in parsed])
+                        else:
+                            resolved_names.append(name_str)
+                    except (json.JSONDecodeError, ValueError):
+                        # If JSON parsing fails, treat as regular string
+                        resolved_names.append(name_str)
+            else:
+                resolved_names = []
 
         opened_nodes: list[Entity] = []
 
         # Get the entities that match the provided names
-        if names and isinstance(names, list) and len(names) > 0:
-            logger.debug(f"Getting entities: {names}")
-            for ident in names:
-                # Special case for user
-                logger.debug(f"Getting entity: {ident}")
-                if ident.lower() in {"user", "__user__"} and user_info.linked_entity_id:
-                    entity = self._get_user_linked_entity(graph=graph)
-                else:
-                    entity = self._get_entity_by_name_or_alias(graph, ident)
-                if entity:
-                    opened_nodes.append(entity)
-                else:
-                    logger.error(f"Entity not found: {ident}")
+        try:
+            if resolved_names and len(resolved_names) > 0:
+                logger.debug(f"Getting entities by names: {resolved_names}")
+                for ident in resolved_names:
+                    if not ident or not isinstance(ident, str):
+                        logger.warning(f"Skipping invalid identifier: {ident}")
+                        continue
+                        
+                    # Special case for user
+                    logger.debug(f"Getting entity: {ident}")
+                    if ident.lower() in {"user", "__user__"} and user_info and user_info.linked_entity_id:
+                        try:
+                            entity = self._get_user_linked_entity(graph=graph)
+                            if entity:
+                                opened_nodes.append(entity)
+                            else:
+                                logger.error(f"User-linked entity not found for identifier: {ident}")
+                        except Exception as e:
+                            logger.error(f"Error getting user-linked entity for {ident}: {e}")
+                    else:
+                        entity = self._get_entity_by_name_or_alias(graph, ident)
+                        if entity:
+                            opened_nodes.append(entity)
+                        else:
+                            logger.error(f"Entity not found: {ident}")
+        except Exception as e:
+            logger.error(f"Error getting entities by names: {e}")
+            raise ValueError(f"Error getting entities by names: {e}")
 
         # Get the entities that match the provided IDs
-        if ids and isinstance(ids, list) and len(ids) > 0:
-            for id in ids:
-                entity = self._get_entity_by_id(graph, id)
-                if entity:
-                    opened_nodes.append(entity)
-                else:
-                    logger.error(f"Entity not found: {id}")
+        try:
+            if resolved_ids and len(resolved_ids) > 0:
+                logger.debug(f"Getting entities by IDs: {resolved_ids}")
+                for entity_id in resolved_ids:
+                    if not entity_id:
+                        logger.warning(f"Skipping empty ID: {entity_id}")
+                        continue
+                        
+                    entity = self._get_entity_by_id(graph, str(entity_id))
+                    if entity:
+                        opened_nodes.append(entity)
+                    else:
+                        logger.error(f"Entity not found for ID: {entity_id}")
+        except Exception as e:
+            logger.error(f"Error getting entities by IDs: {e}")
+            raise ValueError(f"Error getting entities by IDs: {e}")
 
-        result = opened_nodes
+        # Remove duplicates while preserving order
+        seen = set()
+        result = []
+        for entity in opened_nodes:
+            if entity.id not in seen:
+                seen.add(entity.id)
+                result.append(entity)
+
         return result
 
     async def merge_entities(self, new_entity_name: str, entity_names: list[str]) -> Entity:
