@@ -140,7 +140,7 @@ async def print_user_info(
     ordinal_separator = options.ordinal_separator
 
     ind = " " * indent if indent > 0 else ""
-    os = ordinal_separator
+    os = ordinal_separator if ol else ""
     ord = "" if ol else bullet
 
     try:
@@ -306,6 +306,7 @@ async def print_entities(
     if exclude_user is None:
         exclude_user = options.exclude_user
 
+    # Resolve options
     prologue = options.prologue
     separator = options.separator
     epilogue = options.epilogue
@@ -316,15 +317,11 @@ async def print_entities(
     include_durability = options.include_durability
     include_ts = options.include_ts
     # include_relations = options.include_relations
-    indent = options.indent
+    ind = " " * options.indent if options.indent > 0 else ""
     ul = options.ul
-    ol = False if ul else options.ol
+    ol = options.ol if ul else ""
     bullet = options.bullet
-    ordinal_separator = options.ordinal_separator
-
-    # Resolve options
-    ind = " " * indent if indent > 0 else ""
-    os = ordinal_separator if ol else ""
+    os = options.ordinal_separator if ol else ""
 
     # Start rendering
     result = prologue
@@ -443,7 +440,7 @@ async def print_relations(
     include_types = options.include_types
     indent = options.indent
     ul = options.ul
-    ol = False if ul else options.ol
+    ol = options.ol if ul else ""
     bullet = options.bullet
     os = options.ordinal_separator
     separator = options.separator
