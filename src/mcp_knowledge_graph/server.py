@@ -593,24 +593,7 @@ def __this_is_a_fake_function_to_separate_sections_in_the_outline_in_cursor_do_n
 
 
 @mcp.tool
-async def read_graph(
-    exclude_user_info: bool = Field(
-        default=False,
-        description="Whether to exclude the user info from the summary. Default is False.",
-    ),
-    exclude_entities: bool = Field(
-        default=False,
-        description="Whether to exclude the entities from the summary. Default is False.",
-    ),
-    exclude_relations: bool = Field(
-        default=False,
-        description="Whether to exclude the relations from the summary. Default is False.",
-    ),
-    exclude_observations: bool = Field(
-        default=False,
-        description="Whether to exclude observations from the summary. Default is False.",
-    ),
-):
+async def read_graph():
     """Read and print a user/LLM-friendly summary of the entire knowledge graph.
 
     Args:
@@ -629,28 +612,27 @@ async def read_graph(
         result = "💭 You remember the following about the user:\n"
 
         try:
-            if not exclude_user_info:
-                result += await print_user_info(
-                    graph, not exclude_observations, not exclude_relations
-                )
+            result += await print_user_info(
+                graph=graph,
+                include_observations=True,
+                include_relations=False,
+            )
         except Exception as e:
             raise ToolError(f"Error while printing user info: {e}")
 
         # Print all entities
         try:
-            if not exclude_entities:
-                result += f"\n👤 You've made observations about {len(graph.entities)} entities:\n"
-                result += await print_entities(graph=graph)
+            result += f"\n👤 You've made observations about {len(graph.entities)} entities:\n"
+            result += await print_entities(graph=graph)
         except Exception as e:
             raise ToolError(f"Error while printing entities: {e}")
 
         # Print all relations
         try:
-            if not exclude_relations:
-                rel_result = await print_relations(graph=graph)
-                if rel_result:
-                    result += f"\n🔗 You've learned about {len(graph.relations)} relations between these entities:\n"
-                    result += rel_result
+            rel_result = await print_relations(graph=graph)
+            if rel_result:
+                result += f"\n🔗 You've learned about {len(graph.relations)} relations between these entities:\n"
+                result += rel_result
         except Exception as e:
             raise ToolError(f"Error while printing relations: {e}")
         return result
