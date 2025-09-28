@@ -158,9 +158,9 @@ class KnowledgeGraphManager:
             unique[key] = rel
         return list(unique.values())
 
-    def _is_observation_outdated(self, obs: Observation) -> bool:
+    def _is_observation_outdated(self, observation: Observation) -> bool:
         """
-        Check if an observation is likely outdated based on durability and age.
+        Check if an observation is outdated based on durability and age.
 
         Args:
             obs: The observation to check
@@ -171,40 +171,20 @@ class KnowledgeGraphManager:
         try:
             now = datetime.now(timezone.utc)
 
-            # If the observation has no timestamp, add one
-            if not obs.timestamp:
-                # Normalize missing timestamp to an ISO UTC string
-                obs.timestamp = now.isoformat().replace("+00:00", "Z")
-                # This observation didn't have a timestamp, but now it does, so assume it's not outdated
-                return False
-
-            obs_date_any = obs.timestamp
-            if isinstance(obs_date_any, str):
-                obs_date = datetime.fromisoformat(obs_date_any.replace("Z", "+00:00"))
-            else:
-                obs_date = obs_date_any
-
-            # Ensure timezone-aware UTC for safe arithmetic
-            if obs_date.tzinfo is None:
-                obs_date = obs_date.replace(tzinfo=timezone.utc)
-            else:
-                obs_date = obs_date.astimezone(timezone.utc)
-
-            days_old = (now - obs_date).days
-            months_old = days_old / 30.0
-
-            if obs.durability == DurabilityType.PERMANENT:
-                return False  # Never outdated
-            elif obs.durability == DurabilityType.LONG_TERM:
-                return months_old > 12  # 1+ years old
-            elif obs.durability == DurabilityType.SHORT_TERM:
-                return months_old > 3  # 3+ months old
-            elif obs.durability == DurabilityType.TEMPORARY:
-                return months_old > 1  # 1+ month old
-            else:
-                return False
+            days_old = (now - observation.timestamp).days
         except (ValueError, AttributeError, TypeError):
             # If timestamp parsing fails, assume not outdated
+            return False
+
+        if observation.durability == DurabilityType.PERMANENT:
+            return False  # Never outdated
+        elif observation.durability == DurabilityType.LONG_TERM:
+            return days_old > 365  # 1+ years old
+        elif observation.durability == DurabilityType.SHORT_TERM:
+            return days_old > 90  # 3+ months old
+        elif observation.durability == DurabilityType.TEMPORARY:
+            return days_old > 30  # 1+ month old
+        else:
             return False
 
     def _generate_new_valid_entity_id(self, graph: KnowledgeGraph) -> str:
@@ -468,12 +448,13 @@ class KnowledgeGraphManager:
             KnowledgeGraph loaded from file, or empty graph if file doesn't exist
         """
         logger.debug("manager._load_graph() called")
-        if not self.memory_file_path.exists():
-            logger.warning(
-                f"⛔ Memory file not found at {self.memory_file_path}! Returning newly initialized graph."
-            )
-            new_graph = KnowledgeGraph.from_default()
-            return new_graph
+        try:
+            if not self.memory_file_path.exists():
+                raise RuntimeError(
+                    f"⛔ Memory file not found at {self.memory_file_path}! Returning newly initialized graph."
+                )
+        except Exception as e:
+            raise RuntimeError(f"Error loading graph: {e}")
 
         # Load the graph
         try:
@@ -741,6 +722,47 @@ class KnowledgeGraphManager:
         if graph is None:
             graph = await self._load_graph()
         return await self._get_entity_id_map(graph)
+
+    async def _prune_outdated_observations(self, graph: KnowledgeGraph) -> KnowledgeGraph:
+        """
+        Prune outdated observations from the knowledge graph. Returns the pruned graph.
+        """
+        for entity in graph.entities:
+            if not entity.observations:
+                continue
+            entity.observations = [obs for obs in entity.observations if not self._is_observation_outdated(obs)]
+        return graph
+
+    async def _prune_duplicate_observations(self, graph: KnowledgeGraph) -> KnowledgeGraph:
+        """
+        Prune duplicate observations from the knowledge graph. Returns the pruned graph.
+        """
+        for entity in graph.entities:
+            if entity.observations and len(entity.observations) > 1:
+                for o in entity.observations:
+                    other_observations = [obs for obs in entity.observations if obs.content != o.content]
+                    if o in other_observations:
+                        entity.observations.remove(o)
+                        logger.info(f"Pruned duplicate observation: {o.content}")
+            else:
+                continue
+        return graph
+    
+    async def _prune_observations(self, graph: KnowledgeGraph) -> KnowledgeGraph:
+        """
+        Prune outdated and duplicate observations from the knowledge graph. Returns the pruned graph.
+        """
+        graph = await self._prune_outdated_observations(graph)
+        graph = await self._prune_duplicate_observations(graph)
+        return graph
+    
+    async def prune_observations(self) -> None:
+        """
+        Prune outdated and duplicate observations from the default knowledge graph, and save the graph.
+        """
+        graph = await self._load_graph()
+        graph = await self._prune_observations(graph)
+        await self._save_graph(graph)
 
     async def create_entities(
         self, new_entities: list[CreateEntityRequest]
@@ -1225,6 +1247,13 @@ class KnowledgeGraphManager:
             Filtered knowledge graph containing only matching entities and their relations
         """
         graph = await self._load_graph()
+        
+        # Prune outdated observations
+        try:
+            graph = await self._prune_observations(graph)
+        except Exception as e:
+            logger.error(f"Error pruning outdated observations: {e}")
+
         query_lower = query.lower()
 
         # Filter entities that match the query

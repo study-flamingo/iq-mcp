@@ -376,7 +376,7 @@ async def print_entities(
 
             # Print the entity's observations
             if include_observations:
-                result += print_observations(
+                result += await print_observations(
                     e.observations,
                     options=PrintOptions(
                         include_durability=include_durability,

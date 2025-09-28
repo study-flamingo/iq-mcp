@@ -1,11 +1,384 @@
-[
-    {
-    "entity_name": "test",
-    "observations": [
+{
+    "type": "entity",
+    "data": {
+        "id": "355312e1",
+        "name": "__user__",
+        "entity_type": "person",
+        "observations": [
             {
-        "content": "test",
-        "durability": "temporary"
+                "content": "Dentist and sole owner of dental practice",
+                "durability": "long-term",
+                "timestamp": "2025-08-05T18:21:25.425000Z"
+            },
+            {
+                "content": "Looking to increase income through side projects not involving adding services to practice",
+                "durability": "long-term",
+                "timestamp": "2025-08-05T18:21:25.425000Z"
+            },
+            {
+                "content": "Interested in content creation and monetization through writing (LinkedIn, Substack)",
+                "durability": "long-term",
+                "timestamp": "2025-08-05T18:21:25.425000Z"
+            },
+            {
+                "content": "Exploring video content creation using loupe-mounted cameras for dental education",
+                "durability": "long-term",
+                "timestamp": "2025-08-05T18:21:25.425000Z"
+            },
+            {
+                "content": "Wants to avoid working as associate for another office",
+                "durability": "long-term",
+                "timestamp": "2025-08-05T18:21:25.425000Z"
+            },
+            {
+                "content": "Focused on leveraging dental expertise for additional revenue streams",
+                "durability": "long-term",
+                "timestamp": "2025-08-05T18:21:25.425000Z"
+            },
+            {
+                "content": "Working on deploying memory MCP server to Google Cloud VM for remote access",
+                "durability": "short-term",
+                "timestamp": "2025-08-07T02:28:44.999111"
+            },
+            {
+                "content": "Plans to use streamable-http for remote MCP server access",
+                "durability": "long-term",
+                "timestamp": "2025-08-07T02:28:44.999154"
+            },
+            {
+                "content": "Seeking infrastructure setup for persistent memory across devices",
+                "durability": "long-term",
+                "timestamp": "2025-08-07T02:28:44.999160"
+            },
+            {
+                "content": "Seeking iPhone message/voicemail integration MCP server for AI message management",
+                "durability": "short-term",
+                "timestamp": "2025-08-13T12:24:18.909245"
+            },
+            {
+                "content": "Looking for solid email management MCP server",
+                "durability": "short-term",
+                "timestamp": "2025-08-13T12:24:18.909265"
+            },
+            {
+                "content": "Interested in automating communication workflows with AI",
+                "durability": "short-term",
+                "timestamp": "2025-08-13T12:24:18.909270"
+            },
+            {
+                "content": "Prefers MCP server solutions over other AI email management options",
+                "durability": "short-term",
+                "timestamp": "2025-08-13T13:32:31.730707"
+            },
+            {
+                "content": "Specifically interested in email automation for dental practice workflow",
+                "durability": "short-term",
+                "timestamp": "2025-08-13T13:32:31.730745"
+            },
+            {
+                "content": "Researched comprehensive list of email management MCP servers",
+                "durability": "short-term",
+                "timestamp": "2025-08-13T13:33:11.081471"
+            },
+            {
+                "content": "Found advanced options including MailerLite, Instantly.ai, Fastmail, and workflow automation servers",
+                "durability": "short-term",
+                "timestamp": "2025-08-13T13:33:11.081483"
+            },
+            {
+                "content": "Identified MCP servers for email marketing, transactional email, and automation workflows",
+                "durability": "short-term",
+                "timestamp": "2025-08-13T13:33:11.081486"
+            },
+            {
+                "content": "Reviewed 20 emails from last 24 hours via Google Workspace integration",
+                "durability": "short-term",
+                "timestamp": "2025-08-13T13:43:30.993752"
+            },
+            {
+                "content": "Has several urgent business matters requiring immediate attention",
+                "durability": "short-term",
+                "timestamp": "2025-08-13T13:43:30.993782"
+            },
+            {
+                "content": "Practice communications and financial items need follow-up",
+                "durability": "short-term",
+                "timestamp": "2025-08-13T13:43:30.993785"
+            },
+            {
+                "content": "Contemplating economic class definitions and relationship between labor vs capital income",
+                "durability": "short-term",
+                "timestamp": "2025-08-18T14:08:09.123567"
+            },
+            {
+                "content": "Interested in economic theory around wealth class distinctions",
+                "durability": "short-term",
+                "timestamp": "2025-08-18T14:08:09.124248"
+            },
+            {
+                "content": "Exploring transition strategies from high-earning dependence to financial independence",
+                "durability": "short-term",
+                "timestamp": "2025-08-18T17:28:30.673860"
+            },
+            {
+                "content": "Interested in systematic wealth-building approaches and asset diversification",
+                "durability": "short-term",
+                "timestamp": "2025-08-18T17:28:30.673886"
+            },
+            {
+                "content": "Considering 4% withdrawal rule and passive income targets",
+                "durability": "short-term",
+                "timestamp": "2025-08-18T17:28:30.673890"
+            },
+            {
+                "content": "demonstrating iq-mcp tools functionality",
+                "durability": "temporary",
+                "timestamp": "2025-09-09T16:04:46.513813Z"
+            },
+            {
+                "content": "has ADHD",
+                "durability": "permanent",
+                "timestamp": "2025-09-11T05:33:03.333309Z"
+            },
+            {
+                "content": "cheekily confessed to 'cheating' on Claude with ChatGPT for voice-guided longsword training",
+                "durability": "short-term",
+                "timestamp": "2025-09-11T07:51:36.697725Z"
+            },
+            {
+                "content": "was preparing for a longsword test and requested verbal review of Black Falcon material",
+                "durability": "short-term",
+                "timestamp": "2025-09-11T07:51:36.697734Z"
+            },
+            {
+                "content": "practices longsword training with his son, letting him 'wield the blade'",
+                "durability": "short-term",
+                "timestamp": "2025-09-11T07:51:36.697736Z"
+            },
+            {
+                "content": "humorously pretended to be devastated about mud in his shoe during training",
+                "durability": "temporary",
+                "timestamp": "2025-09-11T07:51:36.697738Z"
+            },
+            {
+                "content": "values MCP server support over voice chat functionality for AI assistants",
+                "durability": "long-term",
+                "timestamp": "2025-09-11T07:51:36.697739Z"
+            },
+            {
+                "content": "describes himself as a 'free spirit' who 'can't be tied down' when it comes to AI assistants",
+                "durability": "short-term",
+                "timestamp": "2025-09-11T07:51:36.697740Z"
+            },
+            {
+                "content": "has a playful sense of humor and enjoys banter during technical conversations",
+                "durability": "permanent",
+                "timestamp": "2025-09-11T07:51:36.697741Z"
+            },
+            {
+                "content": "jokingly complained about being a 'failure at everything' then immediately revealed it was completely a joke",
+                "durability": "temporary",
+                "timestamp": "2025-09-11T07:52:27.271325Z"
+            },
+            {
+                "content": "mentioned his son wielding the blade and his cat being on a tree during training",
+                "durability": "temporary",
+                "timestamp": "2025-09-11T07:52:27.271332Z"
+            },
+            {
+                "content": "had ChatGPT walk him through longsword technique modifiers during training session",
+                "durability": "short-term",
+                "timestamp": "2025-09-11T08:04:17.374537Z"
+            },
+            {
+                "content": "actively testing the IQ-MCP knowledge graph system",
+                "durability": "temporary",
+                "timestamp": "2025-09-13T06:10:35.230848Z"
+            },
+            {
+                "content": "actively testing the IQ-MCP knowledge graph system",
+                "durability": "temporary",
+                "timestamp": "2025-09-13T06:10:35.230848Z"
+            },
+            {
+                "content": "actively testing the IQ-MCP knowledge graph system",
+                "durability": "temporary",
+                "timestamp": "2025-09-14T01:46:58.117565Z"
+            },
+            {
+                "content": "testing the add_observations function after initial failure",
+                "durability": "temporary",
+                "timestamp": "2025-09-14T01:47:32.292316Z"
+            },
+            {
+                "content": "testing the add_observations function after initial failure",
+                "durability": "temporary",
+                "timestamp": "2025-09-14T01:47:32.292316Z"
+            },
+            {
+                "content": "successfully tested open_nodes functionality with both entity names and IDs",
+                "durability": "temporary",
+                "timestamp": "2025-09-14T06:35:49.738738Z"
+            },
+            {
+                "content": "successfully tested open_nodes functionality with both entity names and IDs",
+                "durability": "temporary",
+                "timestamp": "2025-09-14T06:35:49.738738Z"
+            },
+            {
+                "content": "seeking website development contractor for Down to Earth Dental practice",
+                "durability": "short-term",
+                "timestamp": "2025-09-15T16:41:03.738068Z"
+            },
+            {
+                "content": "wants modern, professional website to attract new patients and improve patient experience",
+                "durability": "short-term",
+                "timestamp": "2025-09-15T16:41:03.738186Z"
+            },
+            {
+                "content": "wants modern, professional website to attract new patients and improve patient experience",
+                "durability": "short-term",
+                "timestamp": "2025-09-15T16:41:03.738186Z"
+            },
+            {
+                "content": "testing iq-mcp toolset functionality again after system updates",
+                "durability": "temporary",
+                "timestamp": "2025-09-16T18:50:27.514884Z"
+            },
+            {
+                "content": "testing iq-mcp toolset functionality again after system updates",
+                "durability": "temporary",
+                "timestamp": "2025-09-16T18:50:27.514884Z"
+            },
+            {
+                "content": "prefers speed, mobility, and using opponent's momentum against them in fencing approach",
+                "durability": "long-term",
+                "timestamp": "2025-09-19T17:58:59.332092Z"
+            },
+            {
+                "content": "plans to practice binding game and timing drills today",
+                "durability": "temporary",
+                "timestamp": "2025-09-19T17:58:59.332121Z"
+            },
+            {
+                "content": "plans to practice binding game and timing drills today",
+                "durability": "temporary",
+                "timestamp": "2025-09-19T17:58:59.332121Z"
+            },
+            {
+                "content": "customizing HEMA gear with ancestral color scheme from Dominica and Hungary",
+                "durability": "short-term",
+                "timestamp": "2025-09-19T18:25:48.715096Z"
+            },
+            {
+                "content": "considering SPES Plunderhosen pants for HEMA training",
+                "durability": "short-term",
+                "timestamp": "2025-09-19T18:25:48.715125Z"
+            },
+            {
+                "content": "considering SPES Plunderhosen pants for HEMA training",
+                "durability": "short-term",
+                "timestamp": "2025-09-19T18:25:48.715125Z"
+            },
+            {
+                "content": "seeking steel gorget with proper collar protection for HEMA sparring",
+                "durability": "short-term",
+                "timestamp": "2025-09-19T19:20:43.686200Z"
+            },
+            {
+                "content": "understands importance of collar protection against angled thrusts",
+                "durability": "long-term",
+                "timestamp": "2025-09-19T19:20:43.686235Z"
+            },
+            {
+                "content": "understands importance of collar protection against angled thrusts",
+                "durability": "long-term",
+                "timestamp": "2025-09-19T19:20:43.686235Z"
+            },
+            {
+                "content": "interested in historical armor types and their geographic/temporal distribution",
+                "durability": "long-term",
+                "timestamp": "2025-09-19T23:33:11.625630Z"
+            },
+            {
+                "content": "interested in historical armor types and their geographic/temporal distribution",
+                "durability": "long-term",
+                "timestamp": "2025-09-19T23:33:11.625630Z"
+            },
+            {
+                "content": "wants historical pauldrons for HEMA gear representing late 16th/early 17th century period",
+                "durability": "short-term",
+                "timestamp": "2025-09-20T01:57:15.022081Z"
+            },
+            {
+                "content": "interested in historically accurate equipment that complements George Silver era training",
+                "durability": "long-term",
+                "timestamp": "2025-09-20T01:57:15.022100Z"
+            },
+            {
+                "content": "interested in historically accurate equipment that complements George Silver era training",
+                "durability": "long-term",
+                "timestamp": "2025-09-20T01:57:15.022100Z"
+            },
+            {
+                "content": "interested in sword & buckler manuscripts and 'plays' similar to kata from Japanese martial arts",
+                "durability": "long-term",
+                "timestamp": "2025-09-20T19:27:36.488849Z"
+            },
+            {
+                "content": "interested in sword & buckler manuscripts and 'plays' similar to kata from Japanese martial arts",
+                "durability": "long-term",
+                "timestamp": "2025-09-20T19:27:36.488849Z"
+            },
+            {
+                "content": "asking about relationships between different historical fencing traditions - English, early German, and late German (Meyer)",
+                "durability": "long-term",
+                "timestamp": "2025-09-20T20:40:48.751780Z"
+            },
+            {
+                "content": "asking about relationships between different historical fencing traditions - English, early German, and late German (Meyer)",
+                "durability": "long-term",
+                "timestamp": "2025-09-20T20:40:48.751780Z"
+            },
+            {
+                "content": "requested comprehensive timeline/mind-map of historical European martial arts masters showing influences and relationships between traditions",
+                "durability": "long-term",
+                "timestamp": "2025-09-20T20:50:27.812761Z"
+            },
+            {
+                "content": "requested comprehensive timeline/mind-map of historical European martial arts masters showing influences and relationships between traditions",
+                "durability": "long-term",
+                "timestamp": "2025-09-20T20:50:27.812761Z"
+            },
+            {
+                "content": "enjoys lofi music and has curated a playlist",
+                "durability": "long-term",
+                "timestamp": "2025-09-21T18:26:48.403140Z"
+            },
+            {
+                "content": "listens to lofi artists including brillon., No Spirit, softy, Osaki, and xander",
+                "durability": "long-term",
+                "timestamp": "2025-09-21T18:26:48.403161Z"
+            },
+            {
+                "content": "listens to lofi artists including brillon., No Spirit, softy, Osaki, and xander",
+                "durability": "long-term",
+                "timestamp": "2025-09-21T18:26:48.403161Z"
+            },
+            {
+                "content": "seeking to develop solid footwork training drills for HEMA longsword practice",
+                "durability": "short-term",
+                "timestamp": "2025-09-25T00:47:25.457595Z"
+            },
+            {
+                "content": "seeking to develop solid footwork training drills for HEMA longsword practice",
+                "durability": "short-term",
+                "timestamp": "2025-09-25T00:47:25.457595Z"
             }
-        ]
+        ],
+        "aliases": [],
+        "icon": "",
+        "ctime": "2025-09-25T00:47:25.429227Z",
+        "mtime": "2025-09-25T00:47:25.429229Z"
     }
-]
+}
