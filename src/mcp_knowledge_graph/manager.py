@@ -278,7 +278,7 @@ class KnowledgeGraphManager:
                     entity.name = "unknown"
 
             # Make sure mtime is after ctime for weird edge cases
-            if entity.mtime <= entity.ctime:
+            if entity.mtime < entity.ctime:
                 logger.warning(
                     f"_validate_entity: Entity {entity.name} has mtime before ctime: {entity.mtime} <= {entity.ctime}. Corrected."
                 )
@@ -448,15 +448,19 @@ class KnowledgeGraphManager:
             KnowledgeGraph loaded from file, or empty graph if file doesn't exist
         """
         logger.debug("manager._load_graph() called")
+        self.memory_file_path = Path(self.memory_file_path.resolve())
         try:
             if not self.memory_file_path.exists():
                 raise RuntimeError(
                     f"⛔ Memory file not found at {self.memory_file_path}! Returning newly initialized graph."
                 )
         except Exception as e:
-            raise RuntimeError(f"Error loading graph: {e}")
+            raise RuntimeError(f"Error locating graph file: {e}")
 
         # Load the graph
+        if not self.memory_file_path.exists():
+            raise RuntimeError(f"Memory file not found at {self.memory_file_path}")
+        logger.debug(f"Loading graph from {self.memory_file_path}")
         try:
             # Instantiate graph components
             meta: GraphMeta | None = None
@@ -465,7 +469,7 @@ class KnowledgeGraphManager:
             relations: list[Relation] = []
 
             # Open the memory file
-            with open(self.memory_file_path, "r", encoding="utf-8") as f:
+            with open(file=rf"{Path(self.memory_file_path)}", mode="r", encoding="utf-8") as f:
                 # Load the graph line by line
                 for i, line in enumerate(f, start=1):
                     # Parse a MemoryRecord; on failure, log and continue
@@ -530,6 +534,8 @@ class KnowledgeGraphManager:
                 raise KnowledgeGraphException("No valid entities found in memory file!")
             if not relations:
                 raise KnowledgeGraphException("No valid relations found in memory file!")
+            if not meta:
+                raise KnowledgeGraphException("No valid metadata found in memory file!")
 
             # Compose a preliminary graph
             graph = KnowledgeGraph(
@@ -620,7 +626,7 @@ class KnowledgeGraphManager:
             return validated_graph
 
         except Exception as e:
-            raise RuntimeError("Error loading graph") from e
+            raise RuntimeError(f"Error loading graph: {e}")
 
     async def _save_graph(self, graph: KnowledgeGraph) -> None:
         """
@@ -730,7 +736,9 @@ class KnowledgeGraphManager:
         for entity in graph.entities:
             if not entity.observations:
                 continue
-            entity.observations = [obs for obs in entity.observations if not self._is_observation_outdated(obs)]
+            entity.observations = [
+                obs for obs in entity.observations if not self._is_observation_outdated(obs)
+            ]
         return graph
 
     async def _prune_duplicate_observations(self, graph: KnowledgeGraph) -> KnowledgeGraph:
@@ -740,14 +748,16 @@ class KnowledgeGraphManager:
         for entity in graph.entities:
             if entity.observations and len(entity.observations) > 1:
                 for o in entity.observations:
-                    other_observations = [obs for obs in entity.observations if obs.content != o.content]
+                    other_observations = [
+                        obs for obs in entity.observations if obs.content != o.content
+                    ]
                     if o in other_observations:
                         entity.observations.remove(o)
                         logger.info(f"Pruned duplicate observation: {o.content}")
             else:
                 continue
         return graph
-    
+
     async def _prune_observations(self, graph: KnowledgeGraph) -> KnowledgeGraph:
         """
         Prune outdated and duplicate observations from the knowledge graph. Returns the pruned graph.
@@ -755,7 +765,7 @@ class KnowledgeGraphManager:
         graph = await self._prune_outdated_observations(graph)
         graph = await self._prune_duplicate_observations(graph)
         return graph
-    
+
     async def prune_observations(self) -> None:
         """
         Prune outdated and duplicate observations from the default knowledge graph, and save the graph.
@@ -1247,7 +1257,7 @@ class KnowledgeGraphManager:
             Filtered knowledge graph containing only matching entities and their relations
         """
         graph = await self._load_graph()
-        
+
         # Prune outdated observations
         try:
             graph = await self._prune_observations(graph)
