@@ -18,8 +18,10 @@ from pydantic import (
 )
 from enum import Enum
 import regex as re
-from .settings import Logger as logger, Settings
+from .logging import get_iq_mcp_logger
+from .settings import Settings as settings
 
+logger = get_iq_mcp_logger()
 
 # Helper functions
 _GRAPHEMES = re.compile(r"\X")
@@ -225,7 +227,7 @@ class Entity(BaseModel):
 
     def icon_(self) -> str:
         """Return the icon of the entity if it exists and its display is not disabled in settings, plus a single whitespace. Otherwise, return an empty string."""
-        if Settings.no_emojis or not self.icon:
+        if settings.no_emojis or not self.icon:
             return ""
         return self.icon + " "
 

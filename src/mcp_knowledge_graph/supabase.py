@@ -1,96 +1,340 @@
+import logging
+import os
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 from dotenv import load_dotenv
-from .settings import supabase_settings, Logger as logger, SupabaseSettings
+from datetime import datetime, timezone
+
+from supabase import create_client, Client as SBClient
+
+from .models import KnowledgeGraph, Entity
+from .logging import get_iq_mcp_logger
 
 load_dotenv()
 
+logger = get_iq_mcp_logger()
 
-@dataclass
+
+class SupabaseError(Exception):
+    """Exception raised for errors in the Supabase integration."""
+
+    pass
+
+
+class SupabaseSettings:
+    """Supabase settings for the IQ-MCP server.
+
+    Attributes:
+        `url`: Supabase project URL
+        `key`: Supabase anon or service role key with read access
+        `email_table` (optional): Name of the table to query for email summaries (default: "emailSummaries")
+        `entities_table` (optional): Name of the table to query for entities (default: "kgEntities")
+        `observations_table` (optional): Name of the table to query for observations (default: "kgObservations")
+        `relations_table` (optional): Name of the table to query for relations (default: "kgRelations")
+    """
+
+    def __init__(
+        self,
+        url: str,
+        key: str,
+        email_table: str | None = None,
+        entities_table: str | None = None,
+        observations_table: str | None = None,
+        relations_table: str | None = None,
+    ) -> None:
+        self.url = url
+        self.key = key
+        self.email_table = email_table or os.getenv("SUPABASE_EMAIL_TABLE", "emailSummaries")
+        self.entities_table = entities_table or os.getenv("SUPABASE_ENTITIES_TABLE", "kgEntities")
+        self.observations_table = observations_table or os.getenv(
+            "SUPABASE_OBSERVATIONS_TABLE", "kgObservations"
+        )
+        self.relations_table = relations_table or os.getenv(
+            "SUPABASE_RELATIONS_TABLE", "kgRelations"
+        )
+
+
 class EmailSummary:
     """Object representing an email summary from Supabase."""
 
-    id: str
-    from_address: str
-    from_name: str
-    reply_to: str | None
-    timestamp: Any | None
-    subject: str
-    summary: str
-    links: list[dict[str, Any]] | None
+    def __init__(
+        self,
+        message_id: str,
+        thread_id: str,
+        from_address: str,
+        from_name: str,
+        reply_to: str | None,
+        timestamp: Any | None,
+        subject: str,
+        summary: str,
+        links: list[dict[str, str]] | None,
+    ) -> None:
+        """Initialize an EmailSummary object."""
+        self.message_id = message_id
+        self.thread_id = thread_id
+        self.from_address = from_address
+        self.from_name = from_name
+        self.reply_to = reply_to
+        self.timestamp = timestamp
+        self.subject = subject
+        self.summary = summary
+        self.links = links
 
 
 class SupabaseManager:
     """Lightweight manager for optional Supabase integration.
 
-    - Pure configuration is provided via SupabaseSettings
-    - Client is created lazily the first time it is needed
-    - If configuration or library is missing, integration is disabled
+    Pass in a SupabaseSettings object to configure the manager:
+    - `url`: Supabase project URL
+    - key: Supabase anon or service role key with read access
+    - email_table (optional): Name of the table to query for email summaries (default: "emailSummaries")
+    - entities_table (optional): Name of the table to query for entities (default: "kgEntities")
+    - observations_table (optional): Name of the table to query for observations (default: "kgObservations")
+    - relations_table (optional): Name of the table to query for relations (default: "kgRelations")
     """
 
-    def __init__(self, settings_obj: SupabaseSettings | None) -> None:
-        self._settings: SupabaseSettings | None = settings_obj
-        self._client = None  # created lazily
+    def __init__(self, settings_obj: SupabaseSettings) -> None:
+        self.settings: SupabaseSettings = settings_obj
+        self.client = create_client(self.settings.url, self.settings.key)
 
-    @property
-    def enabled(self) -> bool:
-        return self._settings is not None
+    def _ensure_client(self) -> SBClient:
+        if not self.client:
+            logger.error("Supabase client not initialized, doing that real quick")
+            self.client = create_client(self.settings.url, self.settings.key)
+        return self.client
 
-    def _ensure_client(self):
-        if not self.enabled:
-            raise RuntimeError("Supabase integration is not configured")
-        if self._client is None:
-            try:
-                import supabase as sb  # lazy import to avoid hard dependency
-            except ImportError as e:
-                raise RuntimeError(
-                    "Supabase library is not installed. Install with 'uv pip install supabase'"
-                ) from e
-            self._client = sb.create_client(self._settings.url, self._settings.key)  # type: ignore[union-attr]
-        return self._client
-
-    async def get_new_email_summaries(self) -> list[EmailSummary]:
-        """Return unreviewed email summaries.
+    async def get_email_summaries(
+        self,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        include_reviewed: bool = False,
+    ) -> list[EmailSummary]:
+        """Return email summaries from the Supabase integration.
 
         Returns:
-            list[EmailSummary]: summaries with reviewed == false (if column exists); otherwise all rows.
+            list[EmailSummary]: email summaries from the Supabase integration, optionally filtered by time and reviewed status.
         """
         client = self._ensure_client()
-        table_name = self._settings.email_table  # type: ignore[union-attr]
-        try:
-            # Try to filter by reviewed == false if available
-            query = client.table(table_name).select("*")
-            try:
-                query = query.eq("reviewed", False)
-            except Exception:
-                pass
-            logger.debug(f"Querying Supabase for new email summaries from '{table_name}'")
-            response = await query.execute()
-            data = getattr(response, "data", None)
-            if not isinstance(data, list):
-                raise RuntimeError("Unexpected response format from Supabase")
 
-            summaries: list[EmailSummary] = []
-            for row in data:
+        # If a time constraint is provided, convert to UTC and set to 00:00:00
+        if from_date:
+            from_ts = from_date.astimezone(timezone.utc).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+        else:
+            from_ts = None
+        if to_date:
+            to_ts = to_date.astimezone(timezone.utc).replace(
+                hour=23, minute=59, second=59, microsecond=999999
+            )
+        else:
+            to_ts = None
+
+        email_summary_table = self.settings.email_table
+
+        # Get the supabase data
+
+        try:
+            query = client.table(email_summary_table).select("*")
+            if not include_reviewed:
+                query = query.eq("reviewed", "false")
+            if from_ts:
+                query = query.gte("received_at", from_ts)
+            if to_ts:
+                query = query.lte("received_at", to_ts)
+            response = query.execute()
+        except Exception as e:
+            logger.error(f"Error getting email summaries from Supabase: {e}")
+            raise SupabaseError(f"Error getting email summaries from Supabase: {e}")
+
+        summaries: list[EmailSummary] = []
+        try:
+            for row in response.data:
                 summaries.append(
                     EmailSummary(
-                        id=row.get("id") or row.get("message_id"),
-                        from_address=row.get("from_address", ""),
-                        from_name=row.get("from_name", ""),
+                        message_id=row.get("message_id"),
+                        thread_id=row.get("thread_id"),
+                        from_address=row.get("from_address"),
+                        from_name=row.get("from_name"),
                         reply_to=row.get("reply_to"),
-                        timestamp=row.get("timestamp"),
-                        subject=row.get("subject", ""),
-                        summary=row.get("summary", ""),
-                        links=row.get("links") or [],
+                        timestamp=row.get("received_at"),
+                        subject=row.get("subject"),
+                        summary=row.get("text_summary"),
+                        links=row.get("links"),
                     )
                 )
-            return summaries
         except Exception as e:
-            logger.error(f"Error querying Supabase: {e}")
-            raise
+            logger.error(f"Error parsing email summaries from Supabase: {e}")
+            raise SupabaseError(f"Error parsing email summaries from Supabase: {e}")
+
+        logger.info(f"Retrieved {len(summaries)} email summaries from table {email_summary_table}")
+
+        return summaries
+
+    async def mark_as_reviewed(self, email_summaries: list[EmailSummary]) -> None:
+        """Mark email summaries as reviewed in Supabase."""
+        client = self._ensure_client()
+        email_summary_table = self.settings.email_table
+        try:
+            for summary in email_summaries:
+                _ = (
+                    client.table(email_summary_table)
+                    .update({"reviewed": "true"})
+                    .eq("message_id", summary.message_id)
+                    .execute()
+                )
+        except Exception as e:
+            logger.error(f"Error marking email summaries as read in Supabase: {e}")
+        else:
+            logger.info(f"Marked {len(email_summaries)} email summaries as read in Supabase")
+
+    async def sync_knowledge_graph(self, graph: KnowledgeGraph) -> None:
+        """
+        Replace Supabase knowledge graph tables with a cleaned snapshot from the provided graph.
+
+        Order of operations (to satisfy FK constraints):
+        1) Delete relations, then observations, then entities
+        2) Insert entities, then observations, then relations
+        """
+        client = self._ensure_client()
+
+        entities_table = self.settings.entities_table
+        observations_table = self.settings.observations_table
+        relations_table = self.settings.relations_table
+
+        # --- Prepare cleaned records ---
+        try:
+            # Entities: dedupe by id, ensure core fields only
+            entity_by_id: dict[str, Entity] = {}
+            for e in graph.entities:
+                if not e or not getattr(e, "id", None):
+                    continue
+                entity_by_id[str(e.id)] = e
+
+            entities_payload: list[dict[str, Any]] = []
+            for e in entity_by_id.values():
+                aliases: list[str] = []
+                try:
+                    for a in e.aliases or []:
+                        if isinstance(a, str) and a.strip():
+                            aliases.append(a)
+                except Exception:
+                    pass
+
+                entities_payload.append(
+                    {
+                        "id": str(e.id),
+                        "name": e.name,
+                        "entity_type": e.entity_type,
+                        "aliases": aliases,  # expects text[] in Supabase; adjust schema accordingly
+                        "icon": getattr(e, "icon", None),
+                        "ctime": getattr(e, "ctime", None),
+                        "mtime": getattr(e, "mtime", None),
+                    }
+                )
+
+            # Observations: group per entity, dedupe by content
+            observations_payload: list[dict[str, Any]] = []
+            for e in entity_by_id.values():
+                seen_contents: set[str] = set()
+                for o in e.observations or []:
+                    try:
+                        content = (o.content or "").strip()
+                        if not content or content in seen_contents:
+                            continue
+                        seen_contents.add(content)
+                        ts = o.timestamp
+                        ts_iso = (
+                            ts.isoformat() if isinstance(ts, datetime) else str(ts) if ts else None
+                        )
+                        durability = getattr(o, "durability", None)
+                        durability_str = getattr(durability, "value", None) or str(durability)
+                        observations_payload.append(
+                            {
+                                "linked_entity": str(e.id),
+                                "content": content,
+                                "durability": durability_str,
+                                "timestamp": ts_iso,
+                            }
+                        )
+                    except Exception as ex:
+                        logger.error(f"Error preparing observation for entity {e.name}: {ex}")
+                        continue
+
+            # Relations: dedupe by (from_id, to_id, relation) and keep only those whose endpoints exist
+            rel_key_seen: set[tuple[str, str, str]] = set()
+            relations_payload: list[dict[str, Any]] = []
+            valid_ids = set(entity_by_id.keys())
+            for r in graph.relations or []:
+                try:
+                    from_id = str(getattr(r, "from_id", "") or getattr(r, "from_entity_id", ""))
+                    to_id = str(getattr(r, "to_id", "") or getattr(r, "to_entity_id", ""))
+                    relation = (r.relation or "").strip()
+                    if not from_id or not to_id or not relation:
+                        continue
+                    if from_id not in valid_ids or to_id not in valid_ids:
+                        continue
+                    key = (from_id, to_id, relation)
+                    if key in rel_key_seen:
+                        continue
+                    rel_key_seen.add(key)
+                    relations_payload.append(
+                        {
+                            "from_id": from_id,
+                            "to_id": to_id,
+                            "relation": relation,
+                        }
+                    )
+                except Exception as ex:
+                    logger.error(f"Error preparing relation: {ex}")
+                    continue
+        except Exception as e:
+            logger.error(f"Error preparing Supabase payloads: {e}")
+            raise SupabaseError(f"Error preparing Supabase payloads: {e}")
+
+        # --- Replace remote data ---
+        # Delete in FK-safe order: relations -> observations -> entities
+        try:
+            _ = client.table(relations_table).delete().neq("from_id", "").execute()
+            _ = client.table(observations_table).delete().neq("linked_entity", "").execute()
+            _ = client.table(entities_table).delete().neq("id", "").execute()
+        except Exception as e:
+            logger.error(f"Error clearing Supabase tables: {e}")
+            raise SupabaseError(f"Error clearing Supabase tables: {e}")
+
+        # Insert payloads: entities -> observations -> relations
+        try:
+            if entities_payload:
+                _ = client.table(entities_table).insert(entities_payload).execute()
+            if observations_payload:
+                # Optional: chunk if very large; current volume expected manageable
+                _ = client.table(observations_table).insert(observations_payload).execute()
+            if relations_payload:
+                _ = client.table(relations_table).insert(relations_payload).execute()
+        except Exception as e:
+            logger.error(f"Error inserting Supabase data: {e}")
+            raise SupabaseError(f"Error inserting Supabase data: {e}")
+
+        logger.info(
+            f"Supabase sync complete: entities={len(entities_payload)}, observations={len(observations_payload)}, relations={len(relations_payload)}"
+        )
 
 
-# Export a singleton manager configured from global settings
+supabase_settings = SupabaseSettings(
+    url=os.getenv("SUPABASE_URL"),
+    key=os.getenv("SUPABASE_KEY"),
+)
 supabase = SupabaseManager(supabase_settings)
+
+
+async def DEBUG_test_supabase_init() -> None:
+    """Debug test for the Supabase integration."""
+    try:
+        summaries = await supabase.get_email_summaries()
+        logger.info(f"Retrieved {len(summaries)} email summaries from Supabase")
+    except Exception as e:
+        logger.error(f"Error getting email summaries from Supabase: {e}")
+        raise SupabaseError(f"Error getting email summaries from Supabase: {e}")
+
 
 __all__ = ["supabase", "EmailSummary", "SupabaseSettings", "SupabaseManager"]

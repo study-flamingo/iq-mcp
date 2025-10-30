@@ -5,9 +5,11 @@ This module implements the Model Context Protocol server that exposes
 knowledge graph operations as tools for LLM integration using FastMCP 2.11.
 """
 
+import sys
 import asyncio
 import json
-from datetime import tzinfo
+import re
+from datetime import tzinfo, datetime, timezone, timedelta
 from fastmcp import FastMCP
 from pydantic import Field
 from pydantic.main import IncEx
@@ -15,6 +17,7 @@ from pydantic.dataclasses import dataclass
 from typing import Any, Annotated
 from fastmcp.exceptions import ToolError, ValidationError
 
+from .logging import get_iq_mcp_logger
 from .manager import KnowledgeGraphManager
 from .models import (
     DeleteEntryRequest,
@@ -30,19 +33,16 @@ from .models import (
     Entity,
     CreateEntityResult,
     Observation,
-    AddObservationResult,
     UpdateEntityRequest,
-    UpdateEntityResult,
 )
-from .settings import Settings as settings, Logger as logger
+from .settings import Settings as settings
 
-
-import sys
+logger = get_iq_mcp_logger()
 
 try:
-    from .supabase import supabase, EmailSummary
+    from .supabase import supabase, EmailSummary, SupabaseManager
 except Exception as e:
-    logger.warning("Supabase integration disabled: %s", e)
+    logger.warning(f"Supabase integration unavailable: {e}")
     supabase = None
     EmailSummary = None
 
@@ -1319,107 +1319,203 @@ async def update_entity(request: UpdateEntityRequest):
 
 # ----- DEBUG/EXPERIMENTAL TOOLS -----#
 
-if settings.debug:
 
-    @mcp.tool
-    async def DEBUG_get_email_update():
-        """Get new email summaries from Supabase."""
-        if supabase is None or not getattr(supabase, "enabled", False):
-            return "Supabase integration is not configured."
+# Supabase Integration Tools
+def add_supabase_tools(mcp_server: FastMCP, supabase_manager: SupabaseManager | None) -> None:
+    """If the Supabase integration is enabled, adds the tools to the given MCP server."""
+
+    if not supabase_manager:
+        logger.warning(
+            "Supabase integration is not initialized, Supabase tools will not be available"
+        )
+        return
+
+    # Tools to be added with successful Supabase integration
+    @mcp_server.tool
+    async def get_new_email_summaries(
+        from_date: str | None = Field(
+            default=None,
+            description=(
+                "Start date for fetching summaries. Accepts 'YYYY-MM-DD', ISO 8601, or relative phrases like 'one week ago'."
+            ),
+        ),
+        to_date: str | None = Field(
+            default=None,
+            description=(
+                "End date for fetching summaries. Accepts 'YYYY-MM-DD', ISO 8601, or relative phrases like 'yesterday'."
+            ),
+        ),
+        include_reviewed: bool = Field(
+            default=False,
+            description="Whether to include previously reviewed email summaries. Default is False.",
+        ),
+    ):
+        """Retrieve email summaries from Supabase via the Supabase manager and present them as text."""
+
+        def _parse_date(dt_str: str | None) -> datetime | None:
+            if not dt_str:
+                return None
+            s = dt_str.strip()
+            if not s:
+                return None
+
+            # Try ISO 8601 with optional trailing Z
+            s_iso = s
+            if s_iso.endswith("Z"):
+                s_iso = s_iso[:-1] + "+00:00"
+            try:
+                dt = datetime.fromisoformat(s_iso)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt
+            except Exception:
+                pass
+
+            # Try YYYY-MM-DD date-only
+            try:
+                dt = datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                return dt
+            except Exception:
+                pass
+
+            # Simple relative phrases
+            now_utc = datetime.now(timezone.utc)
+            s_lower = s.lower()
+
+            if s_lower == "today":
+                return now_utc
+            if s_lower == "yesterday":
+                return now_utc - timedelta(days=1)
+
+            m = re.match(r"^(?P<num>\d+)\s+day(s)?\s+ago$", s_lower)
+            if m:
+                return now_utc - timedelta(days=int(m.group("num")))
+
+            m = re.match(r"^(?P<num>\d+)\s+week(s)?\s+ago$", s_lower)
+            if m:
+                return now_utc - timedelta(weeks=int(m.group("num")))
+
+            if s_lower in {"one day ago", "a day ago"}:
+                return now_utc - timedelta(days=1)
+            if s_lower in {"one week ago", "a week ago", "last week"}:
+                return now_utc - timedelta(weeks=1)
+
+            logger.error(f"Unrecognized date format: {dt_str}")
+            return None
+
+        start_dt = _parse_date(from_date)
+        end_dt = _parse_date(to_date)
+
+        # Retrieve email summaries
         try:
-            response = await supabase.get_new_email_summaries()
-            if not response:
-                return "No new email summaries found!"
-            result = ""
-            for summary in response:
-                result += f"Messsage ID: {summary.id}\n"
-                result += f"From: {summary.from_address} ({summary.from_name})\n"
-                result += f"Reply-To: {summary.reply_to}\n"
-                result += f"Timestamp: {summary.timestamp}\n"
-                result += f"Subject: {summary.subject}\n"
-                result += f"Summary: {summary.summary}\n"
+            summaries = await supabase_manager.get_email_summaries(
+                from_date=start_dt, to_date=end_dt, include_reviewed=include_reviewed
+            )
+        except Exception as e:
+            raise ToolError(f"Failed to retrieve email summaries: {e}")
+
+        if not summaries:
+            return "No new email summaries available!"
+
+        # Format the email summaries
+        header = "New email summaries:\n"
+        if not settings.no_emojis:
+            header = "📧 " + header
+
+        lines: list[str] = [header]
+        for summary in summaries:
+            try:
+                ts = summary.timestamp
+                ts_str = ""
+                if isinstance(ts, str):
+                    ts_str = ts
+                else:
+                    ts_str = str(ts) if ts is not None else ""
+
+                lines.append(f"Message ID: {summary.message_id}")
+                # From line
+                if summary.from_name and summary.from_address:
+                    lines.append(f"From: {summary.from_name} ({summary.from_address})")
+                elif summary.from_address:
+                    lines.append(f"From: {summary.from_address}")
+                # Reply-To
+                if summary.reply_to:
+                    lines.append(f"Reply-To: {summary.reply_to}")
+                # Timestamp
+                if ts_str:
+                    lines.append(f"Timestamp: {ts_str}")
+                # Subject & Summary
+                if summary.subject:
+                    lines.append(f"Subject: {summary.subject}")
+                if summary.summary:
+                    lines.append(f"Summary: {summary.summary}")
+                # Links list
                 try:
                     links_list = summary.links or []
-                    links_str = "\n- ".join([str(link.get("url", link)) for link in links_list])
-                    if links_str:
-                        result += f"Links: {links_str}"
-                except Exception:
+                    if links_list:
+                        link_lines = ["Links:"]
+                        for link in links_list:
+                            if isinstance(link, dict):
+                                title = link.get("title") or ""
+                                url = link.get("url") or str(link)
+                            else:
+                                title = ""
+                                url = str(link)
+                            if title and url:
+                                link_lines.append(f"- [{title}]({url})")
+                            elif not title and url:
+                                link_lines.append(f"- {url}")
+                            else:
+                                continue
+                        if link_lines:
+                            lines.append("\n".join(link_lines))
+                except Exception as e:
+                    logger.error(f"Error formatting email summary links: {e}")
                     pass
-                result += "\n\n"
+                lines.append("")  # blank line between summaries
+            except Exception as e:
+                logger.error(f"Error formatting email summary: {e}")
+                continue
+
+        logger.info(
+            f"Marking {len(summaries)} email summaries as reviewed in Supabase in background..."
+        )
+        asyncio.create_task(supabase_manager.mark_as_reviewed(summaries))
+        return "\n".join(lines).rstrip() + "\n"
+
+    @mcp_server.tool
+    async def sync_supabase():
+        """Replace Supabase KG tables with a cleaned snapshot from the local knowledge graph."""
+        if not supabase_manager:
+            raise ToolError("Supabase integration is not initialized")
+        try:
+            result = await manager.sync_supabase(supabase_manager)
             return result
         except Exception as e:
-            raise ToolError(f"Failed to get email updates: {e}")
+            raise ToolError(f"Failed to sync Supabase: {e}")
 
-    # @mcp.tool
-    # async def DEPRECATED_create_entry(request: CreateEntryRequest):
-    #     """Add entities, observations, or relations to the knowledge graph.
 
-    #     'data' must be a list of the appropriate object for each entry_type:
+# Debug Tools
+# if settings.debug:
 
-    #     ## Adding Observations
-    #     'data' must be a list of observations:
-    #     - entity_name: entity_name (required)
-    #     - content: str (required)
-    #     - durability: Literal['temporary', 'short-term', 'long-term', 'permanent'] (optional, defaults to 'short-term')
-
-    #     Observation content must be in active voice, excule the 'from' entity, lowercase, and should be concise and to the point. Examples:
-    #     - "likes chicken"
-    #     - "enjoys long walks on the beach"
-    #     - "can ride a bike with no handlebars"
-    #     - "wants to be a movie star"
-    #     - "dropped out of college to pursue a career in underwater basket weaving"
-
-    #     Durability determines how long the observation is kept in the knowledge graph and should reflect
-    #     the expected amount of time the observation is relevant.
-    #     - 'temporary': The observation is only relevant for a short period of time (1 month)
-    #     - 'short-term': The observation is relevant for a few months (3 months).
-    #     - 'long-term': The observation is relevant for a few months to a year. (1 year)
-    #     - 'permanent': The observation is relevant for a very long time, or indefinitely. (never expires)
-
-    #     """
-    #     logger.warning(
-    #         "This tool is deprecated and will be removed in a future version. Use the create_entities, create_relations, and apply_observations tools instead."
-    #     )
-
-    #     entry_type = request.entry_type
-    #     data = request.data
-    #     try:
-    #         if entry_type == "observation":
-    #             observation_result: list[AddObservationResult] = await manager.apply_observations(
-    #                 data
-    #             )
-    #             result = ""
-    #             for r in observation_result:
-    #                 result += str(r) + "\n"
-
-    #         elif entry_type == "entity":
-    #             entity_result: CreateEntityResult = await manager.create_entities(data)
-    #             result = str(entity_result)
-
-    #         elif entry_type == "relation":
-    #             relation_result: CreateRelationResult = await manager.create_relations(data)
-    #             result = str(relation_result)
-
-    #         else:
-    #             raise ValueError(f"Invalid entry type: {entry_type}")
-
-    #     except Exception as e:
-    #         raise ToolError(f"Failed to create entry: {e}")
-
-    #     return result
-
-    @mcp.tool
-    async def DEBUG_save_graph():
-        """DEBUG TOOL: Test loading, and then immediately saving the graph."""
-        try:
-            graph = await manager._load_graph()
-            await manager._save_graph(graph)
-        except Exception as e:
-            raise ToolError(f"DEBUG TOOL ERROR: Failed to save graph: {e}")
-        return "✅ Graph saved successfully!"
+#     @mcp.tool
+#     async def DEBUG_save_graph():
+#         """DEBUG TOOL: Test loading, and then immediately saving the graph."""
+#         try:
+#             graph = await manager._load_graph()
+#             await manager._save_graph(graph)
+#         except Exception as e:
+#             raise ToolError(f"DEBUG TOOL ERROR: Failed to save graph: {e}")
+#         return "✅ Graph saved successfully!"
 
 
 #### Main application entry point ####
+async def startup_check() -> None:
+    """Check the startup of the server. Exits with an error if the server will not be able to start."""
+    try:
+        _ = await manager._load_graph()
+    except Exception as e:
+        raise ToolError(str(e))
 
 
 async def start_server():
@@ -1437,10 +1533,17 @@ async def start_server():
         transport_kwargs = {}
 
     try:
-        await mcp.run_async(transport=validated_transport, **transport_kwargs)
+        await startup_check()
+        logger.info("Startup check passed: memory file valid")
     except Exception as e:
-        logger.error(f"🛑 Critical server error: {e}")
+        logger.error(f"🛑 Startup check failed: {e}")
         sys.exit(1)
+    # Supabase integration tools added here  TODO: make better
+    try:
+        add_supabase_tools(mcp, supabase)
+    except Exception as e:
+        logger.error(f"Error adding Supabase tools: {e}")
+    await mcp.run_async(transport=validated_transport, **transport_kwargs)
 
 
 def run_sync():

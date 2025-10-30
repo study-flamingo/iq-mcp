@@ -12,8 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Annotated
 from pathlib import Path
 from uuid import uuid4
-from .settings import Settings as settings, Logger as logger
-from pydantic import Field
+from .settings import Settings as settings
 
 from .models import (
     Entity,
@@ -1757,3 +1756,40 @@ class KnowledgeGraphManager:
         # Persist changes
         await self._save_graph(graph)
         return target
+
+    async def sync_supabase(self, supabase_manager: Any) -> str:
+        """
+        Load, clean, and synchronize the local knowledge graph to Supabase via the provided manager.
+
+        Steps:
+        - Load graph from disk
+        - Prune observations (outdated + duplicate)
+        - Dedupe relations
+        - Push cleaned snapshot to Supabase
+        """
+        # Load current graph
+        graph = await self._load_graph()
+
+        # Clean observations
+        try:
+            graph = await self._prune_observations(graph)
+        except Exception as e:
+            logger.error(f"Error pruning observations before Supabase sync: {e}")
+
+        # Dedupe relations
+        try:
+            graph.relations = self._dedupe_relations_in_place(graph.relations or [])
+        except Exception as e:
+            logger.error(f"Error deduplicating relations before Supabase sync: {e}")
+
+        # Sync to Supabase
+        try:
+            await supabase_manager.sync_knowledge_graph(graph)
+        except Exception as e:
+            raise KnowledgeGraphException(f"Supabase sync failed: {e}")
+
+        return (
+            f"Synchronized knowledge graph to Supabase: {len(graph.entities)} entities, "
+            f"{sum(len(e.observations or []) for e in graph.entities)} observations, "
+            f"{len(graph.relations)} relations"
+        )

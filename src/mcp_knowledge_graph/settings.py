@@ -12,19 +12,16 @@ Precedence (highest first):
 
 from __future__ import annotations
 
-import logging
+from dotenv import load_dotenv
 from dataclasses import dataclass
 import argparse
 import os
 from pathlib import Path
 from typing import Literal
-try:
-    from dotenv import load_dotenv
-except Exception:  # optional dev dependency for tests
-    def load_dotenv(*args, **kwargs):  # type: ignore
-        return False
+import logging as lg
 
-logging.basicConfig(level=logging.INFO)
+logger = lg.getLogger("iq-mcp-bootstrap")
+
 
 # Default memory file at repo root
 DEFAULT_MEMORY_PATH = Path(__file__).parents[2].resolve() / "memory.jsonl"
@@ -44,27 +41,6 @@ TRANSPORT_ENUM: dict[str, Transport] = {
     "streamable http": "http",
     "streamableHttp": "http",
 }
-
-
-@dataclass
-class SupabaseSettings:
-    """Supabase settings for the IQ-MCP server.
-
-    Attributes:
-        url: Supabase project URL
-        key: Supabase anon or service role key with read access
-        email_table: Name of the table to query for email summaries
-        entities_table: Name of the table to query for entities
-        relations_table: Name of the table to query for relations
-        user_table: Name of the table to query for user info
-    """
-
-    url: str
-    key: str
-    email_table: str | None = None
-    entities_table: str | None = None
-    relations_table: str | None = None
-    user_table: str | None = None
 
 
 class IQSettings:
@@ -95,7 +71,6 @@ class IQSettings:
         streamable_http_path: str | None,
         project_root: Path,
         no_emojis: bool,
-        supabase_settings: SupabaseSettings | None,
     ) -> None:
         self.debug = bool(debug)
         self.transport = transport
@@ -105,7 +80,6 @@ class IQSettings:
         self.streamable_http_path = streamable_http_path
         self.project_root = project_root
         self.no_emojis = no_emojis
-        self.supabase_settings = supabase_settings
 
     # ---------- Construction ----------
     @classmethod
@@ -122,7 +96,6 @@ class IQSettings:
             memory_path (Path): Absolute path to memory JSONL file
             project_root (Path): Resolved project root path
             no_emojis (bool): Disable emojis in the output
-            supabase_settings (SupabaseSettings): Supabase settings
         """
         # CLI args > Env vars > Defaults
         parser = argparse.ArgumentParser(add_help=False)
@@ -135,15 +108,12 @@ class IQSettings:
         parser.add_argument("--no-emojis", action="store_true", default=None)
         args, _ = parser.parse_known_args()
 
-        # Initialize logger
-        logger = logging.getLogger("iq-mcp")
-
         # Debug mode
         debug: bool = args.debug or os.environ.get("IQ_DEBUG", "false").lower() == "true"
         if debug:
             # If debug is set, set the environment variable to true for other scripts to use
             os.environ["IQ_DEBUG"] = "true"
-            logger.setLevel(logging.DEBUG)
+            logger.setLevel(lg.DEBUG)
             logger.debug(f"🐞 Debug mode: {debug}")
 
         # Load .env if available
@@ -181,40 +151,6 @@ class IQSettings:
         # Disable emojis if desired
         no_emojis = args.no_emojis or os.getenv("IQ_NO_EMOJIS", "false").lower() == "true"
 
-        # Supabase integration (pure configuration only; no clients created here)
-        supabase_url = os.getenv("SUPABASE_URL")
-        supabase_key = os.getenv("SUPABASE_KEY")
-        supabase_email_table = os.getenv("SUPABASE_EMAIL_TABLE")
-        supabase_entities_table = os.getenv("SUPABASE_ENTITIES_TABLE")
-        supabase_relations_table = os.getenv("SUPABASE_RELATIONS_TABLE")
-        supabase_user_table = os.getenv("SUPABASE_USER_TABLE")
-
-        # If no URL or key, skip Supabase configuration entirely
-        if not supabase_url or not supabase_key:
-            logger.warning("⚠️ No Supabase settings provided, skipping Supabase integration.")
-            supabase_settings = None
-        else:
-            # Fill in defaults if only URL and key are provided
-            supabase_email_table = supabase_email_table or "emailSummaries"
-            if not supabase_entities_table:
-                logger.warning("⚠️ No entity table name provided, defaulting to 'iqEntities'")
-                supabase_entities_table = "iqEntities"
-            if not supabase_relations_table:
-                logger.warning("⚠️ No relation table name provided, defaulting to 'iqRelations'")
-                supabase_relations_table = "iqRelations"
-            if not supabase_user_table:
-                logger.warning("⚠️ No user table name provided, defaulting to 'iqUsers'")
-                supabase_user_table = "iqUsers"
-
-            supabase_settings = SupabaseSettings(
-                url=supabase_url,
-                key=supabase_key,
-                email_table=supabase_email_table,
-                entities_table=supabase_entities_table,
-                relations_table=supabase_relations_table,
-                user_table=supabase_user_table,
-            )
-
         return cls(
             debug=debug,
             transport=transport,
@@ -223,19 +159,18 @@ class IQSettings:
             streamable_http_path=http_path,
             memory_path=memory_path,
             project_root=project_root,
-            supabase_settings=supabase_settings,
             no_emojis=no_emojis,
         )
 
-    def get_logger(self) -> logging.Logger:
-        """Get the logger for the IQ-MCP server, configured by the settings object."""
-        logger = logging.getLogger("iq-mcp")
-        logger.addHandler(logging.FileHandler(f"{self.project_root}/iq-mcp.log"))
-        logger.setLevel(logging.DEBUG if self.debug else logging.INFO)
-        logger.debug("Retrieved debug logger")
-        return logger
+    # def get_logger(self) -> lg.Logger:
+    #     """Get the main logger for the IQ-MCP server, configured by the settings object."""
+    #     logger = lg.getLogger("iq-mcp")
+    #     logger.addHandler(lg.FileHandler(f"{self.project_root}/iq-mcp.log"))
+    #     logger.setLevel(lg.DEBUG if self.debug else lg.INFO)
+    #     logger.debug("Retrieved debug logger")
+    #     return logger
 
 
 Settings = IQSettings.load()
-Logger = Settings.get_logger()
-supabase_settings: SupabaseSettings | None = Settings.supabase_settings
+
+__all__ = ["Settings"]
