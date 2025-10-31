@@ -1,7 +1,6 @@
 # File index
 
 - example.env       env var descriptions and defaults
-- example.jsonl     an example knowledge graph (outdated)
 
 ## src
 
@@ -15,6 +14,7 @@
     - server.py             main tool logic
     - settings.py           settings handlers
     - visualize.py          experimental visualizer
+    - logger.py             centralized logging config
 
 #### utils
     - migrate_graph.py      experimental memory migration tool

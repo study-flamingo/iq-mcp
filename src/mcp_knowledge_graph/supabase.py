@@ -16,8 +16,7 @@ logger = get_iq_mcp_logger()
 
 
 class SupabaseError(Exception):
-    """Exception raised for errors in the Supabase integration."""
-
+    """Exception raised for errors in the IQ-MCP Supabase integration."""
     pass
 
 
@@ -99,7 +98,7 @@ class SupabaseManager:
 
     def _ensure_client(self) -> SBClient:
         if not self.client:
-            logger.error("Supabase client not initialized, doing that real quick")
+            logger.error("IQ-MCP Supabase client not initialized, (re)initializing...")
             self.client = create_client(self.settings.url, self.settings.key)
         return self.client
 
@@ -116,13 +115,15 @@ class SupabaseManager:
         """
         client = self._ensure_client()
 
-        # If a time constraint is provided, convert to UTC and set to 00:00:00
+        # If a time constraint is provided, convert to UTC and set to 00:00:00 (inclusive filtering)
         if from_date:
             from_ts = from_date.astimezone(timezone.utc).replace(
                 hour=0, minute=0, second=0, microsecond=0
             )
         else:
             from_ts = None
+        
+        # If a time constraint is provided, convert to UTC and set to 23:59:59 (inclusive filtering)
         if to_date:
             to_ts = to_date.astimezone(timezone.utc).replace(
                 hour=23, minute=59, second=59, microsecond=999999
@@ -167,7 +168,7 @@ class SupabaseManager:
             logger.error(f"Error parsing email summaries from Supabase: {e}")
             raise SupabaseError(f"Error parsing email summaries from Supabase: {e}")
 
-        logger.info(f"Retrieved {len(summaries)} email summaries from table {email_summary_table}")
+        logger.info(f"📫 Retrieved {len(summaries)} email summaries from table {email_summary_table}!")
 
         return summaries
 

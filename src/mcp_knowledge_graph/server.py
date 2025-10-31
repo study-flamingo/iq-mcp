@@ -587,6 +587,33 @@ async def print_observations(
     result_str += epilogue
     return result_str
 
+async def print_email_summaries(email_summaries: list[EmailSummary]) -> str:
+    """Print email summaries in a readable format."""
+    lines: list[str] = [f"📧 Retrieved summaries for {len(email_summaries)} email messages:\n"]
+    for summary in email_summaries:
+        if not summary.summary:
+            logger.error(f"Email summary {summary.message_id} has no content summary!")
+            continue
+        lines.append(f"Message ID: {summary.message_id or "N/A"}")
+        lines.append(f"From: {summary.from_address or "N/A"} ({summary.from_name or "N/A"})")
+        lines.append(f"Reply-To: {summary.reply_to or "N/A"}")
+        lines.append(f"Received at: {summary.timestamp.strftime('%Y-%m-%d %H:%M:%S') if summary.timestamp else "N/A"} UTC")
+        lines.append(f"Subject: {summary.subject or ""}")
+        lines.append(f"Content summary: {summary.summary}")
+        
+        parsed_links: list[str] = []
+        for link in summary.links or []:
+            title = link.get("title") or ""
+            url = link.get("url") or str(link)
+            if title and url:
+                parsed_links.append(f"- [{title}]({url})")
+            elif not title and url:
+                parsed_links.append(f"- {url}")
+            else:
+                continue
+        lines.append(f"Links: {'\n'.join(parsed_links)}\n")
+    return "\n".join(lines)
+
 
 def __this_is_a_fake_function_to_separate_sections_in_the_outline_in_cursor_do_not_use_me() -> None:
     pass
@@ -1317,7 +1344,7 @@ async def update_entity(request: UpdateEntityRequest):
         raise ToolError(f"Unexpected error during entity update: {e}")
 
 
-# ----- DEBUG/EXPERIMENTAL TOOLS -----#
+# ----- EXPERIMENTAL/DEV/WIP TOOLS -----#
 
 
 # Supabase Integration Tools
@@ -1418,65 +1445,7 @@ def add_supabase_tools(mcp_server: FastMCP, supabase_manager: SupabaseManager | 
             return "No new email summaries available!"
 
         # Format the email summaries
-        header = "New email summaries:\n"
-        if not settings.no_emojis:
-            header = "📧 " + header
-
-        lines: list[str] = [header]
-        for summary in summaries:
-            try:
-                ts = summary.timestamp
-                ts_str = ""
-                if isinstance(ts, str):
-                    ts_str = ts
-                else:
-                    ts_str = str(ts) if ts is not None else ""
-
-                lines.append(f"Message ID: {summary.message_id}")
-                # From line
-                if summary.from_name and summary.from_address:
-                    lines.append(f"From: {summary.from_name} ({summary.from_address})")
-                elif summary.from_address:
-                    lines.append(f"From: {summary.from_address}")
-                # Reply-To
-                if summary.reply_to:
-                    lines.append(f"Reply-To: {summary.reply_to}")
-                # Timestamp
-                if ts_str:
-                    lines.append(f"Timestamp: {ts_str}")
-                # Subject & Summary
-                if summary.subject:
-                    lines.append(f"Subject: {summary.subject}")
-                if summary.summary:
-                    lines.append(f"Summary: {summary.summary}")
-                # Links list
-                try:
-                    links_list = summary.links or []
-                    if links_list:
-                        link_lines = ["Links:"]
-                        for link in links_list:
-                            if isinstance(link, dict):
-                                title = link.get("title") or ""
-                                url = link.get("url") or str(link)
-                            else:
-                                title = ""
-                                url = str(link)
-                            if title and url:
-                                link_lines.append(f"- [{title}]({url})")
-                            elif not title and url:
-                                link_lines.append(f"- {url}")
-                            else:
-                                continue
-                        if link_lines:
-                            lines.append("\n".join(link_lines))
-                except Exception as e:
-                    logger.error(f"Error formatting email summary links: {e}")
-                    pass
-                lines.append("")  # blank line between summaries
-            except Exception as e:
-                logger.error(f"Error formatting email summary: {e}")
-                continue
-
+        lines = await print_email_summaries(summaries)
         logger.info(
             f"Marking {len(summaries)} email summaries as reviewed in Supabase in background..."
         )
@@ -1495,7 +1464,8 @@ def add_supabase_tools(mcp_server: FastMCP, supabase_manager: SupabaseManager | 
             raise ToolError(f"Failed to sync Supabase: {e}")
 
 
-# Debug Tools
+# ----- DEBUG/DEPRECATED TOOLS -----#
+
 # if settings.debug:
 
 #     @mcp.tool
@@ -1509,7 +1479,8 @@ def add_supabase_tools(mcp_server: FastMCP, supabase_manager: SupabaseManager | 
 #         return "✅ Graph saved successfully!"
 
 
-#### Main application entry point ####
+# ----- MAIN APPLICATION ENTRY POINT -----#
+
 async def startup_check() -> None:
     """Check the startup of the server. Exits with an error if the server will not be able to start."""
     try:

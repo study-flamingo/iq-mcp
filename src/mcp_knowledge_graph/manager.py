@@ -13,7 +13,7 @@ from typing import Any, Annotated
 from pathlib import Path
 from uuid import uuid4
 from .settings import Settings as settings
-
+from .logging import get_iq_mcp_logger
 from .models import (
     Entity,
     EntityID,
@@ -36,6 +36,7 @@ from .models import (
     GraphMeta,
 )
 
+logger = get_iq_mcp_logger()
 
 class KnowledgeGraphManager:
     """
@@ -157,34 +158,6 @@ class KnowledgeGraphManager:
             unique[key] = rel
         return list(unique.values())
 
-    def _is_observation_outdated(self, observation: Observation) -> bool:
-        """
-        Check if an observation is outdated based on durability and age.
-
-        Args:
-            obs: The observation to check
-
-        Returns:
-            True if the observation should be considered outdated
-        """
-        try:
-            now = datetime.now(timezone.utc)
-
-            days_old = (now - observation.timestamp).days
-        except (ValueError, AttributeError, TypeError):
-            # If timestamp parsing fails, assume not outdated
-            return False
-
-        if observation.durability == DurabilityType.PERMANENT:
-            return False  # Never outdated
-        elif observation.durability == DurabilityType.LONG_TERM:
-            return days_old > 365  # 1+ years old
-        elif observation.durability == DurabilityType.SHORT_TERM:
-            return days_old > 90  # 3+ months old
-        elif observation.durability == DurabilityType.TEMPORARY:
-            return days_old > 30  # 1+ month old
-        else:
-            return False
 
     def _generate_new_valid_entity_id(self, graph: KnowledgeGraph) -> str:
         """Generate a unique new entity ID, ensuring it is not already in the graph. Entity IDs are UUID4s truncated to 8 characters. Convenience
@@ -252,8 +225,8 @@ class KnowledgeGraphManager:
         except Exception as e:
             raise KnowledgeGraphException(f"Entity {entity.name} must exist in graph: {e}")
 
+        # Ensure the entity has a valid ID
         try:
-            # Ensure the entity has a valid ID
             if entity.id in entities_list:
                 logger.warning(f"Entity {entity.name} has a duplicate ID: {entity.id}")
 
@@ -267,26 +240,25 @@ class KnowledgeGraphManager:
                     raise KnowledgeGraphException(
                         f"Entity {entity.id} is a duplicate of an existing entity"
                     )
-
-            # If this entity's name is "__user__", it should be the user-linked entity
-            if entity.name == "__user__":
-                if entity.id != graph.user_info.linked_entity_id:
-                    logger.error(
-                        f"Entity named '__user__' no longer linked to user - should have ID '{graph.user_info.linked_entity_id}', but has ID {entity.id}. Giving name 'unknown'."
-                    )
-                    entity.name = "unknown"
-
-            # Make sure mtime is after ctime for weird edge cases
-            if entity.mtime < entity.ctime:
-                logger.warning(
-                    f"_validate_entity: Entity {entity.name} has mtime before ctime: {entity.mtime} <= {entity.ctime}. Corrected."
-                )
-                entity.mtime = entity.ctime
-
-            # Return the validated entity
-            return entity
         except Exception as e:
             raise KnowledgeGraphException(f"Error validating existing entity ID: {e}")
+
+        # If this entity's name is "__user__", it should be the user-linked entity
+        if entity.name == "__user__":
+            if entity.id != graph.user_info.linked_entity_id:
+                logger.error(
+                    f"Entity named '__user__' no longer linked to user - should have ID '{graph.user_info.linked_entity_id}', but has ID {entity.id}. Giving name 'unknown'."
+                )
+                entity.name = "unknown"
+
+        # Make sure mtime is after ctime for weird edge cases
+        entity.mtime = max(entity.mtime, entity.ctime)
+
+        # Prune observations
+        entity = entity.prune_observations()
+
+        # Return the validated entity
+        return entity
 
     def _verify_relation(self, relation: Relation, graph: KnowledgeGraph) -> Relation:
         """
@@ -563,6 +535,20 @@ class KnowledgeGraphManager:
                             f"Bad entity `{str(e)[:24]}...`: {err}. Excluding from graph."
                         )
                     valid_entities.append(e)
+                    
+                    # Dedupe and remove outdated observations ignoring durability
+                    seen_observations: set[tuple[str, str]] = set()
+                    for o in e.observations or []:
+                        if self._is_observation_outdated(o):
+                            e.observations.remove(o)
+                            logger.info(f"Removed outdated observation from entity {e.name} ({e.id}): {o.content}")
+                            continue
+                        raw_obs: tuple[str, str] = (o.content, o.timestamp)
+                        if raw_obs in seen_observations:
+                            e.observations.remove(o)
+                            logger.info(f"Deduped observation from entity {e.name} ({e.id}): {o.content}")
+                        else:
+                            seen_observations.add(raw_obs)
                 if len(errors) > 0 and len(valid_entities) > 0:
                     logger.error(
                         f"⚠️👤 Successfully validated {len(valid_entities)} entities, but {len(errors)} entities were invalid: {' \\ '.join(errors)}"
@@ -757,21 +743,30 @@ class KnowledgeGraphManager:
                 continue
         return graph
 
-    async def _prune_observations(self, graph: KnowledgeGraph) -> KnowledgeGraph:
+    async def _prune_observations(self, graph: KnowledgeGraph | None = None, entity: Entity | list[Entity] | None = None) -> KnowledgeGraph:
         """
-        Prune outdated and duplicate observations from the knowledge graph. Returns the pruned graph.
+        Prune outdated and duplicate observations from the knowledge graph or entities. Returns the pruned graph.
         """
-        graph = await self._prune_outdated_observations(graph)
-        graph = await self._prune_duplicate_observations(graph)
-        return graph
+        if graph:
+            pruned_graph = await self._prune_outdated_observations(graph)
+            pruned_graph = await self._prune_duplicate_observations(pruned_graph)
+            return pruned_graph
+        elif entity:
+            if isinstance(entity, Entity):
+                entity = [entity]
+            for e in entity:
+                await self._prune_observations(entity=e)
+            return entity
+        else:
+            raise ValueError("No graph or entities provided!")
 
     async def prune_observations(self) -> None:
         """
         Prune outdated and duplicate observations from the default knowledge graph, and save the graph.
         """
-        graph = await self._load_graph()
-        graph = await self._prune_observations(graph)
-        await self._save_graph(graph)
+        graph  = await self._load_graph()
+        pruned_graph  = await self._prune_observations(graph)
+        await self._save_graph(pruned_graph)
 
     async def create_entities(
         self, new_entities: list[CreateEntityRequest]

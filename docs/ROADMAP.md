@@ -27,7 +27,7 @@ At present, the knowledge graph system supports only one primary user. The user'
 
 ## Planned Features/Upgrades
 
-  1. Implement optional Supabase storage and management of knowledge graph
+  1. Enhance Supabase integration: sync and optional tools implemented; consider read-side storage/cloud-first mode
   2. Fix Docker support
   3. Mobile device support
   4. Implement more robust search method(s)

@@ -10,7 +10,7 @@
 
 ### Workflow Checklist (for any change)
 
-1. Read the relevant files first (`server.py`, `manager.py`, `models.py`, `settings.py`).
+1. Read the relevant files first (`server.py`, `manager.py`, `models.py`, `settings.py`, `logging.py`).
 2. Identify validation paths; prefer constrained types, `validation_alias`, and `default_factory`.
 3. Ensure JSONL storage remains valid (`MemoryRecord` types: meta, user_info, entity, relation).
 4. If introducing breaking changes in storage, add a migration keyed by `GraphMeta.schema_version`.
@@ -22,7 +22,6 @@
 - Control flow: early returns; shallow nesting; meaningful error handling.
 - Pydantic v2.11 patterns:
   - Constrained types via `Annotated[..., Field(...)]` (e.g., `EntityID`).
-  - `validation_alias=AliasChoices(...)` for legacy/compat inputs.
   - `default_factory` for timestamps/IDs; avoid post-hoc validators for defaults.
   - `@computed_field` for derived data (e.g., user `names`).
 - Relations: IDs only (no literal names or special `'user'` token).

@@ -2,13 +2,14 @@ The SupaBase database for cloud memory storage should be constructed as follows:
 
 ```sql
 -- WARNING: This schema is for context only and is not meant to be run.
--- Table order and constraints may not be valid for execution.
+-- It reflects the columns used by the current Supabase integration in code.
 
+-- Email summaries (used by get_new_email_summaries)
 CREATE TABLE public.emailSummaries (
-  index bigint GENERATED ALWAYS AS IDENTITY NOT NULL UNIQUE,
-  received_at timestamp without time zone,
-  processed_at timestamp without time zone NOT NULL DEFAULT now(),
-  labels ARRAY,
+  index bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  received_at timestamp with time zone,
+  processed_at timestamp with time zone NOT NULL DEFAULT now(),
+  labels jsonb,
   message_id text NOT NULL UNIQUE,
   thread_id text,
   to text,
@@ -17,34 +18,36 @@ CREATE TABLE public.emailSummaries (
   reply_to text,
   subject text,
   text_summary text,
-  links ARRAY,
-  reviewed boolean NOT NULL DEFAULT false,
-  CONSTRAINT emailSummaries_pkey PRIMARY KEY (index)
+  links jsonb,
+  reviewed boolean NOT NULL DEFAULT false
 );
+
+-- Entities table used by Supabase sync
 CREATE TABLE public.kgEntities (
-  key bigint GENERATED ALWAYS AS IDENTITY NOT NULL UNIQUE,
-  id text NOT NULL DEFAULT ''::text UNIQUE,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  entity_name text DEFAULT ''::text,
-  aliases ARRAY NOT NULL,
-  is_user boolean NOT NULL DEFAULT false,
-  CONSTRAINT kgEntities_pkey PRIMARY KEY (key)
+  id text PRIMARY KEY,
+  name text NOT NULL,
+  entity_type text NOT NULL,
+  aliases text[] NOT NULL DEFAULT '{}',
+  icon text,
+  ctime timestamp with time zone,
+  mtime timestamp with time zone
 );
+
+-- Observations table used by Supabase sync
 CREATE TABLE public.kgObservations (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  content text DEFAULT ''::text,
-  linked_entity text NOT NULL DEFAULT ''::text,
-  durability USER-DEFINED NOT NULL DEFAULT 'short-term'::"DURABILITY",
-  CONSTRAINT kgObservations_pkey PRIMARY KEY (id, linked_entity),
-  CONSTRAINT kgObservations_linked_entity_fkey FOREIGN KEY (linked_entity) REFERENCES public.kgEntities(id)
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  linked_entity text NOT NULL REFERENCES public.kgEntities(id) ON DELETE CASCADE,
+  content text NOT NULL,
+  durability text NOT NULL,
+  timestamp timestamp with time zone
 );
+
+-- Relations table used by Supabase sync
 CREATE TABLE public.kgRelations (
-  from text NOT NULL,
-  to text NOT NULL,
-  content text NOT NULL DEFAULT ''::text,
+  from_id text NOT NULL REFERENCES public.kgEntities(id) ON DELETE CASCADE,
+  to_id text NOT NULL REFERENCES public.kgEntities(id) ON DELETE CASCADE,
+  relation text NOT NULL,
   created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT kgRelations_pkey PRIMARY KEY (from),
-  CONSTRAINT kgRelations_from_fkey FOREIGN KEY (from) REFERENCES public.kgEntities(id)
+  PRIMARY KEY (from_id, to_id, relation)
 );
 ```

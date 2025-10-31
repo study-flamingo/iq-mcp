@@ -6,7 +6,7 @@
 ### High-level Architecture
 
 - **MCP Server (`src/mcp_knowledge_graph/server.py`)**
-  - Exposes user-facing tools (read, create, search, cleanup, merge, delete, update user info).
+  - Exposes user-facing tools (read, create, search, merge, delete, update user info, update entity).
   - Formats results for LLM-friendly output.
 
 - **Manager (`src/mcp_knowledge_graph/manager.py`)**
@@ -21,11 +21,16 @@
 - **Settings (`src/mcp_knowledge_graph/settings.py`)**
   - Runtime configuration and logging.
 
+- **Logging (`src/mcp_knowledge_graph/logging.py`)**
+  - Centralized logger factory configured by settings (`Settings.debug`).
+
 - **Utilities (`src/mcp_knowledge_graph/utils/`)**
   - Seed/migrate helpers and schema docs for the graph.
 
 - **Optional Integrations (`src/mcp_knowledge_graph/supabase.py`)**
-  - Supabase integration for external data sources (email summaries), behind feature flags.
+  - Supabase integration for external data sources (email summaries) and syncing the graph. When initialized (env `SUPABASE_URL`/`SUPABASE_KEY` present), the server adds:
+    - `get_new_email_summaries` (fetch recent email summaries)
+    - `sync_supabase` (push cleaned snapshot of the local graph). See `docs/SUPABASE_SCHEMA.md`.
 
 ### Data Model (essential)
 
@@ -54,8 +59,8 @@ Each line is a single JSON object:
 ### MCP Tools (selected)
 
 - `read_graph`, `read_user_info`, `create_entities`, `create_relations`, `add_observations`,
-  `cleanup_outdated_observations`, `get_observations_by_durability`, `delete_entry`,
-  `search_nodes`, `open_nodes`, `merge_entities`, `update_user_info`.
+  `search_nodes`, `open_nodes`, `merge_entities`, `update_entity`, `update_user_info`,
+  `delete_entry` (deprecated).
 
 ### Evolution & Versioning
 
@@ -67,5 +72,6 @@ Each line is a single JSON object:
 - `server.py`: tool endpoints + presentation
 - `manager.py`: graph ops + persistence
 - `models.py`: schema + validation + storage framing
-- `settings.py`: configuration & logging
+- `settings.py`: configuration
+- `logging.py`: centralized logging
 - `utils/*`: bootstrap/migration helpers

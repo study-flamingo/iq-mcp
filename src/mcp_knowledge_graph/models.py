@@ -141,6 +141,35 @@ class Observation(BaseModel):
         """Check if the observation is equal to another observation."""
         return self.content == other.content and self.durability == other.durability
 
+    def is_outdated(self) -> bool:
+        """
+        Check if an observation is outdated based on durability and age.
+
+        Args:
+            obs: The observation to check
+
+        Returns:
+            True if the observation should be considered outdated, False otherwise.
+        """
+        try:
+            now = datetime.now(timezone.utc)
+
+            days_old = (now - self.timestamp).days
+        except (ValueError, AttributeError, TypeError):
+            # If timestamp parsing fails, assume not outdated
+            return False
+
+        if self.durability == DurabilityType.PERMANENT:
+            return False  # Never outdated
+        elif self.durability == DurabilityType.LONG_TERM:
+            return days_old > 365  # 1+ years old
+        elif self.durability == DurabilityType.SHORT_TERM:
+            return days_old > 90  # 3+ months old
+        elif self.durability == DurabilityType.TEMPORARY:
+            return days_old > 30  # 1+ month old
+        else:
+            return False
+
 
 class Entity(BaseModel):
     """
@@ -300,6 +329,30 @@ class Entity(BaseModel):
         e = cls(**kwargs)
         return e
 
+    def prune_observations(self) -> "Entity":
+        """
+        Prune outdated and duplicate observations from the entity. Returns the pruned entity.
+        """
+        # Prune outdated observations
+        valid_observations = []
+        for obs in self.observations:
+            if not obs.is_outdated():
+                valid_observations.append(obs)
+            else:
+                logger.info(f"Pruned outdated observation from entity {self.name} ({self.id}): {obs.content}")
+        
+        # Prune duplicate observations
+        seen_observations: set[str] = set()
+        for o in valid_observations:
+            content = o.content
+            if content in seen_observations:
+                valid_observations.remove(o)
+                logger.info(f"Pruned duplicate observation from entity {self.name} ({self.id}): {o.content}")
+            else:
+                seen_observations.add(content)
+
+        self.observations = valid_observations
+        return self
 
 class Relation(BaseModel):
     """
@@ -381,7 +434,8 @@ class Relation(BaseModel):
 
 class UserIdentifier(BaseModel):
     """
-    Identifier to pair the user with '__default_user__' in the knowledge graph.
+    Unique object representing the user and their identity in the knowledge graph. Also links the
+    uyser to the user-linked entity in the knowledge graph.
 
     Fields:
       - preferred_name: The preferred name of the user. Preferred name is prioritized over other

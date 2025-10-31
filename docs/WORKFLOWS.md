@@ -23,7 +23,7 @@
 - Tool: `server.create_relations`
 - Manager: `manager.create_relations`
 - Models: `CreateRelationRequest`, `CreateRelationResult`, `Relation`
-- Validation: endpoints resolved by ID or name; relations use IDs only; duplicates deduped on save.
+- Validation: endpoints resolved by ID or name; relations use IDs only; no automatic dedupe on save (relations are deduped during `manager.merge_entities` rewrites and during Supabase sync).
 
 ### Add Observations
 - Tool: `server.add_observations`
@@ -32,20 +32,20 @@
 - Validation: content dedup per entity; timestamp via `default_factory`.
 
 ### Cleanup Outdated Observations
-- Tool: `server.cleanup_outdated_observations`
+- Tool: not exposed (manager-only)
 - Manager: `manager.cleanup_outdated_observations`
 - Models: `CleanupResult`
 - Logic: age thresholds by durability; saves only if removals occurred.
 
 ### Get Observations by Durability
-- Tool: `server.get_observations_by_durability`
+- Tool: not exposed (manager-only)
 - Manager: `manager.get_observations_by_durability`
 - Models: `DurabilityGroupedObservations`
 
 ### Open Nodes
 - Tool: `server.open_nodes`
 - Manager: `manager.open_nodes`
-- Models: `KnowledgeGraph`
+- Models: `Entity` (manager); Tool returns formatted text
 - Notes: Filters target entities + relations among them.
 
 ### Search Nodes
@@ -60,13 +60,25 @@
 - Models: `Entity`, `Relation`
 - Validation: new name conflict checks; merged aliases; relations rewritten and deduped.
 
+### Update Entity
+- Tool: `server.update_entity`
+- Manager: `manager.update_entity`
+- Models: `UpdateEntityRequest`, `UpdateEntityResult`, `Entity`
+- Validation: prevents name/alias conflicts; supports merging or replacing aliases; emoji validation applies.
+
 ### Update User Info
 - Tool: `server.update_user_info`
 - Manager: `manager.update_user_info(UserIdentifier)`
 - Models: `UserIdentifier`
 - Validation: `linked_entity_id` must exist; names derived; IDs validated.
 
-### Delete Entry (Unified)
+### Supabase Integration (optional)
+- Tools (added only if Supabase is initialized):
+  - `server.get_new_email_summaries` → `SupabaseManager.get_email_summaries`
+  - `server.sync_supabase` → `manager.sync_supabase`
+- Tables used (defaults): `emailSummaries`, `kgEntities`, `kgObservations`, `kgRelations`. See `docs/SUPABASE_SCHEMA.md`.
+
+### Delete Entry (Unified) — Deprecated
 - Tool: `server.delete_entry`
 - Manager: `manager.delete_entities|delete_observations|delete_relations`
 - Models: `DeleteEntryRequest`
