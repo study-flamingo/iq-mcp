@@ -186,13 +186,13 @@ class KnowledgeGraphManager:
         try:
             if not entity.id:
                 logger.error(f"Entity {entity.name} has no ID, investigate!!! Generating new ID.")
-                entity.id = self._generate_new_entity_id()
+                entity.id = self._generate_new_valid_entity_id(graph)
             for e in graph.entities:
                 if e.id == entity.id:
                     logger.warning(
                         f"Entity {entity.name} has a duplicate ID: {entity.id}. Generating new ID."
                     )
-                    entity.id = self._generate_new_entity_id()
+                    entity.id = self._generate_new_valid_entity_id(graph)
 
             return entity
         except Exception as e:
@@ -253,9 +253,6 @@ class KnowledgeGraphManager:
 
         # Make sure mtime is after ctime for weird edge cases
         entity.mtime = max(entity.mtime, entity.ctime)
-
-        # Prune observations
-        entity = entity.prune_observations()
 
         # Return the validated entity
         return entity
@@ -344,34 +341,35 @@ class KnowledgeGraphManager:
         graph = await self._load_graph()
         return self._get_relations_from_entities(entities=entities, graph=graph)
 
-    def _process_memory_line(self, line: str) -> UserIdentifier | Entity | Relation | None:
+    def _process_memory_line(self, line: str) -> tuple[str, Any] | None:
         """
-        Produces a UserIdentifier, Entity, or Relation from a line of the memory file.
+        Parse a line from the memory file into its component parts.
 
         Args:
             line: The line of the memory file to load
 
         Returns:
-            The UserIdentifier, list of Entities, or list of Relations from the line
+            A tuple of (record_type, parsed_object) where record_type is one of:
+            "meta", "user_info", "entity", "relation"
+            Returns None if the line is empty or invalid
         """
         line = line.strip()
         if not line:
             return None
 
-        # Determine line/record type via pydantic
         try:
             rec = MemoryRecord.model_validate_json(line)
-            if rec.type == "meta":
-                # meta is handled in _load_graph, ignore here
-                return None
-            if rec.type == "entity":
-                return Entity.from_dict(rec.data)
-            elif rec.type == "relation":
-                return Relation.from_dict(rec.data)
-            elif rec.type == "user_info":
-                return UserIdentifier.from_dict(rec.data)
-            else:
-                raise ValueError(f"Missing or invalid type: {getattr(rec, 'type', None)}")
+            match rec.type:
+                case "meta":
+                    return ("meta", GraphMeta.model_validate(rec.data))
+                case "entity":
+                    return ("entity", Entity.from_dict(rec.data))
+                case "relation":
+                    return ("relation", Relation.from_dict(rec.data))
+                case "user_info":
+                    return ("user_info", UserIdentifier.from_dict(rec.data))
+                case _:
+                    raise ValueError(f"Unknown record type: {rec.type}")
         except Exception as e:
             raise ValueError(f"Error parsing line: {e}")
 
@@ -418,200 +416,115 @@ class KnowledgeGraphManager:
         Returns:
             KnowledgeGraph loaded from file, or empty graph if file doesn't exist
         """
-        logger.debug("manager._load_graph() called")
-        self.memory_file_path = Path(self.memory_file_path.resolve())
-        try:
-            if not self.memory_file_path.exists():
-                raise RuntimeError(
-                    f"⛔ Memory file not found at {self.memory_file_path}! Returning newly initialized graph."
-                )
-        except Exception as e:
-            raise RuntimeError(f"Error locating graph file: {e}")
-
-        # Load the graph
+        # Resolve and validate memory file path
+        self.memory_file_path = Path(self.memory_file_path).resolve()
         if not self.memory_file_path.exists():
-            raise RuntimeError(f"Memory file not found at {self.memory_file_path}")
-        logger.debug(f"Loading graph from {self.memory_file_path}")
+            raise RuntimeError(f"⛔ Memory file not found at {self.memory_file_path}")
+        
+        # Load and parse graph components from file
+        meta: GraphMeta | None = None
+        user_info: UserIdentifier | None = None
+        entities: list[Entity] = []
+        relations: list[Relation] = []
+        
         try:
-            # Instantiate graph components
-            meta: GraphMeta | None = None
-            user_info: UserIdentifier | None = None
-            entities: list[Entity] = []
-            relations: list[Relation] = []
-
-            # Open the memory file
-            with open(file=rf"{Path(self.memory_file_path)}", mode="r", encoding="utf-8") as f:
-                # Load the graph line by line
+            with open(self.memory_file_path, mode="r", encoding="utf-8") as f:
                 for i, line in enumerate(f, start=1):
-                    # Parse a MemoryRecord; on failure, log and continue
                     try:
-                        rec = MemoryRecord.model_validate_json(line)
+                        result = self._process_memory_line(line)
                     except Exception as e:
-                        logger.warning(f"Skipping invalid line {i} in {self.memory_file_path}: {e}")
+                        logger.warning(f"Skipping invalid line {i}: {e}")
                         continue
-
-                    if rec.type == "meta":
-                        try:
-                            meta = GraphMeta.model_validate(rec.data)
-                        except Exception as e:
-                            logger.warning(f"Invalid meta at line {i}: {e}; using defaults")
-                            meta = GraphMeta()
-                        continue
-
-                    if rec.type == "user_info":
-                        try:
-                            user_info = UserIdentifier.from_dict(rec.data)
-                        except Exception as e:
-                            logger.warning(f"Invalid user_info at line {i}: {e}; skipping")
-                        continue
-
-                    if rec.type == "entity":
-                        try:
-                            entity = Entity.from_dict(rec.data)
-                            entities.append(entity)
-                        except Exception as e:
-                            logger.warning(f"Invalid entity at line {i}: {e}; skipping")
-                        continue
-
-                    if rec.type == "relation":
-                        try:
-                            relation = Relation.from_dict(rec.data)
-                            relations.append(relation)
-                        except Exception as e:
-                            logger.warning(f"Invalid relation at line {i}: {e}; skipping")
-                        continue
-
-                    logger.warning(f"Unknown record type '{rec.type}' at line {i}; skipping")
-
-                    # Quick checks while streaming large files
-                    if i > 50 and (len(entities) == 0 and len(relations) == 0 and not user_info):
-                        raise RuntimeError(
-                            "Failed to load graph: no valid data found in first 50 lines, memory is invalid or corrupt!"
-                        )
-                    if i > 500 and (len(entities) == 0 or len(relations) == 0 or not user_info):
-                        raise RuntimeError(
-                            "Failed to load graph: too much invalid data found in first 500 lines, memory is invalid or corrupt!"
-                        )
-                # EOF
-
-            # If EOF is reached with no errors, begin validity checks
-            if not user_info and not entities and not relations:
-                raise KnowledgeGraphException("No valid data found in memory file!")
-
-            # Ensure all components are present
-            if not user_info:
-                raise ValueError("No valid user info object found in memory file!")
-            if not entities:
-                raise KnowledgeGraphException("No valid entities found in memory file!")
-            if not relations:
-                raise KnowledgeGraphException("No valid relations found in memory file!")
-            if not meta:
-                raise KnowledgeGraphException("No valid metadata found in memory file!")
-
-            # Compose a preliminary graph
-            graph = KnowledgeGraph(
-                user_info=user_info, entities=entities, relations=relations, meta=meta
-            )
-
-            # Validate the loaded data
-            # Checklist:
-            # Handled by pydantic:
-            #   - Ensure required user_info fields are set
-            #   - Ensure required entity fields are set
-            #   - Ensure required relation fields are set
-            # Below:
-            #   - Ensure all entities have valid, unique IDs
-            #   - Ensure all relation endpoints actually exist in the graph
-            #   - Validate user_info's linked entity
-            errors: list[Exception] = []
-            try:
-                # Validate entities
-                valid_entities: list[Entity] = []
-                for e in graph.entities:
-                    try:
-                        e = self._validate_entity(e, graph)
-                    except Exception as err:
-                        errors.append(
-                            f"Bad entity `{str(e)[:24]}...`: {err}. Excluding from graph."
-                        )
-                    valid_entities.append(e)
                     
-                    # Dedupe and remove outdated observations ignoring durability
-                    seen_observations: set[tuple[str, str]] = set()
-                    for o in e.observations or []:
-                        if self._is_observation_outdated(o):
-                            e.observations.remove(o)
-                            logger.info(f"Removed outdated observation from entity {e.name} ({e.id}): {o.content}")
-                            continue
-                        raw_obs: tuple[str, str] = (o.content, o.timestamp)
-                        if raw_obs in seen_observations:
-                            e.observations.remove(o)
-                            logger.info(f"Deduped observation from entity {e.name} ({e.id}): {o.content}")
-                        else:
-                            seen_observations.add(raw_obs)
-                if len(errors) > 0 and len(valid_entities) > 0:
-                    logger.error(
-                        f"⚠️👤 Successfully validated {len(valid_entities)} entities, but {len(errors)} entities were invalid: {' \\ '.join(errors)}"
-                    )
-                elif len(errors) > 0 and len(valid_entities) == 0:
-                    raise RuntimeError(
-                        f"⛔👤 No valid entities in graph! Found {len(errors)} invalid entities: {' \\ '.join(errors)}"
-                    )
-                else:
-                    logger.debug(f"✅👤 Successfully validated {len(valid_entities)} entities")
-
-                # Validate relations
-                valid_relations: list[Relation] = []
-                relation_errors: list[str] = []
-                for r in graph.relations:
-                    try:
-                        self._verify_relation(r, graph)
-                    except Exception as e:
-                        # Simply exclude relations that are invalid  TODO: handle more gracefully
-                        relation_errors.append(
-                            f"Bad relation `{str(r)[:24]}...`: {e}. Excluding from graph."
-                        )
+                    if not result:
                         continue
-                    valid_relations.append(r)
-                if len(relation_errors) > 0 and len(valid_relations) > 0:
-                    logger.error(
-                        f"⚠️🔗 Successfully validated {len(valid_relations)} relations, but {len(relation_errors)} relations were invalid: {' \\ '.join(relation_errors)}"
-                    )
-                elif len(relation_errors) > 0 and len(valid_relations) == 0:
-                    raise RuntimeError(
-                        f"⛔🔗 No valid relations in graph! Found {len(relation_errors)} invalid relations: {' \\ '.join(relation_errors)}"
-                    )
-                else:
-                    logger.debug(f"✅🔗 Successfully validated {len(valid_relations)} relations")
-
-                # Verify the user-linked entity exists and is valid
-                try:
-                    self._validate_user_info(graph)
-                    logger.debug("✅😃 Successfully validated user info!")
-                except Exception as e:
-                    raise RuntimeError(f"User info invalid: {e}")  # TODO: graceful fallback
-
-            except RuntimeError as e:
-                # Should exit with non-zero code if this happens
-                raise RuntimeError(f"Critical validation error: {e}")
-            except Exception as e:
-                # Should validate the graph even if this happens
-                errors.append(f"Unspecified validation error: {e}")
-
-            # Validation complete! Recompose the fully-validated graph and return
-            validated_graph = KnowledgeGraph.from_components(
-                user_info=user_info, entities=valid_entities, relations=valid_relations
-            )
-
-            # Log that we have successfully loaded the graph components
-            logger.debug(
-                f"💾 Loaded user info for {user_info.preferred_name}; loaded {len(entities)} entities and {len(relations)} relations from memory file, validating..."
-            )
-
-            return validated_graph
-
+                    
+                    record_type, parsed_obj = result
+                    
+                    # Store parsed object based on type
+                    match record_type:
+                        case "meta":
+                            meta = parsed_obj
+                        case "user_info":
+                            user_info = parsed_obj
+                        case "entity":
+                            entities.append(parsed_obj)
+                        case "relation":
+                            relations.append(parsed_obj)
+                        case _:
+                            # Fallback for unknown types - should not happen
+                            logger.warning(f"Unexpected record type '{record_type}' at line {i}")
+                    
+                    # Early validation checks for large files
+                    if i > 50 and (len(entities) == 0 and len(relations) == 0 and not user_info):
+                        raise RuntimeError("Memory file appears corrupt: no valid data found in first 50 lines")
+                    if i > 500 and (len(entities) == 0 or len(relations) == 0 or not user_info):
+                        raise RuntimeError("Memory file appears corrupt: incomplete data after 500 lines")
+        except RuntimeError:
+            raise
         except Exception as e:
-            raise RuntimeError(f"Error loading graph: {e}")
+            raise RuntimeError(f"Error reading memory file: {e}")
+        
+        # Validate components are present
+        if not all([user_info, entities, relations, meta]):
+            missing = [k for k, v in [("user_info", user_info), ("entities", entities), 
+                                       ("relations", relations), ("meta", meta)] if not v]
+            raise KnowledgeGraphException(f"Missing required components: {', '.join(missing)}")
+        
+        # Build preliminary graph
+        try:
+            raw_graph = KnowledgeGraph(user_info=user_info, entities=entities, relations=relations, meta=meta)
+        except Exception as e:
+            raise KnowledgeGraphException(f"Failed to construct pre-validation graph: {e}")
+        
+        # TODO: Graph version control and migration logic
+        logger.info(f"🏷️ Graph version: {raw_graph.meta.schema_version}")
+        
+        
+        # Validate the graph, starting with entities
+        valid_entities: list[Entity] = []
+        entity_errors: list[str] = []
+        
+        for e in raw_graph.entities:
+            try:
+                e = e.cleanup_observations()
+                valid_entities.append(self._validate_entity(e, raw_graph))
+            except Exception as err:
+                entity_errors.append(f"Bad entity `{str(e)[:24]}...`: {err}")
+        
+        if entity_errors and not valid_entities:
+            raise RuntimeError(f"⛔👤 All entities invalid: {' | '.join(entity_errors)}")
+        if entity_errors:
+            logger.error(f"⚠️👤 {len(entity_errors)} invalid entities excluded: {' | '.join(entity_errors)}")
+        logger.debug(f"✅👤 Validated {len(valid_entities)} entities")
+        
+        # Validate relations
+        valid_relations: list[Relation] = []
+        relation_errors: list[str] = []
+        
+        for r in raw_graph.relations:
+            try:
+                self._verify_relation(r, raw_graph)
+                valid_relations.append(r)
+            except Exception as ex:
+                relation_errors.append(f"Bad relation `{str(r)[:24]}...`: {ex}")
+        
+        if relation_errors and not valid_relations:
+            raise RuntimeError(f"⛔🔗 All relations invalid: {' | '.join(relation_errors)}")
+        if relation_errors:
+            logger.error(f"⚠️🔗 {len(relation_errors)} invalid relations excluded: {' | '.join(relation_errors)}")
+        logger.debug(f"✅🔗 Validated {len(valid_relations)} relations")
+        
+        # Build and validate final graph
+        try:
+            validated_graph = KnowledgeGraph.from_components(
+                user_info=user_info, entities=valid_entities, relations=valid_relations, meta=meta
+            )
+            self._validate_user_info(validated_graph)
+            logger.debug("✅😃 Graph validation complete")
+            return validated_graph
+        except Exception as e:
+            raise RuntimeError(f"Graph validation failed: {e}")
 
     async def _save_graph(self, graph: KnowledgeGraph) -> None:
         """
@@ -622,6 +535,11 @@ class KnowledgeGraphManager:
 
         For information on the format of the graph, see the README.md file.
         """
+        
+        if settings.dry_run:
+            logger.warning("⚠️ Dry run mode enabled, skipping save")
+            return
+        
         logger.debug(f"manager._save_graph() called, saving to {self.memory_file_path}")
         # Note: Avoid calling cleanup here to prevent recursive save cycles.
 
@@ -1752,7 +1670,7 @@ class KnowledgeGraphManager:
         await self._save_graph(graph)
         return target
 
-    async def sync_supabase(self, supabase_manager: Any) -> str:
+    async def sync_supabase(self, IQ_SUPABASE_manager: Any) -> str:
         """
         Load, clean, and synchronize the local knowledge graph to Supabase via the provided manager.
 
@@ -1779,7 +1697,7 @@ class KnowledgeGraphManager:
 
         # Sync to Supabase
         try:
-            await supabase_manager.sync_knowledge_graph(graph)
+            await IQ_SUPABASE_manager.sync_knowledge_graph(graph)
         except Exception as e:
             raise KnowledgeGraphException(f"Supabase sync failed: {e}")
 

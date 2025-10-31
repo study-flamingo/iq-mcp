@@ -15,7 +15,7 @@ load_dotenv()
 logger = get_iq_mcp_logger()
 
 
-class SupabaseError(Exception):
+class SupabaseException(Exception):
     """Exception raised for errors in the IQ-MCP Supabase integration."""
     pass
 
@@ -40,18 +40,19 @@ class SupabaseSettings:
         entities_table: str | None = None,
         observations_table: str | None = None,
         relations_table: str | None = None,
+        dry_run: bool = False,
     ) -> None:
         self.url = url
         self.key = key
-        self.email_table = email_table or os.getenv("SUPABASE_EMAIL_TABLE", "emailSummaries")
-        self.entities_table = entities_table or os.getenv("SUPABASE_ENTITIES_TABLE", "kgEntities")
+        self.email_table = email_table or os.getenv("IQ_SUPABASE_EMAIL_TABLE", "emailSummaries")
+        self.entities_table = entities_table or os.getenv("IQ_SUPABASE_ENTITIES_TABLE", "kgEntities")
         self.observations_table = observations_table or os.getenv(
-            "SUPABASE_OBSERVATIONS_TABLE", "kgObservations"
+            "IQ_SUPABASE_OBSERVATIONS_TABLE", "kgObservations"
         )
         self.relations_table = relations_table or os.getenv(
-            "SUPABASE_RELATIONS_TABLE", "kgRelations"
+            "IQ_SUPABASE_RELATIONS_TABLE", "kgRelations"
         )
-
+        self.dry_run = dry_run
 
 class EmailSummary:
     """Object representing an email summary from Supabase."""
@@ -78,7 +79,6 @@ class EmailSummary:
         self.subject = subject
         self.summary = summary
         self.links = links
-
 
 class SupabaseManager:
     """Lightweight manager for optional Supabase integration.
@@ -146,7 +146,7 @@ class SupabaseManager:
             response = query.execute()
         except Exception as e:
             logger.error(f"Error getting email summaries from Supabase: {e}")
-            raise SupabaseError(f"Error getting email summaries from Supabase: {e}")
+            raise SupabaseException(f"Error getting email summaries from Supabase: {e}")
 
         summaries: list[EmailSummary] = []
         try:
@@ -166,7 +166,7 @@ class SupabaseManager:
                 )
         except Exception as e:
             logger.error(f"Error parsing email summaries from Supabase: {e}")
-            raise SupabaseError(f"Error parsing email summaries from Supabase: {e}")
+            raise SupabaseException(f"Error parsing email summaries from Supabase: {e}")
 
         logger.info(f"📫 Retrieved {len(summaries)} email summaries from table {email_summary_table}!")
 
@@ -197,6 +197,10 @@ class SupabaseManager:
         1) Delete relations, then observations, then entities
         2) Insert entities, then observations, then relations
         """
+        if self.settings.dry_run:
+            logger.warning("Dry run mode enabled, skipping sync")
+            return
+        
         client = self._ensure_client()
 
         entities_table = self.settings.entities_table
@@ -291,7 +295,7 @@ class SupabaseManager:
                     continue
         except Exception as e:
             logger.error(f"Error preparing Supabase payloads: {e}")
-            raise SupabaseError(f"Error preparing Supabase payloads: {e}")
+            raise SupabaseException(f"Error preparing Supabase payloads: {e}")
 
         # --- Replace remote data ---
         # Delete in FK-safe order: relations -> observations -> entities
@@ -301,7 +305,7 @@ class SupabaseManager:
             _ = client.table(entities_table).delete().neq("id", "").execute()
         except Exception as e:
             logger.error(f"Error clearing Supabase tables: {e}")
-            raise SupabaseError(f"Error clearing Supabase tables: {e}")
+            raise SupabaseException(f"Error clearing Supabase tables: {e}")
 
         # Insert payloads: entities -> observations -> relations
         try:
@@ -314,28 +318,21 @@ class SupabaseManager:
                 _ = client.table(relations_table).insert(relations_payload).execute()
         except Exception as e:
             logger.error(f"Error inserting Supabase data: {e}")
-            raise SupabaseError(f"Error inserting Supabase data: {e}")
+            raise SupabaseException(f"Error inserting Supabase data: {e}")
 
         logger.info(
             f"Supabase sync complete: entities={len(entities_payload)}, observations={len(observations_payload)}, relations={len(relations_payload)}"
         )
 
 
-supabase_settings = SupabaseSettings(
-    url=os.getenv("SUPABASE_URL"),
-    key=os.getenv("SUPABASE_KEY"),
-)
-supabase = SupabaseManager(supabase_settings)
+# async def DEBUG_test_IQ_SUPABASE_init() -> None:
+#     """Debug test for the Supabase integration."""
+#     try:
+#         summaries = await supabase.get_email_summaries()
+#         logger.info(f"Retrieved {len(summaries)} email summaries from Supabase")
+#     except Exception as e:
+#         logger.error(f"Error getting email summaries from Supabase: {e}")
+#         raise SupabaseException(f"Error getting email summaries from Supabase: {e}")
 
 
-async def DEBUG_test_supabase_init() -> None:
-    """Debug test for the Supabase integration."""
-    try:
-        summaries = await supabase.get_email_summaries()
-        logger.info(f"Retrieved {len(summaries)} email summaries from Supabase")
-    except Exception as e:
-        logger.error(f"Error getting email summaries from Supabase: {e}")
-        raise SupabaseError(f"Error getting email summaries from Supabase: {e}")
-
-
-__all__ = ["supabase", "EmailSummary", "SupabaseSettings", "SupabaseManager"]
+__all__ = ["EmailSummary", "SupabaseSettings", "SupabaseManager", "SupabaseException"]

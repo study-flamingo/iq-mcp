@@ -20,6 +20,10 @@ from enum import Enum
 import regex as re
 from .logging import get_iq_mcp_logger
 from .settings import Settings as settings
+from .settings import (
+    IQ_MCP_VERSION,
+    IQ_MCP_SCHEMA_VERSION
+)
 
 logger = get_iq_mcp_logger()
 
@@ -141,6 +145,13 @@ class Observation(BaseModel):
         """Check if the observation is equal to another observation."""
         return self.content == other.content and self.durability == other.durability
 
+    @property
+    def age(self) -> int:
+        """Get the age of the observation in days."""
+        ts = self.timestamp.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        return (now - ts).days
+    
     def is_outdated(self) -> bool:
         """
         Check if an observation is outdated based on durability and age.
@@ -152,12 +163,9 @@ class Observation(BaseModel):
             True if the observation should be considered outdated, False otherwise.
         """
         try:
-            now = datetime.now(timezone.utc)
-
-            days_old = (now - self.timestamp).days
-        except (ValueError, AttributeError, TypeError):
-            # If timestamp parsing fails, assume not outdated
-            return False
+            days_old = self.age
+        except (Exception) as e:
+            raise ValueError(f"Error calculating age of observation: {e}")
 
         if self.durability == DurabilityType.PERMANENT:
             return False  # Never outdated
@@ -329,9 +337,9 @@ class Entity(BaseModel):
         e = cls(**kwargs)
         return e
 
-    def prune_observations(self) -> "Entity":
+    def cleanup_observations(self) -> "Entity":
         """
-        Prune outdated and duplicate observations from the entity. Returns the pruned entity.
+        Remove outdated and duplicate observations from the entity. Returns the clean entity.
         """
         # Prune outdated observations
         valid_observations = []
@@ -339,18 +347,22 @@ class Entity(BaseModel):
             if not obs.is_outdated():
                 valid_observations.append(obs)
             else:
-                logger.info(f"Pruned outdated observation from entity {self.name} ({self.id}): {obs.content}")
+                logger.info(f"Pruned outdated observation from entity {self.name} ({self.id}): {obs.content} ({obs.age} days old)")
         
         # Prune duplicate observations
         seen_observations: set[str] = set()
+        was_pruned = False
         for o in valid_observations:
             content = o.content
             if content in seen_observations:
                 valid_observations.remove(o)
+                was_pruned = True
                 logger.info(f"Pruned duplicate observation from entity {self.name} ({self.id}): {o.content}")
             else:
                 seen_observations.add(content)
 
+        if was_pruned:
+            logger.debug(f"Cleaned up observations for entity {self.name} ({self.id}), new list: {valid_observations}")
         self.observations = valid_observations
         return self
 
@@ -692,6 +704,13 @@ class UserIdentifier(BaseModel):
 
         return new_user_info
 
+class GraphMeta(BaseModel):
+    schema_version: int = Field(default=IQ_MCP_SCHEMA_VERSION, description="Schema/memory record version")
+    app_version: str = Field(default=IQ_MCP_VERSION, description="Application version")
+    graph_id: EntityID = Field(
+        default_factory=lambda: str(uuid4())[:8], description="Graph identifier"
+    )
+
 
 class KnowledgeGraph(BaseModel):
     """
@@ -742,8 +761,8 @@ class KnowledgeGraph(BaseModel):
     user_info: UserIdentifier = Field(
         ..., title="User info", description="Information about the user"
     )
-    meta: Any | None = Field(
-        default=None,
+    meta: GraphMeta = Field(
+        ...,
         title="Graph metadata",
         description="Optional metadata about the knowledge graph (schema versioning, ids, etc.)",
     )
@@ -765,13 +784,14 @@ class KnowledgeGraph(BaseModel):
 
     @classmethod
     def from_components(
-        cls, user_info: UserIdentifier, entities: list[Entity], relations: list[Relation]
+        cls, user_info: UserIdentifier, entities: list[Entity], relations: list[Relation], meta: GraphMeta
     ) -> "KnowledgeGraph":
         """Initialize the knowledge graph by passing in the user info object, entities lists, and relations lists."""
         return cls(
             user_info=user_info,
             entities=entities,
             relations=relations,
+            meta=meta,
         )
 
     @classmethod
@@ -1168,10 +1188,3 @@ class CreateRelationResult(BaseModel):
 class MemoryRecord(BaseModel):
     type: Literal["meta", "user_info", "entity", "relation"]
     data: Any
-
-
-class GraphMeta(BaseModel):
-    schema_version: int = Field(default=1, description="Schema/memory record version")
-    graph_id: EntityID = Field(
-        default_factory=lambda: str(uuid4())[:8], description="Graph identifier"
-    )

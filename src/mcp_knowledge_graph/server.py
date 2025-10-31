@@ -36,15 +36,11 @@ from .models import (
     UpdateEntityRequest,
 )
 from .settings import Settings as settings
+from .settings import IQ_MCP_VERSION
 
 logger = get_iq_mcp_logger()
 
-try:
-    from .supabase import supabase, EmailSummary, SupabaseManager
-except Exception as e:
-    logger.warning(f"Supabase integration unavailable: {e}")
-    supabase = None
-    EmailSummary = None
+# Supabase imports are lazy-loaded when needed
 
 # Load settings once and configure logging level accordingly
 
@@ -53,7 +49,7 @@ except Exception as e:
 manager = KnowledgeGraphManager(settings.memory_path)
 
 # Create FastMCP server instance
-mcp = FastMCP(name="iq-mcp", version="1.1.0")
+mcp = FastMCP(name="iq-mcp", version=IQ_MCP_VERSION)
 
 
 @dataclass
@@ -587,15 +583,19 @@ async def print_observations(
     result_str += epilogue
     return result_str
 
-async def print_email_summaries(email_summaries: list[EmailSummary]) -> str:
+async def print_email_summaries(email_summaries: list[Any], options: PrintOptions = PrintOptions()) -> str:
     """Print email summaries in a readable format."""
+    # EmailSummary is imported lazily when Supabase is enabled
     lines: list[str] = [f"📧 Retrieved summaries for {len(email_summaries)} email messages:\n"]
     for summary in email_summaries:
         if not summary.summary:
             logger.error(f"Email summary {summary.message_id} has no content summary!")
             continue
         lines.append(f"Message ID: {summary.message_id or "N/A"}")
-        lines.append(f"From: {summary.from_address or "N/A"} ({summary.from_name or "N/A"})")
+        lines.append(
+            f"From: {'[' + summary.from_name + ']' if options.md_links else summary.from_name}" +
+            f"{f"({summary.from_address})" if options.md_links else f" {summary.from_address}"}"
+            )
         lines.append(f"Reply-To: {summary.reply_to or "N/A"}")
         lines.append(f"Received at: {summary.timestamp.strftime('%Y-%m-%d %H:%M:%S') if summary.timestamp else "N/A"} UTC")
         lines.append(f"Subject: {summary.subject or ""}")
@@ -604,14 +604,18 @@ async def print_email_summaries(email_summaries: list[EmailSummary]) -> str:
         parsed_links: list[str] = []
         for link in summary.links or []:
             title = link.get("title") or ""
-            url = link.get("url") or str(link)
-            if title and url:
+            url = link.get("url") or str(link) or ""
+            if not url:
+                continue
+            elif title and url and options.md_links:
                 parsed_links.append(f"- [{title}]({url})")
+            elif title and url and not options.md_links:
+                parsed_links.append(f"- {title}: {url}")
             elif not title and url:
                 parsed_links.append(f"- {url}")
             else:
                 continue
-        lines.append(f"Links: {'\n'.join(parsed_links)}\n")
+        lines.append(f"Links: {'\n'.join(parsed_links)}")
     return "\n".join(lines)
 
 
@@ -661,6 +665,14 @@ async def read_graph():
             result += rel_result
     except Exception as e:
         raise ToolError(f"Error while printing relations: {e}")
+    
+    # Supabase integration: Print email summaries
+    if settings.supabase_enabled:
+        try:
+            email_summaries = await supabase_manager.get_email_summaries()  # type: ignore # noqa: F821
+            result += await print_email_summaries(email_summaries)
+        except Exception as e:
+            raise ToolError(f"Error while printing email summaries: {e}")
     return result
 
 
@@ -1348,7 +1360,7 @@ async def update_entity(request: UpdateEntityRequest):
 
 
 # Supabase Integration Tools
-def add_supabase_tools(mcp_server: FastMCP, supabase_manager: SupabaseManager | None) -> None:
+def add_supabase_tools(mcp_server: FastMCP, supabase_manager: Any | None) -> None:
     """If the Supabase integration is enabled, adds the tools to the given MCP server."""
 
     if not supabase_manager:
@@ -1505,15 +1517,41 @@ async def start_server():
 
     try:
         await startup_check()
-        logger.info("Startup check passed: memory file valid")
+        logger.info("✅ Startup check passed: memory file valid")
     except Exception as e:
         logger.error(f"🛑 Startup check failed: {e}")
         sys.exit(1)
-    # Supabase integration tools added here  TODO: make better
-    try:
-        add_supabase_tools(mcp, supabase)
-    except Exception as e:
-        logger.error(f"Error adding Supabase tools: {e}")
+
+    # Supabase integration: conditionally initialize if enabled and configured
+    supabase_manager = None
+    if settings.supabase_enabled and settings.supabase:
+        try:
+            from .supabase import SupabaseManager, SupabaseSettings
+
+            supabase_settings = SupabaseSettings(
+                url=settings.supabase.url,
+                key=settings.supabase.key,
+                dry_run=settings.dry_run,
+            )
+            supabase_manager = SupabaseManager(supabase_settings)
+            add_supabase_tools(mcp, supabase_manager)
+            logger.info("☁️ Supabase integration enabled and initialized")
+        except ImportError as e:
+            logger.error(
+                f"Supabase integration requested but dependencies unavailable: {e}. "
+                "Ensure supabase package is installed."
+            )
+        except Exception as e:
+            logger.error(f"Failed to initialize Supabase integration: {e}")
+    elif settings.supabase_enabled and not settings.supabase:
+        logger.warning(
+            "Supabase integration is enabled but configuration is invalid. "
+            "Supabase tools will not be available. "
+            "Provide --supabase-url and --supabase-key or set IQ_SUPABASE_URL and IQ_SUPABASE_KEY."
+        )
+    else:
+        logger.debug("Supabase integration disabled (use --enable-supabase to enable)")
+
     await mcp.run_async(transport=validated_transport, **transport_kwargs)
 
 

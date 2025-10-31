@@ -4,6 +4,11 @@ Centralized configuration for the IQ-MCP server.
 This module consolidates all configuration concerns (CLI args, environment
 variables, and sensible defaults) into a single, validated settings object.
 
+Architecture:
+- IQSettings: Core application settings (always loaded)
+- SupabaseConfig: Optional Supabase integration settings (loaded if enabled)
+- Settings: Composition class that combines core + optional integrations
+
 Precedence (highest first):
 - CLI arguments
 - Environment variables (optionally from .env)
@@ -13,7 +18,6 @@ Precedence (highest first):
 from __future__ import annotations
 
 from dotenv import load_dotenv
-from dataclasses import dataclass
 import argparse
 import os
 from pathlib import Path
@@ -26,7 +30,8 @@ logger = lg.getLogger("iq-mcp-bootstrap")
 # Default memory file at repo root
 DEFAULT_MEMORY_PATH = Path(__file__).parents[2].resolve() / "memory.jsonl"
 DEFAULT_PORT = 8000
-
+IQ_MCP_VERSION = "1.2.0"
+IQ_MCP_SCHEMA_VERSION = 1  # TODO: Bump version when schema changes before pushing to production
 
 Transport = Literal["stdio", "sse", "http"]
 
@@ -44,20 +49,20 @@ TRANSPORT_ENUM: dict[str, Transport] = {
 
 
 class IQSettings:
-    """IQ-MCP Application settings loaded from CLI and environment.
-
+    """Core IQ-MCP application settings (transport, memory, logging, etc.).
     Attributes:
-        debug: Enables verbose logging when True
-        transport: Validated transport value ("stdio" | "sse" | "http")
-        port: Server port (used when transport is http)
-        streamable_http_host: Optional HTTP host
-        streamable_http_path: Optional HTTP path
-        memory_path: Absolute path to memory JSONL file
-        project_root: Resolved project root path
-        no_emojis: Disable emojis in the output
-        supabase_url: Supabase project URL
-        supabase_key: Supabase anon or service role key with read access
-        supabase_table: Name of the table to query
+        `debug`: Enables verbose logging when True
+        `transport`: Validated transport value ("stdio" | "sse" | "http")
+        `port`: Server port (used when transport is http)
+        `streamable_http_host`: Optional HTTP host
+        `streamable_http_path`: Optional HTTP path
+        `memory_path`: Absolute path to memory JSONL file
+        `project_root`: Resolved project root path
+        `no_emojis`: Disable emojis in the output
+        `dry_run`: Enable dry-run mode (doesn't save anything)
+        `enable_supabase`: Enable Supabase integration
+    This class contains only the core settings required for the MCP server to function.
+    Optional integrations are handled separately via integration-specific config classes.
     """
 
     def __init__(
@@ -71,6 +76,7 @@ class IQSettings:
         streamable_http_path: str | None,
         project_root: Path,
         no_emojis: bool,
+        dry_run: bool,
     ) -> None:
         self.debug = bool(debug)
         self.transport = transport
@@ -80,7 +86,7 @@ class IQSettings:
         self.streamable_http_path = streamable_http_path
         self.project_root = project_root
         self.no_emojis = no_emojis
-
+        self.dry_run = dry_run
     # ---------- Construction ----------
     @classmethod
     def load(cls) -> "IQSettings":
@@ -96,6 +102,7 @@ class IQSettings:
             memory_path (Path): Absolute path to memory JSONL file
             project_root (Path): Resolved project root path
             no_emojis (bool): Disable emojis in the output
+            dry_run (bool): Enable dry-run mode
         """
         # CLI args > Env vars > Defaults
         parser = argparse.ArgumentParser(add_help=False)
@@ -106,6 +113,11 @@ class IQSettings:
         parser.add_argument("--http-host", type=str)
         parser.add_argument("--http-path", type=str)
         parser.add_argument("--no-emojis", action="store_true", default=None)
+        parser.add_argument("--dry-run", action="store_true", default=False)
+        # Supabase args are parsed separately in SupabaseConfig.load()
+        parser.add_argument("--enable-supabase", action="store_true", default=None)
+        parser.add_argument("--supabase-url", type=str, default=None)
+        parser.add_argument("--supabase-key", type=str, default=None)
         args, _ = parser.parse_known_args()
 
         # Debug mode
@@ -151,6 +163,10 @@ class IQSettings:
         # Disable emojis if desired
         no_emojis = args.no_emojis or os.getenv("IQ_NO_EMOJIS", "false").lower() == "true"
 
+        # Dry Run option - prevents saving to memory file or Supabase
+        dry_run = args.dry_run or os.getenv("IQ_DRY_RUN", "false").lower() == "true"
+        if dry_run:
+            logger.warning("🚧 Dry run mode enabled! No changes will be made to the memory file or Supabase.")
         return cls(
             debug=debug,
             transport=transport,
@@ -160,17 +176,164 @@ class IQSettings:
             memory_path=memory_path,
             project_root=project_root,
             no_emojis=no_emojis,
+            dry_run=dry_run,
         )
 
-    # def get_logger(self) -> lg.Logger:
-    #     """Get the main logger for the IQ-MCP server, configured by the settings object."""
-    #     logger = lg.getLogger("iq-mcp")
-    #     logger.addHandler(lg.FileHandler(f"{self.project_root}/iq-mcp.log"))
-    #     logger.setLevel(lg.DEBUG if self.debug else lg.INFO)
-    #     logger.debug("Retrieved debug logger")
-    #     return logger
+
+class SupabaseConfig:
+    """Optional Supabase integration configuration.
+
+    This class handles loading Supabase-specific settings from CLI args and env vars.
+    Only loaded if Supabase integration is enabled.
+    """
+
+    def __init__(
+        self,
+        *,
+        enabled: bool,
+        url: str | None,
+        key: str | None,
+        dry_run: bool,
+    ) -> None:
+        self.enabled = bool(enabled)
+        self.url = url
+        self.key = key
+        self.dry_run = dry_run
+
+    @classmethod
+    def load(cls, dry_run: bool = False) -> "SupabaseConfig":
+        """Load Supabase configuration from CLI args and environment variables.
+
+        Args:
+            dry_run: Whether to enable dry-run mode
+
+        Returns:
+            SupabaseConfig instance (may be enabled or disabled)
+        """
+        # Parse CLI args for Supabase
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument("--enable-supabase", action="store_true", default=None)
+        parser.add_argument("--supabase-url", type=str, default=None)
+        parser.add_argument("--supabase-key", type=str, default=None)
+        args, _ = parser.parse_known_args()
+
+        # Check if Supabase is enabled: CLI > env > default (False)
+        enabled = (
+            args.enable_supabase
+            if args.enable_supabase is not None
+            else os.getenv("IQ_ENABLE_SUPABASE", "false").lower() == "true"
+        )
+
+        # Supabase URL: CLI > IQ_SUPABASE_URL env > SUPABASE_URL env (backward compat)
+        url = (
+            args.supabase_url
+            or os.getenv("IQ_SUPABASE_URL")
+        )
+
+        # Supabase Key: CLI > IQ_SUPABASE_KEY env > SUPABASE_KEY env (backward compat)
+        key = (
+            args.supabase_key
+            or os.getenv("IQ_SUPABASE_KEY")
+        )
+
+        return cls(
+            enabled=enabled,
+            url=url,
+            key=key,
+            dry_run=dry_run,
+        )
+
+    def is_valid(self) -> bool:
+        """Check if Supabase config is valid (enabled and has required values)."""
+        if not self.enabled:
+            return False
+        return bool(self.url and self.key)
 
 
-Settings = IQSettings.load()
+class Settings:
+    """Composition of core settings and optional integrations.
 
-__all__ = ["Settings"]
+    This class combines IQSettings (core) with optional integration configs.
+    Integrations are loaded on-demand based on enable flags.
+
+    Attributes:
+        core: Core IQ-MCP application settings (always loaded)
+        supabase: Supabase integration config (loaded if enabled)
+    """
+
+    def __init__(
+        self,
+        *,
+        core: IQSettings,
+        supabase: SupabaseConfig | None = None,
+    ) -> None:
+        self.core = core
+        self.supabase = supabase
+
+    @classmethod
+    def load(cls) -> "Settings":
+        """Load all settings: core + optional integrations."""
+        # Always load core settings
+        core = IQSettings.load()
+        logger.debug(f"Settings loaded: {core}")
+
+        # Load Supabase config (checks enable flag internally)
+        supabase_config = SupabaseConfig.load(dry_run=core.dry_run)
+        
+        # Only include if enabled and valid
+        supabase = supabase_config if supabase_config.is_valid() else None
+        if supabase:
+            logger.debug(f"Supabase config loaded: {supabase}")
+
+        return cls(
+            core=core,
+            supabase=supabase,
+        )
+
+    # Convenience properties for backward compatibility
+    @property
+    def debug(self) -> bool:
+        return self.core.debug
+
+    @property
+    def transport(self) -> Transport:
+        return self.core.transport
+
+    @property
+    def port(self) -> int:
+        return self.core.port
+
+    @property
+    def memory_path(self) -> str:
+        return self.core.memory_path
+
+    @property
+    def streamable_http_host(self) -> str | None:
+        return self.core.streamable_http_host
+
+    @property
+    def streamable_http_path(self) -> str | None:
+        return self.core.streamable_http_path
+
+    @property
+    def project_root(self) -> Path:
+        return self.core.project_root
+
+    @property
+    def no_emojis(self) -> bool:
+        return self.core.no_emojis
+
+    @property
+    def dry_run(self) -> bool:
+        return self.core.dry_run
+
+    @property
+    def supabase_enabled(self) -> bool:
+        """Check if Supabase integration is enabled."""
+        return self.supabase is not None and self.supabase.enabled
+
+
+# Module-level settings instance (loads on import)
+Settings = Settings.load()
+
+__all__ = ["Settings", "IQSettings", "SupabaseConfig"]
