@@ -42,7 +42,7 @@ from .settings import IQ_MCP_VERSION
 from .supabase import SupabaseManager, EmailSummary
 
 supabase_manager: SupabaseManager | None = (
-    SupabaseManager(settings.supabase) if settings.supabase_enabled else None
+    SupabaseManager(settings.supabase) if settings.supabase else None
 )
 
 
@@ -236,7 +236,7 @@ async def print_entities(
                 f"{icon}{name}"
                 f"{' (' + type + ')' if include_types else ''}"
                 f"{']' if md_links else ' '}"
-                f"{'(' + id + ')' if include_ids else ''}"
+                f"{'(id:' + id + ')' if include_ids else ''}"
             )
             # With default options: [👤 John Doe](12345678) (person)
             # Example with md_links=False: 👤 John Doe (person, ID: 12345678)
@@ -446,22 +446,40 @@ async def print_email_summaries(
     email_summaries: list[EmailSummary], options: PrintOptions = PrintOptions()
 ) -> str:
     """Print email summaries in a readable format."""
+    # Resolve formatting options
+
+    sep = options.separator
+    ind = " " * options.indent if options.indent > 0 else ""
+    ol = options.ol
+    if ol:
+        os = options.ordinal_separator + " "
+    else:
+        os = " "
+
     lines: list[str] = []
+    i = 1
     for summary in email_summaries:
+        ord = str(i) if ol else options.bullet
+        ind2 = " " * len(ind + ord + os)
+        ts = datetime.fromisoformat(summary.timestamp) if summary.timestamp else None
+        if ts:
+            ts = ts.strftime("%Y-%m-%d %H:%M:%S") + " UTC"
+        else:
+            ts = "N/A"
         if not summary.summary:
-            logger.error(f"Email summary {summary.message_id} has no content summary!")
+            logger.error(
+                f"EmailSummary for message ID {summary.message_id} has no content summary!"
+            )
             continue
-        lines.append(f"Message ID: {summary.message_id or 'N/A'}")
+        lines.append(f"{ind}{ord}{os}Message ID: {summary.message_id}")
         lines.append(
-            f"From: {'[' + summary.from_name + ']' if options.md_links else summary.from_name}"
-            + f"{f'({summary.from_address})' if options.md_links else f' {summary.from_address}'}"
+            f"{ind2}From: {'[' + summary.from_name + ']' if options.md_links else summary.from_name}"
+            + f"{f'(mailto:{summary.from_address})' if options.md_links else f' ({summary.from_address})'}"
         )
-        lines.append(f"Reply-To: {summary.reply_to or 'N/A'}")
-        lines.append(
-            f"Received at: {summary.timestamp.strftime('%Y-%m-%d %H:%M:%S') if summary.timestamp else 'N/A'} UTC"
-        )
-        lines.append(f"Subject: {summary.subject or ''}")
-        lines.append(f"Content summary: {summary.summary}")
+        lines.append(f"{ind2}Reply-To: {summary.reply_to or 'N/A'}")
+        lines.append(f"{ind2}Received at: {ts}")
+        lines.append(f"{ind2}Subject: {summary.subject or ''}")
+        lines.append(f"{ind2}Content summary: {summary.summary}")
 
         parsed_links: list[str] = []
         for link in summary.links or []:
@@ -470,15 +488,17 @@ async def print_email_summaries(
             if not url:
                 continue
             elif title and url and options.md_links:
-                parsed_links.append(f"- [{title}]({url})")
+                parsed_links.append(f"{ind2}- [{title}]({url})")
             elif title and url and not options.md_links:
-                parsed_links.append(f"- {title}: {url}")
+                parsed_links.append(f"{ind2}- {title}: {url}")
             elif not title and url:
-                parsed_links.append(f"- {url}")
+                parsed_links.append(f"{ind2}- {url}")
             else:
                 continue
-        lines.append(f"Links: {'\n'.join(parsed_links)}")
-    return "\n".join(lines)
+        lines.append(f"{ind2}Links:")
+        lines.append(f"{sep.join(parsed_links)}")
+        i += 1
+    return sep.join(lines)
 
 
 async def print_user_info(
@@ -1432,16 +1452,34 @@ async def read_graph():
         lines.append("(No relations found for user entity - this may be an error!)")
 
     # Supabase integration: Print email summaries
-    if settings.supabase_enabled and supabase_manager:
+    if supabase_manager:
         try:
             email_summaries = await supabase_manager.get_email_summaries()
+        except Exception as e:
+            raise ToolError(f"(Supabase) Error while getting email summaries: {e}")
+        if email_summaries:
             lines.append("")
             lines.append(
                 f"📧 The user's got mail! Retrieved summaries for {len(email_summaries)} email messages:"
             )
-            lines.append(await print_email_summaries(email_summaries))
-        except Exception as e:
-            raise ToolError(f"(Supabase) Error while printing email summaries: {e}")
+            try:
+                lines.append(
+                    await print_email_summaries(
+                        email_summaries,
+                        options=PrintOptions(
+                            ol=True,
+                        ),
+                    )
+                )
+            except Exception as e:
+                raise ToolError(f"(Supabase) Error while printing email summaries: {e}")
+        else:
+            lines.append("")
+            lines.append("📭 No new email summaries found! The user is all caught up!")
+    else:
+        logger.info(
+            "(Supabase) Supabase integration is disabled, no email summaries will be printed"
+        )
 
     # Remove any invalid lines (None types, etc.)
     for line in lines:
@@ -1449,6 +1487,8 @@ async def read_graph():
             lines.remove(line)
             continue
     result = "\n".join(lines)
+
+    asyncio.create_task(supabase_manager.mark_as_reviewed(email_summaries))
     return result
 
 

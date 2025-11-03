@@ -87,6 +87,7 @@ class IQSettings:
         self.project_root = project_root
         self.no_emojis = no_emojis
         self.dry_run = dry_run
+
     # ---------- Construction ----------
     @classmethod
     def load(cls) -> "IQSettings":
@@ -166,7 +167,9 @@ class IQSettings:
         # Dry Run option - prevents saving to memory file or Supabase
         dry_run = args.dry_run or os.getenv("IQ_DRY_RUN", "false").lower() == "true"
         if dry_run:
-            logger.warning("🚧 Dry run mode enabled! No changes will be made to the memory file or Supabase.")
+            logger.warning(
+                "🚧 Dry run mode enabled! No changes will be made to the memory file or Supabase."
+            )
         return cls(
             debug=debug,
             transport=transport,
@@ -194,11 +197,24 @@ class SupabaseConfig:
         url: str | None,
         key: str | None,
         dry_run: bool,
+        email_table: str = "emailSummaries",
+        entities_table: str = "kgEntities",
+        observations_table: str = "kgObservations",
+        relations_table: str = "kgRelations",
     ) -> None:
         self.enabled = bool(enabled)
-        self.url = url
-        self.key = key
+        self.url = url or os.getenv("IQ_SUPABASE_URL", None)
+        self.key = key or os.getenv("IQ_SUPABASE_KEY", None)
         self.dry_run = dry_run
+        if email_table:
+            self.email_table = email_table
+
+        if entities_table:
+            self.entities_table = entities_table
+        if observations_table:
+            self.observations_table = observations_table
+        if relations_table:
+            self.relations_table = relations_table
 
     @classmethod
     def load(cls, dry_run: bool = False) -> "SupabaseConfig":
@@ -225,16 +241,10 @@ class SupabaseConfig:
         )
 
         # Supabase URL: CLI > IQ_SUPABASE_URL env > SUPABASE_URL env (backward compat)
-        url = (
-            args.supabase_url
-            or os.getenv("IQ_SUPABASE_URL")
-        )
+        url = args.supabase_url or os.getenv("IQ_SUPABASE_URL")
 
         # Supabase Key: CLI > IQ_SUPABASE_KEY env > SUPABASE_KEY env (backward compat)
-        key = (
-            args.supabase_key
-            or os.getenv("IQ_SUPABASE_KEY")
-        )
+        key = args.supabase_key or os.getenv("IQ_SUPABASE_KEY")
 
         return cls(
             enabled=enabled,
@@ -275,15 +285,16 @@ class Settings:
         """Load all settings: core + optional integrations."""
         # Always load core settings
         core = IQSettings.load()
-        logger.debug(f"Settings loaded: {core}")
 
         # Load Supabase config (checks enable flag internally)
         supabase_config = SupabaseConfig.load(dry_run=core.dry_run)
-        
+
         # Only include if enabled and valid
         supabase = supabase_config if supabase_config.is_valid() else None
         if supabase:
             logger.debug(f"Supabase config loaded: {supabase}")
+        else:
+            logger.debug("Supabase config not loaded!")
 
         return cls(
             core=core,

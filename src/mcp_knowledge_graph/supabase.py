@@ -180,21 +180,26 @@ class SupabaseManager:
     async def mark_as_reviewed(self, email_summaries: list[EmailSummary]) -> None:
         """Mark email summaries as reviewed in Supabase."""
         client = self._ensure_client()
+        if self.settings.dry_run:
+            logger.warning("(Supabase) 🏜️ Dry run mode enabled, skipping mark_as_reviewed()")
+            return
         email_summary_table = self.settings.email_table
         try:
-            for summary in email_summaries:
-                _ = (
-                    client.table(email_summary_table)
-                    .update({"reviewed": "true"})
-                    .eq("message_id", summary.message_id)
-                    .execute()
-                )
+            email_ids = [message.message_id for message in email_summaries]
+            _ = (
+                client.table(email_summary_table)
+                .update({"reviewed": "true"})
+                .in_("message_id", email_ids)
+                .execute()
+            )
         except Exception as e:
-            logger.error(f"Error marking email summaries as read in Supabase: {e}")
+            logger.error(f"(Supabase) Error marking email summaries as reviewed in Supabase: {e}")
         else:
-            logger.info(f"Marked {len(email_summaries)} email summaries as read in Supabase")
+            logger.info(
+                f"(Supabase) Marked {len(email_ids)} email summaries as reviewed in Supabase"
+            )
 
-    async def sync_knowledge_graph(self, graph: KnowledgeGraph) -> None:
+    async def sync_knowledge_graph(self, graph: KnowledgeGraph) -> None:  # TODO: Implement
         """
         Replace Supabase knowledge graph tables with a cleaned snapshot from the provided graph.
 
@@ -203,7 +208,7 @@ class SupabaseManager:
         2) Insert entities, then observations, then relations
         """
         if self.settings.dry_run:
-            logger.warning("Dry run mode enabled, skipping sync")
+            logger.warning("(Supabase) 🏜️ Dry run mode enabled, skipping sync_knowledge_graph()")
             return
 
         client = self._ensure_client()

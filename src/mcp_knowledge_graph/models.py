@@ -342,10 +342,7 @@ class Entity(BaseModel):
             if not obs.is_outdated():
                 valid_observations.append(obs)
             else:
-                logger.info(
-                    f"Pruned outdated observation from entity {self.name} ({self.id}): {obs.content} ({obs.age} days old)"
-                )
-
+                continue
         # Prune duplicate observations
         seen_observations: set[str] = set()
         was_pruned = False
@@ -354,16 +351,11 @@ class Entity(BaseModel):
             if content in seen_observations:
                 valid_observations.remove(o)
                 was_pruned = True
-                logger.info(
-                    f"Pruned duplicate observation from entity {self.name} ({self.id}): {o.content}"
-                )
             else:
                 seen_observations.add(content)
 
         if was_pruned:
-            logger.debug(
-                f"Cleaned up observations for entity {self.name} ({self.id}), new list: {valid_observations}"
-            )
+            logger.debug(f"Cleaned up observations for entity {self.name} ({self.id})")
         self.observations = valid_observations
         return self
 
