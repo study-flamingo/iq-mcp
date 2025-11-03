@@ -92,7 +92,7 @@ class PrintOptions:
     - `indent` is applied only to the entity list, not the prologue or epilogue
     """
 
-    exclude_user: bool = True
+    exclude_user: bool = False
     prologue: str = ""
     separator: str = "\n"
     epilogue: str = "\n\n"
