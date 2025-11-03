@@ -18,14 +18,12 @@ from pydantic import (
 )
 from enum import Enum
 import regex as re
-from .logging import get_iq_mcp_logger
+from .logging import logger
 from .settings import Settings as settings
 from .settings import (
     IQ_MCP_VERSION,
     IQ_MCP_SCHEMA_VERSION
 )
-
-logger = get_iq_mcp_logger()
 
 # Helper functions
 _GRAPHEMES = re.compile(r"\X")

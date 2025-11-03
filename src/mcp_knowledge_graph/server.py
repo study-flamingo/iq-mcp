@@ -17,7 +17,7 @@ from pydantic.dataclasses import dataclass
 from typing import Any, Annotated
 from fastmcp.exceptions import ToolError, ValidationError
 
-from .logging import get_iq_mcp_logger
+from .logging import logger
 from .manager import KnowledgeGraphManager
 from .models import (
     DeleteEntryRequest,
@@ -38,9 +38,9 @@ from .models import (
 from .settings import Settings as settings
 from .settings import IQ_MCP_VERSION
 
-logger = get_iq_mcp_logger()
-
 # Supabase imports are lazy-loaded when needed
+from .supabase import SupabaseManager, SupabaseSettings  # noqa: E402
+supabase_manager: SupabaseManager | None = None
 
 # Load settings once and configure logging level accordingly
 
@@ -88,7 +88,7 @@ class PrintOptions:
     - `indent` is applied only to the entity list, not the prologue or epilogue
     """
 
-    exclude_user: bool = True
+    exclude_user: bool = False
     prologue: str = ""
     separator: str = "\n"
     epilogue: str = "\n\n"
@@ -638,7 +638,7 @@ async def read_graph():
         User/LLM-friendly summary of the entire knowledge graph in text/markdown format
     """
     graph = await manager.read_graph()
-
+    logger.debug("mcp.read_graph() called")
     result = "💭 You remember the following about the user:\n"
 
     try:
@@ -667,11 +667,13 @@ async def read_graph():
         raise ToolError(f"Error while printing relations: {e}")
     
     # Supabase integration: Print email summaries
-    if settings.supabase_enabled:
-        try:
-            email_summaries = await supabase_manager.get_email_summaries()  # type: ignore # noqa: F821
+    try:
+        if settings.supabase_enabled and isinstance(supabase_manager, SupabaseManager):
+            email_summaries = await supabase_manager.get_email_summaries()
             result += await print_email_summaries(email_summaries)
-        except Exception as e:
+        else:
+            logger.warning("Supabase integration is not enabled, email summaries not printed")
+    except Exception as e:
             raise ToolError(f"Error while printing email summaries: {e}")
     return result
 
@@ -1478,18 +1480,6 @@ def add_supabase_tools(mcp_server: FastMCP, supabase_manager: Any | None) -> Non
 
 # ----- DEBUG/DEPRECATED TOOLS -----#
 
-# if settings.debug:
-
-#     @mcp.tool
-#     async def DEBUG_save_graph():
-#         """DEBUG TOOL: Test loading, and then immediately saving the graph."""
-#         try:
-#             graph = await manager._load_graph()
-#             await manager._save_graph(graph)
-#         except Exception as e:
-#             raise ToolError(f"DEBUG TOOL ERROR: Failed to save graph: {e}")
-#         return "✅ Graph saved successfully!"
-
 
 # ----- MAIN APPLICATION ENTRY POINT -----#
 
@@ -1526,8 +1516,6 @@ async def start_server():
     supabase_manager = None
     if settings.supabase_enabled and settings.supabase:
         try:
-            from .supabase import SupabaseManager, SupabaseSettings
-
             supabase_settings = SupabaseSettings(
                 url=settings.supabase.url,
                 key=settings.supabase.key,

@@ -13,7 +13,7 @@ from typing import Any, Annotated
 from pathlib import Path
 from uuid import uuid4
 from .settings import Settings as settings
-from .logging import get_iq_mcp_logger
+from .logging import logger
 from .models import (
     Entity,
     EntityID,
@@ -35,8 +35,6 @@ from .models import (
     MemoryRecord,
     GraphMeta,
 )
-
-logger = get_iq_mcp_logger()
 
 class KnowledgeGraphManager:
     """

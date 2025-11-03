@@ -8,11 +8,9 @@ from datetime import datetime, timezone
 from supabase import create_client, Client as SBClient
 
 from .models import KnowledgeGraph, Entity
-from .logging import get_iq_mcp_logger
+from .logging import logger
 
 load_dotenv()
-
-logger = get_iq_mcp_logger()
 
 
 class SupabaseException(Exception):

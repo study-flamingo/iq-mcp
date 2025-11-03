@@ -25,5 +25,6 @@ def get_iq_mcp_logger() -> lg.Logger:
     logger.debug("Retrieved debug logger")
     return logger
 
+logger = get_iq_mcp_logger()
 
-__all__ = ["get_iq_mcp_logger"]
+__all__ = ["logger"]
