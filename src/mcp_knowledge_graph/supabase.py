@@ -8,15 +8,14 @@ from datetime import datetime, timezone
 from supabase import create_client, Client as SBClient
 
 from .models import KnowledgeGraph, Entity
-from .logging import get_iq_mcp_logger
+from .logging import logger
 
 load_dotenv()
-
-logger = get_iq_mcp_logger()
 
 
 class SupabaseException(Exception):
     """Exception raised for errors in the IQ-MCP Supabase integration."""
+
     pass
 
 
@@ -45,7 +44,9 @@ class SupabaseSettings:
         self.url = url
         self.key = key
         self.email_table = email_table or os.getenv("IQ_SUPABASE_EMAIL_TABLE", "emailSummaries")
-        self.entities_table = entities_table or os.getenv("IQ_SUPABASE_ENTITIES_TABLE", "kgEntities")
+        self.entities_table = entities_table or os.getenv(
+            "IQ_SUPABASE_ENTITIES_TABLE", "kgEntities"
+        )
         self.observations_table = observations_table or os.getenv(
             "IQ_SUPABASE_OBSERVATIONS_TABLE", "kgObservations"
         )
@@ -53,6 +54,7 @@ class SupabaseSettings:
             "IQ_SUPABASE_RELATIONS_TABLE", "kgRelations"
         )
         self.dry_run = dry_run
+
 
 class EmailSummary:
     """Object representing an email summary from Supabase."""
@@ -79,6 +81,7 @@ class EmailSummary:
         self.subject = subject
         self.summary = summary
         self.links = links
+
 
 class SupabaseManager:
     """Lightweight manager for optional Supabase integration.
@@ -122,7 +125,7 @@ class SupabaseManager:
             )
         else:
             from_ts = None
-        
+
         # If a time constraint is provided, convert to UTC and set to 23:59:59 (inclusive filtering)
         if to_date:
             to_ts = to_date.astimezone(timezone.utc).replace(
@@ -168,7 +171,9 @@ class SupabaseManager:
             logger.error(f"Error parsing email summaries from Supabase: {e}")
             raise SupabaseException(f"Error parsing email summaries from Supabase: {e}")
 
-        logger.info(f"📫 Retrieved {len(summaries)} email summaries from table {email_summary_table}!")
+        logger.info(
+            f"📫 Retrieved {len(summaries)} email summaries from table {email_summary_table}!"
+        )
 
         return summaries
 
@@ -200,7 +205,7 @@ class SupabaseManager:
         if self.settings.dry_run:
             logger.warning("Dry run mode enabled, skipping sync")
             return
-        
+
         client = self._ensure_client()
 
         entities_table = self.settings.entities_table

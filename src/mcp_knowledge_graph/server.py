@@ -17,7 +17,7 @@ from pydantic.dataclasses import dataclass
 from typing import Any, Annotated
 from fastmcp.exceptions import ToolError, ValidationError
 
-from .logging import get_iq_mcp_logger
+from .logging import logger
 from .manager import KnowledgeGraphManager
 from .models import (
     DeleteEntryRequest,
@@ -38,9 +38,13 @@ from .models import (
 from .settings import Settings as settings
 from .settings import IQ_MCP_VERSION
 
-logger = get_iq_mcp_logger()
 
-# Supabase imports are lazy-loaded when needed
+from .supabase import SupabaseManager, EmailSummary
+
+supabase_manager: SupabaseManager | None = (
+    SupabaseManager(settings.supabase) if settings.supabase_enabled else None
+)
+
 
 # Load settings once and configure logging level accordingly
 
@@ -107,134 +111,6 @@ class PrintOptions:
 
 
 #### Helper functions ####
-async def print_user_info(
-    graph: KnowledgeGraph | None = None,
-    include_observations: bool = False,
-    include_relations: bool = False,
-    options: PrintOptions = PrintOptions(),
-):
-    """Get the user's info from the provided knowledge graph (or the default graph from the manager) and print to a string.
-
-    Args:
-      - graph: The knowledge graph to print user info from. Will load default graph from manager if not provided.
-      - include_observations: Include observations related to the user in the response.
-      - include_relations: Include relations related to the user in the response.
-      - options: The options to use for printing the user info. If not provided, default values will be used.
-    """
-
-    if not graph:
-        graph = await manager.read_graph()
-    entity_id_map = await manager.get_entity_id_map(graph)
-
-    # Resolve options
-    prologue = options.prologue
-    separator = options.separator
-    indent = options.indent
-    ul = options.ul
-    ol = False if ul else options.ol
-    bullet = options.bullet
-    ordinal_separator = options.ordinal_separator
-
-    ind = " " * indent if indent > 0 else ""
-    os = ordinal_separator if ol else ""
-    ord = "" if ol else bullet
-
-    try:
-        # Compose a sensible display name for the user, based on available data and preferences
-        last_name = graph.user_info.last_name or ""
-        first_name = graph.user_info.first_name or ""
-        nickname = graph.user_info.nickname or ""
-        preferred_name = graph.user_info.preferred_name or (
-            nickname or first_name or last_name or "user"
-        )
-        linked_entity_id = graph.user_info.linked_entity_id or None
-        middle_names = graph.user_info.middle_names or []
-        pronouns = graph.user_info.pronouns or ""
-        emails = graph.user_info.emails or []
-        prefixes = graph.user_info.prefixes or []
-        suffixes = graph.user_info.suffixes or []
-        names = graph.user_info.names or [preferred_name]
-    except Exception as e:
-        raise ToolError(f"Failed to load user info: {e}")
-
-    linked_entity = None
-    if linked_entity_id:
-        linked_entity = entity_id_map.get(linked_entity_id, None)
-    if not linked_entity:
-        logger.error("User-linked entity not found; proceeding without observations section")
-
-    result = prologue
-    try:
-        # Start with printing the user's info
-        result += f"{names[0]} (Preferred name: {preferred_name})\n"
-        if middle_names:
-            result += f"Middle name(s): {', '.join(middle_names)}\n"
-        if nickname and nickname != preferred_name:
-            result += f"Nickname: {nickname}\n"
-        if pronouns:
-            result += f"Pronouns: {pronouns}\n"
-        if prefixes:
-            result += f"Prefixes: {', '.join(prefixes)}\n"
-        if suffixes:
-            result += f"Suffixes: {', '.join(suffixes)}\n"
-        if names[1:]:
-            result += "May also go by:\n"
-            for name in names[1:]:
-                result += f"{ind}{ord}{os} {name}\n"
-        if emails:
-            result += f"Email addresses: {', '.join(emails)}\n"
-
-    except Exception as e:
-        raise ToolError(f"Failed to print user info: {e}")
-
-    # Print observations about the user (from the user-linked entity)
-    try:
-        if include_observations and linked_entity:
-            if len(linked_entity.observations) > 0:
-                result += (
-                    "\n" if settings.no_emojis else "\n🔍 "
-                ) + "Observations (times in UTC):\n"
-                for o in linked_entity.observations:
-                    ts = o.timestamp.strftime("%Y-%m-%d %H:%M:%S")
-                    result += f"{ind}{ord}{os} {o.content} ({ts}, {o.durability.value}{separator}"
-            else:
-                pass  # No observations found in user-linked entity
-    except Exception as e:
-        raise ToolError(f"Failed to print user observations: {e}")
-
-    # Print relations about the user (dynamic, from graph relations)
-    try:
-        if include_relations:
-            for r in graph.relations:
-                # skip if either entity is not found or not the user-linked entity
-                a: Entity | None = entity_id_map.get(r.from_id, None)
-                b: Entity | None = entity_id_map.get(r.to_id, None)
-                if not a or not b:
-                    logger.error(f"Failed to get entities from relation: {str(r)[:20]}...")
-                    continue
-                elif linked_entity_id not in [a.id, b.id]:
-                    logger.debug(
-                        f"User-linked entity not found in relation {str(r)[:20]} - skipping"
-                    )
-                    continue
-
-                # replace the user-linked entity name with the user's preferred name
-                if linked_entity_id == a.id:
-                    from_record = f"{preferred_name} (user)"
-                else:
-                    from_record = f"{a.icon_()}{a.name} ({a.entity_type})"
-                if linked_entity_id == b.id:
-                    to_record = f"{preferred_name} (user)"
-                else:
-                    to_record = f"{b.icon_()}{b.name} ({b.entity_type})"
-
-                result += f"  - {from_record} {r.relation} {to_record}\n"
-
-        return result
-    except Exception as e:
-        raise ToolError(f"Failed to print user relations: {e}")
-
-
 async def print_entities(
     entities: list[Entity] | None = None,
     graph: KnowledgeGraph | None = None,
@@ -399,7 +275,8 @@ async def print_relations(
     options: PrintOptions = PrintOptions(),
 ) -> str:
     """
-    Print relations from the graph in a readable format. Resolves entity IDs to names wherever possible.
+    Print relations from the graph, or from a list of relations, in a readable format. Resolves entity IDs to names wherever possible.
+    If no arguments are provided, the graph will be read and all relations will be printed.
 
     Args:
 
@@ -422,13 +299,12 @@ async def print_relations(
     <epilogue is double newline>
     ```
     """
-    if not graph:
-        graph = await manager.read_graph()
-    if not relations:
-        relations = graph.relations
-    entity_id_map = await manager.get_entity_id_map(graph)
+    graph = graph or await manager.read_graph()
+    relations = relations or graph.relations
     user_info = graph.user_info
+    entity_id_map = await manager.get_entity_id_map(graph)
 
+    # Resolve formatting options
     prologue = options.prologue
     epilogue = options.epilogue
     md_links = options.md_links
@@ -440,19 +316,15 @@ async def print_relations(
     bullet = options.bullet
     os = options.ordinal_separator
     separator = options.separator
-
-    result = prologue
-
-    # Resolve options
     i = 1  # for ordered list ordinals
     ind = " " * indent if indent > 0 else ""  # no negatives allowed
-
     if ol:
         ord = str(i)
     else:
         ord = bullet
         os = ""
 
+    lines: list[str] = [prologue]
     for r in relations:
         try:
             a = entity_id_map.get(r.from_id, None)
@@ -464,34 +336,25 @@ async def print_relations(
         if not b or not isinstance(b, Entity):
             logger.error(f"Failed to get 'to' entity ({r.to_id}) from relation")
 
-        # If this is the user-linked entity, use the preferred name instead; if name is missing, use "unknown"
-        if a:
-            if a.name.lower().strip() == "__user__" or a.name.lower().strip() == "user":
-                a_name = user_info.preferred_name + " (user)"
-            else:
-                a_name = a.name
-            a_icon = a.icon_()
-            a_id = a.id
-            a_type = a.entity_type
+        # For A: If this is the user-linked entity, use the user's preferred name instead; if name is missing, use "unknown"
+        if a.name.lower().strip() == "__user__" or a.name.lower().strip() == "user":
+            a_name = user_info.preferred_name + " (user)"
         else:
-            a_name = "unknown"
-            a_icon = ""
-            a_id = str(r.from_id)
-            a_type = "unknown"
-        if b:
-            if b.name.lower().strip() == "__user__" or b.name.lower().strip() == "user":
-                b_name = user_info.preferred_name
-            else:
-                b_name = b.name
-            b_icon = b.icon_()
-            b_id = b.id
-            b_type = b.entity_type
+            a_name = a.name
 
+        # For B: If this is the user-linked entity, use the user's preferred name instead; if name is missing, use "unknown"
+        if b.name.lower().strip() == "__user__" or b.name.lower().strip() == "user":
+            b_name = user_info.preferred_name + " (user)"
         else:
-            b_name = "unknown"
-            b_icon = ""
-            b_id = str(r.to_id)
-            b_type = "unknown"
+            b_name = b.name
+
+        a_icon = a.icon_()
+        a_id = a.id
+        a_type = a.entity_type
+
+        b_icon = b.icon_()
+        b_id = b.id
+        b_type = b.entity_type
 
         # Compose pre-entity string (list stuff like indentation, bullet, ordinal, etc.)
         # Special case: if both ul and ol are False, omit pre-relation string
@@ -504,8 +367,8 @@ async def print_relations(
 
         # Compose relation to and from strings
         if md_links and include_ids:
-            link_from = f"[{a_icon}{a_name}]({a_id})"
-            link_to = f"[{b_icon}{b_name}]({b_id})"
+            link_from = f"[{a_icon}{a_name}](id:{a_id})"
+            link_to = f"[{b_icon}{b_name}](id:{b_id})"
         elif md_links and not include_ids:
             link_from = f"{a_icon}{a_name}"
             link_to = f"{b_icon}{b_name}"
@@ -520,16 +383,11 @@ async def print_relations(
             link_to += f" ({b_type})"
 
         # Compose entity string (entity icon, name, id, type)
-        display = f"{link_from} {r.relation} {link_to}"
-
-        # Compose post-entity string (separator)
-        display_post = f"{separator}"
-
-        result += f"{display_pre}{display}{display_post}"
+        lines.append(f"{display_pre}{link_from} {r.relation} {link_to}")
         i += 1
 
     # Finally, add the epilogue
-    result += epilogue
+    result = separator.join(lines) + epilogue
 
     return result
 
@@ -583,24 +441,28 @@ async def print_observations(
     result_str += epilogue
     return result_str
 
-async def print_email_summaries(email_summaries: list[Any], options: PrintOptions = PrintOptions()) -> str:
+
+async def print_email_summaries(
+    email_summaries: list[EmailSummary], options: PrintOptions = PrintOptions()
+) -> str:
     """Print email summaries in a readable format."""
-    # EmailSummary is imported lazily when Supabase is enabled
-    lines: list[str] = [f"📧 Retrieved summaries for {len(email_summaries)} email messages:\n"]
+    lines: list[str] = []
     for summary in email_summaries:
         if not summary.summary:
             logger.error(f"Email summary {summary.message_id} has no content summary!")
             continue
-        lines.append(f"Message ID: {summary.message_id or "N/A"}")
+        lines.append(f"Message ID: {summary.message_id or 'N/A'}")
         lines.append(
-            f"From: {'[' + summary.from_name + ']' if options.md_links else summary.from_name}" +
-            f"{f"({summary.from_address})" if options.md_links else f" {summary.from_address}"}"
-            )
-        lines.append(f"Reply-To: {summary.reply_to or "N/A"}")
-        lines.append(f"Received at: {summary.timestamp.strftime('%Y-%m-%d %H:%M:%S') if summary.timestamp else "N/A"} UTC")
-        lines.append(f"Subject: {summary.subject or ""}")
+            f"From: {'[' + summary.from_name + ']' if options.md_links else summary.from_name}"
+            + f"{f'({summary.from_address})' if options.md_links else f' {summary.from_address}'}"
+        )
+        lines.append(f"Reply-To: {summary.reply_to or 'N/A'}")
+        lines.append(
+            f"Received at: {summary.timestamp.strftime('%Y-%m-%d %H:%M:%S') if summary.timestamp else 'N/A'} UTC"
+        )
+        lines.append(f"Subject: {summary.subject or ''}")
         lines.append(f"Content summary: {summary.summary}")
-        
+
         parsed_links: list[str] = []
         for link in summary.links or []:
             title = link.get("title") or ""
@@ -619,61 +481,111 @@ async def print_email_summaries(email_summaries: list[Any], options: PrintOption
     return "\n".join(lines)
 
 
+async def print_user_info(
+    graph: KnowledgeGraph | None = None,
+    include_observations: bool = True,
+    options: PrintOptions = PrintOptions(),
+):
+    """Get the user's info from the provided knowledge graph (or the default graph from the manager) and print to a string.
+
+    Args:
+      - graph: The knowledge graph to print user info from. Will load default graph from manager if not provided.
+      - include_observations: Include observations related to the user in the response.
+      - include_relations: Include relations related to the user in the response.
+      - options: The options to use for printing the user info. If not provided, default values will be used.
+    """
+
+    if not graph:
+        graph = await manager.read_graph()
+    entity_id_map = await manager.get_entity_id_map(graph)
+
+    # Resolve options
+    prologue = options.prologue
+    epilogue = options.epilogue
+    separator = options.separator
+    indent = options.indent
+    ul = options.ul
+    ol = False if ul else options.ol
+    bullet = options.bullet
+    ordinal_separator = options.ordinal_separator
+
+    ind = " " * indent if indent > 0 else ""
+    os = ordinal_separator if ol else ""
+    ord = "" if ol else bullet
+
+    try:
+        # Compose a sensible display name for the user, based on available data and preferences
+        last_name = graph.user_info.last_name or ""
+        first_name = graph.user_info.first_name or ""
+        nickname = graph.user_info.nickname or ""
+        preferred_name = graph.user_info.preferred_name or (
+            nickname or first_name or last_name or "user"
+        )
+        linked_entity_id = graph.user_info.linked_entity_id
+        middle_names = graph.user_info.middle_names or []
+        pronouns = graph.user_info.pronouns or ""
+        emails = graph.user_info.emails or []
+        prefixes = graph.user_info.prefixes or []
+        suffixes = graph.user_info.suffixes or []
+        names = graph.user_info.names or [preferred_name]
+    except Exception as e:
+        raise ToolError(f"Failed to load user info: {e}")
+
+    try:
+        linked_entity = entity_id_map.get(linked_entity_id, None)
+        if not linked_entity:
+            raise KnowledgeGraphException("User-linked entity not found! Graph may be corrupt!")
+    except Exception as e:
+        raise ToolError(f"Failed to get user-linked entity: {e}")
+
+    lines: list[str] = []
+    if prologue:
+        lines.append(prologue)
+
+    # Start with printing the user's info
+    try:
+        lines.append(f"{names[0]} (Preferred name: {preferred_name})")
+        if middle_names:
+            lines.append(f"Middle name(s): {', '.join(middle_names)}")
+        if nickname and nickname != preferred_name:
+            lines.append(f"Nickname: {nickname}")
+        if pronouns:
+            lines.append(f"Pronouns: {pronouns}")
+        if prefixes:
+            lines.append(f"Prefixes: {', '.join(prefixes)}")
+        if suffixes:
+            lines.append(f"Suffixes: {', '.join(suffixes)}")
+        if names[1:]:
+            lines.append("May also go by:")
+            for name in names[1:]:
+                lines.append(f"{ind}{ord}{os} {name}")
+        if emails:
+            lines.append(f"Email addresses: {', '.join(emails)}")
+    except Exception as e:
+        raise ToolError(f"Failed to print user info: {e}")
+
+    # Print observations about the user (from the user-linked entity)
+    try:
+        if include_observations and linked_entity:
+            if linked_entity.observations:
+                lines.append("")
+                lines.append("" if settings.no_emojis else "🔍 " + "Observations about the user:")
+                for o in linked_entity.observations:
+                    ts = o.timestamp.strftime("%Y-%m-%d %H:%M:%S") + " UTC"
+                    lines.append(f"{ind}{ord}{os} {o.content} ({ts}, {o.durability.value})")
+            else:
+                pass  # No observations found in user-linked entity
+    except Exception as e:
+        raise ToolError(f"Failed to print user observations: {e}")
+    lines.append(epilogue)
+    return separator.join(lines)
+
+
 def __this_is_a_fake_function_to_separate_sections_in_the_outline_in_cursor_do_not_use_me() -> None:
     pass
 
 
-@mcp.tool
-async def read_graph():
-    """Read and print a user/LLM-friendly summary of the entire knowledge graph.
-
-    Args:
-
-        - exclude_user_info: Whether to exclude the user info from the summary. Default is False.
-        - exclude_entities: Whether to exclude the entities from the summary. Default is False.
-        - exclude_relations: Whether to exclude the relations from the summary. Default is False.
-        - exclude_observations: Whether to exclude observations from the summary. Default is False.
-
-    Returns:
-        User/LLM-friendly summary of the entire knowledge graph in text/markdown format
-    """
-    graph = await manager.read_graph()
-
-    result = "💭 You remember the following about the user:\n"
-
-    try:
-        result += await print_user_info(
-            graph=graph,
-            include_observations=True,
-            include_relations=False,
-        )
-    except Exception as e:
-        raise ToolError(f"Error while printing user info: {e}")
-
-    # Print all entities
-    try:
-        result += f"\n👤 You've made observations about {len(graph.entities)} entities:\n"
-        result += await print_entities(graph=graph)
-    except Exception as e:
-        raise ToolError(f"Error while printing entities: {e}")
-
-    # Print all relations
-    try:
-        rel_result = await print_relations(graph=graph)
-        if rel_result:
-            result += f"\n🔗 You've learned about {len(graph.relations)} relations between these entities:\n"
-            result += rel_result
-    except Exception as e:
-        raise ToolError(f"Error while printing relations: {e}")
-    
-    # Supabase integration: Print email summaries
-    if settings.supabase_enabled:
-        try:
-            email_summaries = await supabase_manager.get_email_summaries()  # type: ignore # noqa: F821
-            result += await print_email_summaries(email_summaries)
-        except Exception as e:
-            raise ToolError(f"Error while printing email summaries: {e}")
-    return result
+# ------------------------------------
 
 
 @mcp.tool
@@ -1476,22 +1388,72 @@ def add_supabase_tools(mcp_server: FastMCP, supabase_manager: Any | None) -> Non
             raise ToolError(f"Failed to sync Supabase: {e}")
 
 
-# ----- DEBUG/DEPRECATED TOOLS -----#
+# ----- KEEP AT THE END AFTER OTHER FUNCTIONS -----#
+@mcp.tool
+async def read_graph():
+    """Read and print a user/LLM-friendly summary of the entire knowledge graph.
 
-# if settings.debug:
+    Returns:
+        User/LLM-friendly summary of the entire knowledge graph in text/markdown format
+    """
+    graph = await manager.read_graph()
 
-#     @mcp.tool
-#     async def DEBUG_save_graph():
-#         """DEBUG TOOL: Test loading, and then immediately saving the graph."""
-#         try:
-#             graph = await manager._load_graph()
-#             await manager._save_graph(graph)
-#         except Exception as e:
-#             raise ToolError(f"DEBUG TOOL ERROR: Failed to save graph: {e}")
-#         return "✅ Graph saved successfully!"
+    # Print user info
+    lines: list[str] = ["💭 You remember the following information about the user:"]
+
+    try:
+        ui_print = await print_user_info(graph=graph)
+        logger.debug(f"read_graph() ui_print: {ui_print}")
+        lines.append(ui_print)
+    except Exception as e:
+        raise ToolError(f"Error while printing user info: {e}")
+
+    # Print all entities from the graph
+    try:
+        lines.append(f"👤 You've made observations about {len(graph.entities)} entities:")
+        ent_print = await print_entities(graph=graph)
+        lines.append(ent_print)
+    except Exception as e:
+        raise ToolError(f"Error while printing entities: {e}")
+
+    # Print relations to and from user
+    try:
+        user_relations = await manager.get_relations_from_id(
+            entity_id=graph.user_info.linked_entity_id
+        )
+    except Exception as e:
+        raise ToolError(f"Error getting relations from user entity: {e}")
+    if user_relations:
+        lines.append(
+            f"🔗 You've learned about {len(user_relations)} relations between the user and these entities:"
+        )
+        lines.append(await print_relations(relations=user_relations))
+    else:
+        lines.append("(No relations found for user entity - this may be an error!)")
+
+    # Supabase integration: Print email summaries
+    if settings.supabase_enabled and supabase_manager:
+        try:
+            email_summaries = await supabase_manager.get_email_summaries()
+            lines.append("")
+            lines.append(
+                f"📧 The user's got mail! Retrieved summaries for {len(email_summaries)} email messages:"
+            )
+            lines.append(await print_email_summaries(email_summaries))
+        except Exception as e:
+            raise ToolError(f"(Supabase) Error while printing email summaries: {e}")
+
+    # Remove any invalid lines (None types, etc.)
+    for line in lines:
+        if not isinstance(line, str):
+            lines.remove(line)
+            continue
+    result = "\n".join(lines)
+    return result
 
 
 # ----- MAIN APPLICATION ENTRY POINT -----#
+
 
 async def startup_check() -> None:
     """Check the startup of the server. Exits with an error if the server will not be able to start."""
@@ -1523,34 +1485,12 @@ async def start_server():
         sys.exit(1)
 
     # Supabase integration: conditionally initialize if enabled and configured
-    supabase_manager = None
-    if settings.supabase_enabled and settings.supabase:
-        try:
-            from .supabase import SupabaseManager, SupabaseSettings
-
-            supabase_settings = SupabaseSettings(
-                url=settings.supabase.url,
-                key=settings.supabase.key,
-                dry_run=settings.dry_run,
-            )
-            supabase_manager = SupabaseManager(supabase_settings)
-            add_supabase_tools(mcp, supabase_manager)
-            logger.info("☁️ Supabase integration enabled and initialized")
-        except ImportError as e:
-            logger.error(
-                f"Supabase integration requested but dependencies unavailable: {e}. "
-                "Ensure supabase package is installed."
-            )
-        except Exception as e:
-            logger.error(f"Failed to initialize Supabase integration: {e}")
-    elif settings.supabase_enabled and not settings.supabase:
-        logger.warning(
-            "Supabase integration is enabled but configuration is invalid. "
-            "Supabase tools will not be available. "
-            "Provide --supabase-url and --supabase-key or set IQ_SUPABASE_URL and IQ_SUPABASE_KEY."
-        )
-    else:
-        logger.debug("Supabase integration disabled (use --enable-supabase to enable)")
+    try:
+        supabase_manager = SupabaseManager(settings.supabase)
+        add_supabase_tools(mcp, supabase_manager)
+        logger.info("☁️ Supabase integration enabled and initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize Supabase integration: {e}")
 
     await mcp.run_async(transport=validated_transport, **transport_kwargs)
 

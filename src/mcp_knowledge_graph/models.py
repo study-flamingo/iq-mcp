@@ -18,14 +18,9 @@ from pydantic import (
 )
 from enum import Enum
 import regex as re
-from .logging import get_iq_mcp_logger
+from .logging import logger
 from .settings import Settings as settings
-from .settings import (
-    IQ_MCP_VERSION,
-    IQ_MCP_SCHEMA_VERSION
-)
-
-logger = get_iq_mcp_logger()
+from .settings import IQ_MCP_VERSION, IQ_MCP_SCHEMA_VERSION
 
 # Helper functions
 _GRAPHEMES = re.compile(r"\X")
@@ -151,7 +146,7 @@ class Observation(BaseModel):
         ts = self.timestamp.replace(tzinfo=timezone.utc)
         now = datetime.now(timezone.utc)
         return (now - ts).days
-    
+
     def is_outdated(self) -> bool:
         """
         Check if an observation is outdated based on durability and age.
@@ -164,7 +159,7 @@ class Observation(BaseModel):
         """
         try:
             days_old = self.age
-        except (Exception) as e:
+        except Exception as e:
             raise ValueError(f"Error calculating age of observation: {e}")
 
         if self.durability == DurabilityType.PERMANENT:
@@ -347,8 +342,10 @@ class Entity(BaseModel):
             if not obs.is_outdated():
                 valid_observations.append(obs)
             else:
-                logger.info(f"Pruned outdated observation from entity {self.name} ({self.id}): {obs.content} ({obs.age} days old)")
-        
+                logger.info(
+                    f"Pruned outdated observation from entity {self.name} ({self.id}): {obs.content} ({obs.age} days old)"
+                )
+
         # Prune duplicate observations
         seen_observations: set[str] = set()
         was_pruned = False
@@ -357,14 +354,19 @@ class Entity(BaseModel):
             if content in seen_observations:
                 valid_observations.remove(o)
                 was_pruned = True
-                logger.info(f"Pruned duplicate observation from entity {self.name} ({self.id}): {o.content}")
+                logger.info(
+                    f"Pruned duplicate observation from entity {self.name} ({self.id}): {o.content}"
+                )
             else:
                 seen_observations.add(content)
 
         if was_pruned:
-            logger.debug(f"Cleaned up observations for entity {self.name} ({self.id}), new list: {valid_observations}")
+            logger.debug(
+                f"Cleaned up observations for entity {self.name} ({self.id}), new list: {valid_observations}"
+            )
         self.observations = valid_observations
         return self
+
 
 class Relation(BaseModel):
     """
@@ -704,8 +706,11 @@ class UserIdentifier(BaseModel):
 
         return new_user_info
 
+
 class GraphMeta(BaseModel):
-    schema_version: int = Field(default=IQ_MCP_SCHEMA_VERSION, description="Schema/memory record version")
+    schema_version: int = Field(
+        default=IQ_MCP_SCHEMA_VERSION, description="Schema/memory record version"
+    )
     app_version: str = Field(default=IQ_MCP_VERSION, description="Application version")
     graph_id: EntityID = Field(
         default_factory=lambda: str(uuid4())[:8], description="Graph identifier"
@@ -784,7 +789,11 @@ class KnowledgeGraph(BaseModel):
 
     @classmethod
     def from_components(
-        cls, user_info: UserIdentifier, entities: list[Entity], relations: list[Relation], meta: GraphMeta
+        cls,
+        user_info: UserIdentifier,
+        entities: list[Entity],
+        relations: list[Relation],
+        meta: GraphMeta,
     ) -> "KnowledgeGraph":
         """Initialize the knowledge graph by passing in the user info object, entities lists, and relations lists."""
         return cls(

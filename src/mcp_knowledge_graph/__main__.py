@@ -4,12 +4,11 @@ Enhanced MCP server for knowledge graph memory.
 
 import asyncio
 from .settings import Settings as settings
-from .logging import get_iq_mcp_logger
+from .logging import logger
 from .server import start_server
 
 
 def main():
-    logger = get_iq_mcp_logger()
     try:
         logger.info(f"🔍 Memory path: {settings.memory_path}")
         logger.debug("🚀 Starting IQ-MCP server...")

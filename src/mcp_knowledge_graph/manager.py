@@ -13,7 +13,7 @@ from typing import Any, Annotated
 from pathlib import Path
 from uuid import uuid4
 from .settings import Settings as settings
-from .logging import get_iq_mcp_logger
+from .logging import logger
 from .models import (
     Entity,
     EntityID,
@@ -36,7 +36,6 @@ from .models import (
     GraphMeta,
 )
 
-logger = get_iq_mcp_logger()
 
 class KnowledgeGraphManager:
     """
@@ -99,12 +98,13 @@ class KnowledgeGraphManager:
                 return e
         return None
 
-    def _get_user_linked_entity(self, graph: KnowledgeGraph) -> Entity | None:
-        """Return the user-linked entity if it exists. It should exist, so an error is raised if it doesn't."""
-        if graph.user_info and graph.user_info.linked_entity_id:
-            return self._get_entity_by_id(graph=graph, id=graph.user_info.linked_entity_id)
-        else:
-            raise KnowledgeGraphException("User-linked entity not found! This should not happen!")
+    def _get_user_linked_entity(self, graph: KnowledgeGraph) -> Entity:
+        """Return the user-linked entity. It should exist, so an error is raised if it doesn't."""
+        try:
+            user_entity = self._get_entity_by_id(graph=graph, id=graph.user_info.linked_entity_id)
+            return user_entity
+        except Exception as e:
+            raise KnowledgeGraphException(f"Error retrieving user-linked entity: {e}")
 
     def _canonicalize_entity_name(self, graph: KnowledgeGraph, identifier: str) -> str:
         """Return canonical entity name if identifier matches a name or alias; otherwise return identifier unchanged."""
@@ -157,7 +157,6 @@ class KnowledgeGraphManager:
             key = (rel.from_entity, rel.to_entity, rel.relation)
             unique[key] = rel
         return list(unique.values())
-
 
     def _generate_new_valid_entity_id(self, graph: KnowledgeGraph) -> str:
         """Generate a unique new entity ID, ensuring it is not already in the graph. Entity IDs are UUID4s truncated to 8 characters. Convenience
@@ -336,10 +335,30 @@ class KnowledgeGraphManager:
 
     async def get_relations_from_entities(self, entities: list[Entity]) -> list[Relation]:
         """
-        Get the relations to and from each entity in a list of entities.
+        Get the relations to and from each entity in a list of entities. To get relations from a single entity, use get_relations_from_entity().
         """
         graph = await self._load_graph()
         return self._get_relations_from_entities(entities=entities, graph=graph)
+
+    async def get_relations_from_entity(self, entity: Entity) -> list[Relation]:
+        """
+        Get the relations to and from a single entity. To get relations from multiple entities, use get_relations_from_entities().
+        """
+        graph = await self._load_graph()
+        return self._get_relations_from_entities(entities=[entity], graph=graph)
+
+    async def get_relations_from_id(self, entity_id: str) -> list[Relation]:
+        """
+        Get the relations to and from a single entity by its ID. Returns None if no entity is found, or no relations are found.
+        """
+        graph = await self._load_graph()
+        entity = self._get_entity_by_id(graph=graph, id=entity_id)
+        if not entity:
+            return None
+        relations = self._get_relations_from_entities(entities=[entity], graph=graph)
+        if not relations:
+            return None
+        return relations
 
     def _process_memory_line(self, line: str) -> tuple[str, Any] | None:
         """
@@ -420,13 +439,13 @@ class KnowledgeGraphManager:
         self.memory_file_path = Path(self.memory_file_path).resolve()
         if not self.memory_file_path.exists():
             raise RuntimeError(f"⛔ Memory file not found at {self.memory_file_path}")
-        
+
         # Load and parse graph components from file
         meta: GraphMeta | None = None
         user_info: UserIdentifier | None = None
         entities: list[Entity] = []
         relations: list[Relation] = []
-        
+
         try:
             with open(self.memory_file_path, mode="r", encoding="utf-8") as f:
                 for i, line in enumerate(f, start=1):
@@ -435,12 +454,12 @@ class KnowledgeGraphManager:
                     except Exception as e:
                         logger.warning(f"Skipping invalid line {i}: {e}")
                         continue
-                    
+
                     if not result:
                         continue
-                    
+
                     record_type, parsed_obj = result
-                    
+
                     # Store parsed object based on type
                     match record_type:
                         case "meta":
@@ -454,67 +473,84 @@ class KnowledgeGraphManager:
                         case _:
                             # Fallback for unknown types - should not happen
                             logger.warning(f"Unexpected record type '{record_type}' at line {i}")
-                    
+
                     # Early validation checks for large files
                     if i > 50 and (len(entities) == 0 and len(relations) == 0 and not user_info):
-                        raise RuntimeError("Memory file appears corrupt: no valid data found in first 50 lines")
+                        raise RuntimeError(
+                            "Memory file appears corrupt: no valid data found in first 50 lines"
+                        )
                     if i > 500 and (len(entities) == 0 or len(relations) == 0 or not user_info):
-                        raise RuntimeError("Memory file appears corrupt: incomplete data after 500 lines")
+                        raise RuntimeError(
+                            "Memory file appears corrupt: incomplete data after 500 lines"
+                        )
         except RuntimeError:
             raise
         except Exception as e:
             raise RuntimeError(f"Error reading memory file: {e}")
-        
+
         # Validate components are present
         if not all([user_info, entities, relations, meta]):
-            missing = [k for k, v in [("user_info", user_info), ("entities", entities), 
-                                       ("relations", relations), ("meta", meta)] if not v]
+            missing = [
+                k
+                for k, v in [
+                    ("user_info", user_info),
+                    ("entities", entities),
+                    ("relations", relations),
+                    ("meta", meta),
+                ]
+                if not v
+            ]
             raise KnowledgeGraphException(f"Missing required components: {', '.join(missing)}")
-        
+
         # Build preliminary graph
         try:
-            raw_graph = KnowledgeGraph(user_info=user_info, entities=entities, relations=relations, meta=meta)
+            raw_graph = KnowledgeGraph(
+                user_info=user_info, entities=entities, relations=relations, meta=meta
+            )
         except Exception as e:
             raise KnowledgeGraphException(f"Failed to construct pre-validation graph: {e}")
-        
+
         # TODO: Graph version control and migration logic
         logger.info(f"🏷️ Graph version: {raw_graph.meta.schema_version}")
-        
-        
+
         # Validate the graph, starting with entities
         valid_entities: list[Entity] = []
         entity_errors: list[str] = []
-        
+
         for e in raw_graph.entities:
             try:
                 e = e.cleanup_observations()
                 valid_entities.append(self._validate_entity(e, raw_graph))
             except Exception as err:
                 entity_errors.append(f"Bad entity `{str(e)[:24]}...`: {err}")
-        
+
         if entity_errors and not valid_entities:
             raise RuntimeError(f"⛔👤 All entities invalid: {' | '.join(entity_errors)}")
         if entity_errors:
-            logger.error(f"⚠️👤 {len(entity_errors)} invalid entities excluded: {' | '.join(entity_errors)}")
+            logger.error(
+                f"⚠️👤 {len(entity_errors)} invalid entities excluded: {' | '.join(entity_errors)}"
+            )
         logger.debug(f"✅👤 Validated {len(valid_entities)} entities")
-        
+
         # Validate relations
         valid_relations: list[Relation] = []
         relation_errors: list[str] = []
-        
+
         for r in raw_graph.relations:
             try:
                 self._verify_relation(r, raw_graph)
                 valid_relations.append(r)
             except Exception as ex:
                 relation_errors.append(f"Bad relation `{str(r)[:24]}...`: {ex}")
-        
+
         if relation_errors and not valid_relations:
             raise RuntimeError(f"⛔🔗 All relations invalid: {' | '.join(relation_errors)}")
         if relation_errors:
-            logger.error(f"⚠️🔗 {len(relation_errors)} invalid relations excluded: {' | '.join(relation_errors)}")
+            logger.error(
+                f"⚠️🔗 {len(relation_errors)} invalid relations excluded: {' | '.join(relation_errors)}"
+            )
         logger.debug(f"✅🔗 Validated {len(valid_relations)} relations")
-        
+
         # Build and validate final graph
         try:
             validated_graph = KnowledgeGraph.from_components(
@@ -535,11 +571,11 @@ class KnowledgeGraphManager:
 
         For information on the format of the graph, see the README.md file.
         """
-        
+
         if settings.dry_run:
             logger.warning("⚠️ Dry run mode enabled, skipping save")
             return
-        
+
         logger.debug(f"manager._save_graph() called, saving to {self.memory_file_path}")
         # Note: Avoid calling cleanup here to prevent recursive save cycles.
 
@@ -661,7 +697,9 @@ class KnowledgeGraphManager:
                 continue
         return graph
 
-    async def _prune_observations(self, graph: KnowledgeGraph | None = None, entity: Entity | list[Entity] | None = None) -> KnowledgeGraph:
+    async def _prune_observations(
+        self, graph: KnowledgeGraph | None = None, entity: Entity | list[Entity] | None = None
+    ) -> KnowledgeGraph:
         """
         Prune outdated and duplicate observations from the knowledge graph or entities. Returns the pruned graph.
         """
@@ -682,8 +720,8 @@ class KnowledgeGraphManager:
         """
         Prune outdated and duplicate observations from the default knowledge graph, and save the graph.
         """
-        graph  = await self._load_graph()
-        pruned_graph  = await self._prune_observations(graph)
+        graph = await self._load_graph()
+        pruned_graph = await self._prune_observations(graph)
         await self._save_graph(pruned_graph)
 
     async def create_entities(
@@ -1521,6 +1559,20 @@ class KnowledgeGraphManager:
         """
         graph = await self._load_graph()
         return graph.user_info
+
+    async def get_user_entity(self) -> Entity:
+        """
+        Get the user-linked entity from the graph. Returns the entity if it exists, otherwise raises an error.
+        """
+        graph = await self._load_graph()
+        return self._get_user_linked_entity(graph=graph)
+
+    def get_user_linked_entity(self) -> Entity:
+        """
+        Get the user-linked entity from the graph. Returns the entity if it exists, otherwise raises an error.
+        This is an alias for get_user_entity().
+        """
+        return self.get_user_entity()
 
     async def update_user_info(self, new_user_info: UserIdentifier) -> UserIdentifier:
         """Update the user's identifying information in the graph.
