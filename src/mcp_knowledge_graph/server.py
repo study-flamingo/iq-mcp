@@ -14,7 +14,7 @@ from fastmcp import FastMCP
 from pydantic import Field
 from pydantic.main import IncEx
 from pydantic.dataclasses import dataclass
-from typing import Any, Annotated
+from typing import Any
 from fastmcp.exceptions import ToolError, ValidationError
 
 from .logging import logger
@@ -449,7 +449,10 @@ async def print_email_summaries(
     # Resolve formatting options
 
     sep = options.separator
-    ind = " " * options.indent if options.indent > 0 else ""
+    if options.indent and options.indent > 0:
+        ind = " " * options.indent
+    else:
+        ind = ""
     ol = options.ol
     if ol:
         os = options.ordinal_separator + " "
@@ -460,7 +463,8 @@ async def print_email_summaries(
     i = 1
     for summary in email_summaries:
         ord = str(i) if ol else options.bullet
-        ind2 = " " * len(ind + ord + os)
+        ind2_len = len(ind + ord + os)
+        ind2 = " " * ind2_len if ind2_len > 0 else ""
         ts = datetime.fromisoformat(summary.timestamp) if summary.timestamp else None
         if ts:
             ts = ts.strftime("%Y-%m-%d %H:%M:%S") + " UTC"
@@ -1292,7 +1296,10 @@ async def update_entity(request: UpdateEntityRequest):
 
 
 # Supabase Integration Tools
-def add_supabase_tools(mcp_server: FastMCP, supabase_manager: Any | None) -> None:
+from .supabase import SupabaseManager
+
+
+def add_supabase_tools(mcp_server: FastMCP, supabase_manager: SupabaseManager | None) -> None:
     """If the Supabase integration is enabled, adds the tools to the given MCP server."""
 
     if not supabase_manager:
@@ -1349,7 +1356,7 @@ def add_supabase_tools(mcp_server: FastMCP, supabase_manager: Any | None) -> Non
             except Exception:
                 pass
 
-            # Simple relative phrases
+            # Simple relative phrases  TODO: improve
             now_utc = datetime.now(timezone.utc)
             s_lower = s.lower()
 
@@ -1387,22 +1394,24 @@ def add_supabase_tools(mcp_server: FastMCP, supabase_manager: Any | None) -> Non
 
         if not summaries:
             return "No new email summaries available!"
+        else:
+            lines = [f"📧 {len(summaries)} new messages found!"]
 
         # Format the email summaries
-        lines = await print_email_summaries(summaries)
+        lines.append(await print_email_summaries(summaries))
         logger.info(
             f"Marking {len(summaries)} email summaries as reviewed in Supabase in background..."
         )
         asyncio.create_task(supabase_manager.mark_as_reviewed(summaries))
-        return "\n".join(lines).rstrip() + "\n"
+        result = "\n".join(lines) + "\n"
+        return result
 
     @mcp_server.tool
     async def sync_supabase():
         """Replace Supabase KG tables with a cleaned snapshot from the local knowledge graph."""
-        if not supabase_manager:
-            raise ToolError("Supabase integration is not initialized")
         try:
-            result = await manager.sync_supabase(supabase_manager)
+            graph = await manager.read_graph()
+            result = await supabase_manager.sync_knowledge_graph(graph)
             return result
         except Exception as e:
             raise ToolError(f"Failed to sync Supabase: {e}")
