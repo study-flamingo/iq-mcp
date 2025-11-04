@@ -1415,6 +1415,15 @@ def add_supabase_tools(mcp_server: FastMCP, supabase_manager: SupabaseManager | 
             return result
         except Exception as e:
             raise ToolError(f"Failed to sync Supabase: {e}")
+        
+    @mcp_server.tool
+    async def read_supabase_graph():
+        """Read the knowledge graph from Supabase and return it as a text string."""
+        try:
+            result = await supabase_manager.get_knowledge_graph()
+            return result
+        except Exception as e:
+            raise ToolError(f"Failed to read Supabase graph: {e}")
 
 
 # ----- KEEP AT THE END AFTER OTHER FUNCTIONS -----#

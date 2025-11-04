@@ -1,14 +1,12 @@
-import logging
-import os
-from dataclasses import dataclass
 from typing import Any
 from dotenv import load_dotenv
 from datetime import datetime, timezone
 
 from supabase import create_client, Client as SBClient
 
-from .models import KnowledgeGraph, Entity
+from .models import KnowledgeGraph, Entity, Observation, Relation, UserIdentifier, GraphMeta
 from .logging import logger
+from .settings import SupabaseConfig
 
 load_dotenv()
 
@@ -17,43 +15,6 @@ class SupabaseException(Exception):
     """Exception raised for errors in the IQ-MCP Supabase integration."""
 
     pass
-
-
-class SupabaseSettings:
-    """Supabase settings for the IQ-MCP server.
-
-    Attributes:
-        `url`: Supabase project URL
-        `key`: Supabase anon or service role key with read access
-        `email_table` (optional): Name of the table to query for email summaries (default: "emailSummaries")
-        `entities_table` (optional): Name of the table to query for entities (default: "kgEntities")
-        `observations_table` (optional): Name of the table to query for observations (default: "kgObservations")
-        `relations_table` (optional): Name of the table to query for relations (default: "kgRelations")
-    """
-
-    def __init__(
-        self,
-        url: str,
-        key: str,
-        email_table: str | None = None,
-        entities_table: str | None = None,
-        observations_table: str | None = None,
-        relations_table: str | None = None,
-        dry_run: bool = False,
-    ) -> None:
-        self.url = url
-        self.key = key
-        self.email_table = email_table or os.getenv("IQ_SUPABASE_EMAIL_TABLE", "emailSummaries")
-        self.entities_table = entities_table or os.getenv(
-            "IQ_SUPABASE_ENTITIES_TABLE", "kgEntities"
-        )
-        self.observations_table = observations_table or os.getenv(
-            "IQ_SUPABASE_OBSERVATIONS_TABLE", "kgObservations"
-        )
-        self.relations_table = relations_table or os.getenv(
-            "IQ_SUPABASE_RELATIONS_TABLE", "kgRelations"
-        )
-        self.dry_run = dry_run
 
 
 class EmailSummary:
@@ -86,17 +47,18 @@ class EmailSummary:
 class SupabaseManager:
     """Lightweight manager for optional Supabase integration.
 
-    Pass in a SupabaseSettings object to configure the manager:
+    Pass in a SupabaseConfig object to configure the manager:
     - `url`: Supabase project URL
     - key: Supabase anon or service role key with read access
     - email_table (optional): Name of the table to query for email summaries (default: "emailSummaries")
     - entities_table (optional): Name of the table to query for entities (default: "kgEntities")
     - observations_table (optional): Name of the table to query for observations (default: "kgObservations")
     - relations_table (optional): Name of the table to query for relations (default: "kgRelations")
+    - user_info_table (optional): Name of the table to query for user info (default: "kgUserInfo")
     """
 
-    def __init__(self, settings_obj: SupabaseSettings) -> None:
-        self.settings: SupabaseSettings = settings_obj
+    def __init__(self, config: SupabaseConfig) -> None:
+        self.settings: SupabaseConfig = config
         self.client = create_client(self.settings.url, self.settings.key)
 
     def _ensure_client(self) -> SBClient:
@@ -216,6 +178,7 @@ class SupabaseManager:
         entities_table = self.settings.entities_table
         observations_table = self.settings.observations_table
         relations_table = self.settings.relations_table
+        user_info_table = self.settings.user_info_table
 
         # --- Prepare cleaned records ---
         try:
@@ -235,16 +198,18 @@ class SupabaseManager:
                             aliases.append(a)
                 except Exception:
                     pass
+                ctime = str(getattr(e, "ctime", None))
+                mtime = str(getattr(e, "mtime", None))
 
                 entities_payload.append(
                     {
                         "id": str(e.id),
                         "name": e.name,
-                        "entity_type": e.entity_type,
+                        "type": e.entity_type,
                         "aliases": aliases,  # expects text[] in Supabase; adjust schema accordingly
                         "icon": getattr(e, "icon", None),
-                        "ctime": getattr(e, "ctime", None),
-                        "mtime": getattr(e, "mtime", None),
+                        "created_at": ctime,
+                        "modified_at": mtime,
                     }
                 )
 
@@ -258,10 +223,7 @@ class SupabaseManager:
                         if not content or content in seen_contents:
                             continue
                         seen_contents.add(content)
-                        ts = o.timestamp
-                        ts_iso = (
-                            ts.isoformat() if isinstance(ts, datetime) else str(ts) if ts else None
-                        )
+                        ts = str(o.timestamp)
                         durability = getattr(o, "durability", None)
                         durability_str = getattr(durability, "value", None) or str(durability)
                         observations_payload.append(
@@ -269,7 +231,7 @@ class SupabaseManager:
                                 "linked_entity": str(e.id),
                                 "content": content,
                                 "durability": durability_str,
-                                "timestamp": ts_iso,
+                                "created_at": ts,
                             }
                         )
                     except Exception as ex:
@@ -295,9 +257,9 @@ class SupabaseManager:
                     rel_key_seen.add(key)
                     relations_payload.append(
                         {
-                            "from_id": from_id,
-                            "to_id": to_id,
-                            "relation": relation,
+                            "from": from_id,
+                            "to": to_id,
+                            "content": relation,
                         }
                     )
                 except Exception as ex:
@@ -307,12 +269,35 @@ class SupabaseManager:
             logger.error(f"Error preparing Supabase payloads: {e}")
             raise SupabaseException(f"Error preparing Supabase payloads: {e}")
 
+        # User info
+        user_info_payload: list[dict[str, Any]] = []
+        if graph.user_info:
+            user_info_payload.append(
+                {
+                    "linked_entity_id": str(graph.user_info.linked_entity_id),
+                    "preferred_name": graph.user_info.preferred_name,
+                    "first_name": graph.user_info.first_name,
+                    "last_name": graph.user_info.last_name,
+                    "middle_names": graph.user_info.middle_names,
+                    "pronouns": graph.user_info.pronouns,
+                    "nickname": graph.user_info.nickname,
+                    "prefixes": graph.user_info.prefixes,
+                    "suffixes": graph.user_info.suffixes,
+                    "emails": graph.user_info.emails,
+                    "base_name": graph.user_info.base_name,
+                    "names": graph.user_info.names,
+                }
+            )
+        else:
+            raise RuntimeError("User info not found in graph! WTF?")
+
         # --- Replace remote data ---
         # Delete in FK-safe order: relations -> observations -> entities
         try:
-            _ = client.table(relations_table).delete().neq("from_id", "").execute()
+            _ = client.table(relations_table).delete().neq("from", "").execute()
             _ = client.table(observations_table).delete().neq("linked_entity", "").execute()
             _ = client.table(entities_table).delete().neq("id", "").execute()
+            _ = client.table(user_info_table).delete().neq("first_name", "").execute()
         except Exception as e:
             logger.error(f"Error clearing Supabase tables: {e}")
             raise SupabaseException(f"Error clearing Supabase tables: {e}")
@@ -326,6 +311,8 @@ class SupabaseManager:
                 _ = client.table(observations_table).insert(observations_payload).execute()
             if relations_payload:
                 _ = client.table(relations_table).insert(relations_payload).execute()
+            if user_info_payload:
+                _ = client.table(user_info_table).insert(user_info_payload).execute()
         except Exception as e:
             logger.error(f"Error inserting Supabase data: {e}")
             raise SupabaseException(f"Error inserting Supabase data: {e}")
@@ -333,6 +320,86 @@ class SupabaseManager:
         logger.info(
             f"Supabase sync complete: entities={len(entities_payload)}, observations={len(observations_payload)}, relations={len(relations_payload)}"
         )
+        return "🔃 Successfully synced knowledge graph to Supabase!"
+    
+    async def get_knowledge_graph(self) -> str:
+        """Get the knowledge graph from Supabase."""
+        client = self._ensure_client()
+        entities_table = self.settings.entities_table
+        observations_table = self.settings.observations_table
+        relations_table = self.settings.relations_table
+        user_info_table = self.settings.user_info_table
+        
+        try:
+            entities_response = client.table(entities_table).select("*").execute()
+            observations_response = client.table(observations_table).select("*").execute()
+            relations_response = client.table(relations_table).select("*").execute()
+            user_info_response = client.table(user_info_table).select("*").execute()
+        except Exception as e:
+            logger.error(f"Error loading knowledgegraph from Supabase: {e}")
+            raise SupabaseException(f"Error loading knowledgegraph from Supabase: {e}")
+        
+        entities: list[Entity] = []
+        observations: dict[str, list[Observation]] = {}
+        relations: list[Relation] = []
+        user_info: UserIdentifier | None = None
+        for row in observations_response.data:
+            o = Observation.from_values(
+                content=row.get("content"),
+                durability=row.get("durability"),
+                timestamp=row.get("created_at"),
+            )
+            if row.get("linked_entity") not in observations:
+                observations[row.get("linked_entity")] = []
+            observations[row.get("linked_entity")].append(o)
+        for row in entities_response.data:
+            e_obs = observations[row.get("id")]
+            e = Entity.from_values(
+                id=row.get("id"),
+                name=row.get("name"),
+                entity_type=row.get("type"),
+                aliases=row.get("aliases"),
+                icon=row.get("icon"),
+                ctime=row.get("created_at"),
+                mtime=row.get("modified_at"),
+                observations=e_obs,
+            )
+            entities.append(e)
+        for row in relations_response.data:
+            r = Relation.from_values(
+                from_id=row.get("from"),
+                to_id=row.get("to"),
+                relation=row.get("content"),
+                ctime=row.get("created_at"),
+            )
+            relations.append(r)
+        for row in user_info_response.data:
+            ui = UserIdentifier.from_values(
+                preferred_name=row.get("preferred_name"),
+                first_name=row.get("first_name"),
+                last_name=row.get("last_name"),
+                middle_names=row.get("middle_names"),
+                pronouns=row.get("pronouns"),
+                nickname=row.get("nickname"),
+                prefixes=row.get("prefixes"),
+                suffixes=row.get("suffixes"),
+                emails=row.get("emails"),
+                linked_entity_id=row.get("linked_entity_id"),
+            )
+            user_info = ui
+        kg = KnowledgeGraph.from_components(
+            user_info=user_info,
+            entities=entities,
+            relations=relations,
+            meta=GraphMeta(),
+        )
+        try:
+            kg.validate()
+        except Exception as e:
+            logger.error(f"Error getting knowledge graph from Supabase: {e}")
+            raise SupabaseException(f"Error getting knowledge graph from Supabase: {e}")
+        
+        return "⬇️ Successfully loaded knowledge graph from Supabase!"
 
 
 # async def DEBUG_test_IQ_SUPABASE_init() -> None:
@@ -345,4 +412,4 @@ class SupabaseManager:
 #         raise SupabaseException(f"Error getting email summaries from Supabase: {e}")
 
 
-__all__ = ["EmailSummary", "SupabaseSettings", "SupabaseManager", "SupabaseException"]
+__all__ = ["EmailSummary", "SupabaseManager", "SupabaseException"]

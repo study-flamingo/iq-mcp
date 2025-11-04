@@ -201,20 +201,17 @@ class SupabaseConfig:
         entities_table: str = "kgEntities",
         observations_table: str = "kgObservations",
         relations_table: str = "kgRelations",
+        user_info_table: str = "kgUserInfo",
     ) -> None:
         self.enabled = bool(enabled)
         self.url = url or os.getenv("IQ_SUPABASE_URL", None)
         self.key = key or os.getenv("IQ_SUPABASE_KEY", None)
         self.dry_run = dry_run
-        if email_table:
-            self.email_table = email_table
-
-        if entities_table:
-            self.entities_table = entities_table
-        if observations_table:
-            self.observations_table = observations_table
-        if relations_table:
-            self.relations_table = relations_table
+        self.email_table = email_table
+        self.entities_table = entities_table
+        self.observations_table = observations_table
+        self.relations_table = relations_table
+        self.user_info_table = user_info_table
 
     @classmethod
     def load(cls, dry_run: bool = False) -> "SupabaseConfig":
@@ -246,11 +243,23 @@ class SupabaseConfig:
         # Supabase Key: CLI > IQ_SUPABASE_KEY env > SUPABASE_KEY env (backward compat)
         key = args.supabase_key or os.getenv("IQ_SUPABASE_KEY")
 
+        # Table names: env vars > defaults
+        email_table = os.getenv("IQ_SUPABASE_EMAIL_TABLE", "emailSummaries")
+        entities_table = os.getenv("IQ_SUPABASE_ENTITIES_TABLE", "kgEntities")
+        observations_table = os.getenv("IQ_SUPABASE_OBSERVATIONS_TABLE", "kgObservations")
+        relations_table = os.getenv("IQ_SUPABASE_RELATIONS_TABLE", "kgRelations")
+        user_info_table = os.getenv("IQ_SUPABASE_USER_INFO_TABLE", "kgUserInfo")
+
         return cls(
             enabled=enabled,
             url=url,
             key=key,
             dry_run=dry_run,
+            email_table=email_table,
+            entities_table=entities_table,
+            observations_table=observations_table,
+            relations_table=relations_table,
+            user_info_table=user_info_table,
         )
 
     def is_valid(self) -> bool:
