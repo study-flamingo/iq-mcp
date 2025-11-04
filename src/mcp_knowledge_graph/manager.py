@@ -5,11 +5,9 @@ This module contains the core business logic for managing the knowledge graph,
 including CRUD operations, temporal observation handling, and smart cleanup.
 """
 
-import asyncio
 import json
-import logging
-from datetime import datetime, timedelta, timezone
-from typing import Any, Annotated
+from datetime import datetime, timezone
+from typing import Any
 from pathlib import Path
 from uuid import uuid4
 from .settings import Settings as settings
@@ -430,10 +428,10 @@ class KnowledgeGraphManager:
 
     async def _load_graph(self) -> KnowledgeGraph:
         """
-        Load the knowledge graph from JSONL storage.
+        Load the knowledge graph from Supabase (EXPERIMENTAL) and back up to JSONL storage.
 
         Returns:
-            KnowledgeGraph loaded from file, or empty graph if file doesn't exist
+            KnowledgeGraph loaded from Supabase (EXPERIMENTAL) and back up to JSONL storage.
         """
         # Resolve and validate memory file path
         self.memory_file_path = Path(self.memory_file_path).resolve()

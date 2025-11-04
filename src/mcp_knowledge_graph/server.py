@@ -41,9 +41,7 @@ from .settings import IQ_MCP_VERSION
 
 from .supabase import SupabaseManager, EmailSummary
 
-supabase_manager: SupabaseManager | None = (
-    SupabaseManager(settings.supabase) if settings.supabase else None
-)
+supabase_manager = SupabaseManager(settings.supabase)
 
 
 # Load settings once and configure logging level accordingly
@@ -160,12 +158,10 @@ async def print_entities(
     if not entities:
         graph = graph or await manager.read_graph()
         entities = graph.entities
-        logger.debug(f"Printing all entities from graph {str(graph)}")
     else:
         e_names = []
         for e in entities:
             e_names.append(e.name)
-        logger.debug(f"Printing provided entities: {', '.join(e_names)}")
 
     if not entities:
         raise ToolError("No entities provided")
@@ -173,7 +169,6 @@ async def print_entities(
         e_names = []
         for e in entities:
             e_names.append(e.name)
-        logger.debug(f"Printing entities: {', '.join(e_names)}")
 
     if exclude_user is None:
         exclude_user = options.exclude_user
@@ -203,14 +198,8 @@ async def print_entities(
             ord = i if ol else bullet
             if e.name.lower().strip() == "__user__" or e.name.lower().strip() == "user":
                 if exclude_user is True:
-                    logger.debug(
-                        "print_entities: User-linked entity found during entity printing, skipping"
-                    )
                     continue
                 else:
-                    logger.debug(
-                        "print_entities: User-linked entity found during entity printing, including"
-                    )
                     graph = graph or await manager.read_graph()
                     user_info = graph.user_info
                     id = user_info.linked_entity_id
@@ -487,8 +476,8 @@ async def print_email_summaries(
 
         parsed_links: list[str] = []
         for link in summary.links or []:
-            title = link.get("title") or ""
-            url = link.get("url") or str(link) or ""
+            title = link.get("title", "")
+            url = link.get("url", str(link)) or ""
             if not url:
                 continue
             elif title and url and options.md_links:
@@ -1189,9 +1178,9 @@ async def open_nodes(
         result_str += await print_entities(entities=ents, exclude_user=False)
     if not rels:
         if not exclude_relations:
-            logger.error(f"No relations found for the opened nodes {str(ents)}")
+            logger.warning(f"No relations found for the opened nodes {str(ents)}")
         else:
-            logger.debug(f"Skipped loading relations for {str(ents)} per llm request")
+            logger.info(f"Skipped loading relations for {str(ents)} per llm request")
     else:
         result_str += (
             "🔗 You've learned about the following relationships between these entities:\n"
@@ -1296,17 +1285,8 @@ async def update_entity(request: UpdateEntityRequest):
 
 
 # Supabase Integration Tools
-from .supabase import SupabaseManager
-
-
-def add_supabase_tools(mcp_server: FastMCP, supabase_manager: SupabaseManager | None) -> None:
+def add_supabase_tools(mcp_server: FastMCP, supabase_manager: SupabaseManager) -> None:
     """If the Supabase integration is enabled, adds the tools to the given MCP server."""
-
-    if not supabase_manager:
-        logger.warning(
-            "Supabase integration is not initialized, Supabase tools will not be available"
-        )
-        return
 
     # Tools to be added with successful Supabase integration
     @mcp_server.tool
@@ -1415,7 +1395,7 @@ def add_supabase_tools(mcp_server: FastMCP, supabase_manager: SupabaseManager | 
             return result
         except Exception as e:
             raise ToolError(f"Failed to sync Supabase: {e}")
-        
+
     @mcp_server.tool
     async def read_supabase_graph():
         """Read the knowledge graph from Supabase and return it as a text string."""
@@ -1434,14 +1414,24 @@ async def read_graph():
     Returns:
         User/LLM-friendly summary of the entire knowledge graph in text/markdown format
     """
-    graph = await manager.read_graph()
+
+    if settings.supabase_enabled and supabase_manager:
+        try:
+            graph = await supabase_manager.get_knowledge_graph()
+            logger.info("☁️ Supabase graph read successfully!")
+        except Exception as e:
+            raise ToolError(f"(Supabase) Failed to read graph: {e}")
+        # Save a backup to local JSONL storage
+        await manager.save_graph(graph)
+    else:
+        graph = await manager.read_graph()
+        logger.warning("Supabase integration is disabled, reading graph from JSONL storage...")
 
     # Print user info
     lines: list[str] = ["💭 You remember the following information about the user:"]
 
     try:
         ui_print = await print_user_info(graph=graph)
-        logger.debug(f"read_graph() ui_print: {ui_print}")
         lines.append(ui_print)
     except Exception as e:
         raise ToolError(f"Error while printing user info: {e}")
@@ -1524,7 +1514,7 @@ async def startup_check() -> None:
 async def start_server():
     """Common entry point for the MCP server."""
     validated_transport = settings.transport
-    logger.debug(f"🚌 Transport selected: {validated_transport}")
+    logger.info(f"🚌 Transport selected: {validated_transport}")
     if validated_transport == "http":
         transport_kwargs = {
             "host": settings.streamable_http_host,
@@ -1543,12 +1533,11 @@ async def start_server():
         sys.exit(1)
 
     # Supabase integration: conditionally initialize if enabled and configured
-    try:
-        supabase_manager = SupabaseManager(settings.supabase)
+    if supabase_manager:
         add_supabase_tools(mcp, supabase_manager)
-        logger.info("☁️ Supabase integration enabled and initialized")
-    except Exception as e:
-        logger.error(f"Failed to initialize Supabase integration: {e}")
+        logger.info("☁️ Supabase integration enabled and initialized!")
+    else:
+        logger.warning("⛔ Supabase integration is disabled, no Supabase tools will be available")
 
     await mcp.run_async(transport=validated_transport, **transport_kwargs)
 

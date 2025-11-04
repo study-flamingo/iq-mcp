@@ -321,15 +321,15 @@ class SupabaseManager:
             f"Supabase sync complete: entities={len(entities_payload)}, observations={len(observations_payload)}, relations={len(relations_payload)}"
         )
         return "🔃 Successfully synced knowledge graph to Supabase!"
-    
-    async def get_knowledge_graph(self) -> str:
+
+    async def get_knowledge_graph(self) -> KnowledgeGraph:
         """Get the knowledge graph from Supabase."""
         client = self._ensure_client()
         entities_table = self.settings.entities_table
         observations_table = self.settings.observations_table
         relations_table = self.settings.relations_table
         user_info_table = self.settings.user_info_table
-        
+
         try:
             entities_response = client.table(entities_table).select("*").execute()
             observations_response = client.table(observations_table).select("*").execute()
@@ -338,7 +338,7 @@ class SupabaseManager:
         except Exception as e:
             logger.error(f"Error loading knowledgegraph from Supabase: {e}")
             raise SupabaseException(f"Error loading knowledgegraph from Supabase: {e}")
-        
+
         entities: list[Entity] = []
         observations: dict[str, list[Observation]] = {}
         relations: list[Relation] = []
@@ -387,19 +387,19 @@ class SupabaseManager:
                 linked_entity_id=row.get("linked_entity_id"),
             )
             user_info = ui
-        kg = KnowledgeGraph.from_components(
+        graph = KnowledgeGraph.from_components(
             user_info=user_info,
             entities=entities,
             relations=relations,
-            meta=GraphMeta(),
+            meta=GraphMeta(),  # TODO: Add metadata from Supabase
         )
         try:
-            kg.validate()
+            graph.validate()
         except Exception as e:
             logger.error(f"Error getting knowledge graph from Supabase: {e}")
             raise SupabaseException(f"Error getting knowledge graph from Supabase: {e}")
-        
-        return "⬇️ Successfully loaded knowledge graph from Supabase!"
+
+        return graph
 
 
 # async def DEBUG_test_IQ_SUPABASE_init() -> None:

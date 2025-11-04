@@ -127,11 +127,7 @@ class Observation(BaseModel):
             timestamp = datetime.now(timezone.utc)
         elif isinstance(timestamp, str):
             timestamp = datetime.fromisoformat(timestamp)
-        return cls(
-            content=content,
-            durability=durability,
-            timestamp=timestamp
-        )
+        return cls(content=content, durability=durability, timestamp=timestamp)
 
     # Timestamp defaults are handled by default_factory and pydantic parsing
 
@@ -321,7 +317,7 @@ class Entity(BaseModel):
             icon (str): The emoji to provide a visual representation of the entity. Must be a single valid emoji.
             ctime (datetime): The timestamp when the entity was created (default: now, in UTC)
             mtime (datetime): The timestamp when the entity was last modified (default: now, in UTC)
-            
+
         The ID is managed by the KnowledgeGraphManager and one will be generated if it is not provided, i.e., if creating a new entity from values.
 
         Returns:
@@ -333,7 +329,7 @@ class Entity(BaseModel):
             else:
                 logger.warning(f"Invalid emoji '{icon}' given for new entity '{name}'")
                 icon = None
-        
+
         if not ctime:
             ctime = datetime.now(timezone.utc)
         elif isinstance(ctime, str):
@@ -342,7 +338,7 @@ class Entity(BaseModel):
             mtime = datetime.now(timezone.utc)
         elif isinstance(mtime, str):
             mtime = datetime.fromisoformat(mtime)
-        
+
         return cls(
             id=id,
             name=name,
@@ -449,24 +445,24 @@ class Relation(BaseModel):
             to_id=data.get("to_id"),
             relation=content,
         )
-        
+
     @classmethod
-    def from_values(cls, from_id: EntityID, to_id: EntityID, relation: str, ctime: datetime = None) -> "Relation":
+    def from_values(
+        cls, from_id: EntityID, to_id: EntityID, relation: str, ctime: datetime = None
+    ) -> "Relation":
         """
         Create a relation from individual values.
-        
+
         Args:
           - `from_id`: The ID of the originating entity
           - `to_id`: The ID of the destination entity
           - `relation`: The relation content
           - `ctime` (optional): The timestamp when the relation was created (default: now, in UTC)
         """
-        
+
         if ctime is None:
             ctime = datetime.now(timezone.utc)
-        return cls(
-            from_id=from_id, to_id=to_id, relation=relation, ctime=ctime
-        )
+        return cls(from_id=from_id, to_id=to_id, relation=relation, ctime=ctime)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the relation to a JSON-compatible dictionary.
@@ -857,11 +853,11 @@ class KnowledgeGraph(BaseModel):
         result.extend([r.model_dump(exclude_none=True) for r in (self.relations or [])])
         return result
 
-    def validate(self) -> bool:
+    def validate(self) -> None:
         """
         Run a comprehensive validation of the knowledge graph.
         This includes:
-        - Validating the user info: Checks for a valid preferred name and linked entity ID
+        - Validating the user info: Checks for a preferred name and that the linked entity exists in the graph
         - Validating entities: Checks for unique and valid IDs and the absence of duplicates
         - Validating observations: Checks for valid timestamps and durability, and the absence of duplicates (per entity)
         - Validating relations: Checks for valid from and to IDs and the absence of duplicates
@@ -875,11 +871,17 @@ class KnowledgeGraph(BaseModel):
             try:
                 _ = EntityID(e.id)
             except Exception as e:
-                raise KnowledgeGraphException(f"Graph validation failed: Entity ID {e.id} is invalid: {e}")
+                raise KnowledgeGraphException(
+                    f"Graph validation failed: Entity ID {e.id} is invalid: {e}"
+                )
             if e.id in ents_map.keys():
-                raise KnowledgeGraphException(f"Graph validation failed: Entity ID {e.id} has a duplicate ID!")
+                raise KnowledgeGraphException(
+                    f"Graph validation failed: Entity ID {e.id} has a duplicate ID!"
+                )
             if e in ents:
-                raise KnowledgeGraphException(f"Graph validation failed: Entity {e.id} is a duplicate of another entity!")
+                raise KnowledgeGraphException(
+                    f"Graph validation failed: Entity {e.id} is a duplicate of another entity!"
+                )
             for o in e.observations:
                 obs = [o for o in e.observations if o is not o]
                 try:
@@ -889,43 +891,65 @@ class KnowledgeGraph(BaseModel):
                         timestamp=o.timestamp,
                     )
                 except Exception as e:
-                    raise KnowledgeGraphException(f"Graph validation failed: Observation '{o}' is invalid: {e}")
+                    raise KnowledgeGraphException(
+                        f"Graph validation failed: Observation '{o}' is invalid: {e}"
+                    )
                 if o in obs:
-                    raise KnowledgeGraphException(f"Graph validation failed: Entity {e.id}: Observation {o} is a duplicate of another observation!")
-        
+                    raise KnowledgeGraphException(
+                        f"Graph validation failed: Entity {e.id}: Observation {o} is a duplicate of another observation!"
+                    )
+
         # Validate relations
         for r in self.relations:
             rels = [re for re in self.relations if re is not r]
             try:
                 _ = EntityID(r.from_id)
             except Exception as e:
-                raise KnowledgeGraphException(f"Graph validation failed: Relation from ID {r.from_id} is invalid: {e}")
+                raise KnowledgeGraphException(
+                    f"Graph validation failed: Relation from ID {r.from_id} is invalid: {e}"
+                )
             try:
                 _ = EntityID(r.to_id)
             except Exception as e:
-                raise KnowledgeGraphException(f"Graph validation failed: Relation to ID {r.to_id} is invalid: {e}")
+                raise KnowledgeGraphException(
+                    f"Graph validation failed: Relation to ID {r.to_id} is invalid: {e}"
+                )
             if r.from_id not in entity_id_map.keys():
-                raise KnowledgeGraphException(f"Graph validation failed: Relation from ID {r.from_id} has a duplicate ID!")
+                raise KnowledgeGraphException(
+                    f"Graph validation failed: Relation from ID {r.from_id} has a duplicate ID!"
+                )
             if r.to_id not in entity_id_map.keys():
-                raise KnowledgeGraphException(f"Graph validation failed: Relation to ID {r.to_id} has a duplicate ID!")
+                raise KnowledgeGraphException(
+                    f"Graph validation failed: Relation to ID {r.to_id} has a duplicate ID!"
+                )
             if r in rels:
-                raise KnowledgeGraphException(f"Graph validation failed: Relation {r.from_id} -> {r.to_id} is a duplicate of another relation!")
-        
+                raise KnowledgeGraphException(
+                    f"Graph validation failed: Relation {r.from_id} -> {r.to_id} is a duplicate of another relation!"
+                )
+
         # Validate user info
         if not self.user_info.preferred_name:
-            raise KnowledgeGraphException(f"Graph validation failed: User info must have a preferred name!")
+            raise KnowledgeGraphException(
+                "Graph validation failed: User info must have a preferred name!"
+            )
         if not self.user_info.linked_entity_id:
-            raise KnowledgeGraphException(f"Graph validation failed: User info must have a linked entity ID!")
+            raise KnowledgeGraphException(
+                "Graph validation failed: User info must have a linked entity ID!"
+            )
         if self.user_info.linked_entity_id not in entity_id_map.keys():
-            raise KnowledgeGraphException(f"Graph validation failed: User info linked entity ID {self.user_info.linked_entity_id} is invalid!")
-        
+            raise KnowledgeGraphException(
+                f"Graph validation failed: User info linked entity ID {self.user_info.linked_entity_id} is invalid!"
+            )
+
         # Validate metadata
         if not self.meta.schema_version:
-            raise KnowledgeGraphException(f"Graph validation failed: Metadata must have a schema version!")
+            raise KnowledgeGraphException(
+                "Graph validation failed: Metadata must have a schema version!"
+            )
         if not self.meta.app_version:
-            raise KnowledgeGraphException(f"Graph validation failed: Metadata must have an app version!")
-        
-        return True
+            raise KnowledgeGraphException(
+                "Graph validation failed: Metadata must have an app version!"
+            )
 
 
 class CleanupResult(BaseModel):
