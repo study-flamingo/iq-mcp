@@ -37,18 +37,52 @@ from .models import (
 )
 from .settings import Settings as settings
 from .settings import IQ_MCP_VERSION
-
-
 from .supabase import SupabaseManager, EmailSummary
 
-supabase_manager = SupabaseManager(settings.supabase)
 
-
-# Load settings once and configure logging level accordingly
-
-
-# Initialize the knowledge graph manager and FastMCP server
 manager = KnowledgeGraphManager(settings.memory_path)
+"""
+Tools available from the manager:
+
+## Entity Operations
+- create_entities(new_entities) -> list[CreateEntityResult]
+- get_entity_by_id(entity_id) -> Entity | None
+- open_nodes(ids, names) -> list[Entity]
+- update_entity(identifier, entity_id, name, entity_type, aliases, icon, merge_aliases) -> Entity
+- merge_entities(new_entity_name, entity_names) -> Entity
+- delete_entities(entity_names, entity_ids) -> None
+- search_nodes(query) -> KnowledgeGraph
+
+## Relation Operations
+- create_relations(relations) -> CreateRelationResult
+- get_relations_from_entities(entities) -> list[Relation]
+- get_relations_from_entity(entity) -> list[Relation]
+- get_relations_from_id(entity_id) -> list[Relation]
+- get_entities_from_relation(relation) -> (Entity | None, Entity | None)
+- delete_relations(relations) -> None
+
+## Observation Operations
+- apply_observations(requests) -> list[AddObservationResult]
+- get_observations_by_durability(entity_name) -> DurabilityGroupedObservations
+- cleanup_outdated_observations() -> CleanupResult
+- prune_observations() -> None
+- delete_observations(deletions) -> None
+
+## User Operations
+- get_user_info() -> UserIdentifier
+- get_user_entity() -> Entity
+- get_user_linked_entity() -> Entity
+- update_user_info(new_user_info) -> UserIdentifier
+
+## Graph Operations
+- read_graph() -> KnowledgeGraph
+- get_entity_id_map(graph) -> dict[EntityID, Entity]
+
+## Supabase Integration (if enabled)
+- get_email_summaries(from_date, to_date, include_reviewed) -> list[EmailSummary]
+- mark_as_reviewed(email_summaries) -> None
+"""
+
 
 # Create FastMCP server instance
 mcp = FastMCP(name="iq-mcp", version=IQ_MCP_VERSION)
@@ -1281,23 +1315,57 @@ async def update_entity(request: UpdateEntityRequest):
         raise ToolError(f"Unexpected error during entity update: {e}")
 
 
-# ----- EXPERIMENTAL/DEV/WIP TOOLS -----#
+@mcp.tool
+async def delete_relations(
+    relations: list[Relation] | Relation | None = Field(
+        default=None,
+        description="List of relations to remove.",
+    ),
+):
+    """Remove relations from the knowledge graph. Warning: this is irreversible!"""
+    try:
+        await manager.delete_relations(relations=relations)
+    except Exception as e:
+        raise ToolError(f"Failed to remove relations: {e}")
+
+
+@mcp.tool
+async def delete_entities(
+    entity_names: list[str] | str | None = Field(
+        default=None,
+        description="List of names or aliases of entities to remove.",
+    ),
+    entity_ids: list[EntityID | str] | EntityID | str | None = Field(
+        default=None,
+        description="List of IDs of entities to remove.",
+    ),
+):
+    """Remove entities from the knowledge graph by name or ID. This will also remove all relations
+    involving the entities. This can be useful for cleaning up the graph; however, unless for
+    dev/debug purposes, it is usually a better idea to update relationships instead.
+
+    **WARNING: This is irreversible! Ensure that the user consents prior to execution!**
+    """
+    try:
+        await manager.delete_entities(entity_names=entity_names, entity_ids=entity_ids)
+    except Exception as e:
+        raise ToolError(f"Failed to remove entities: {e}")
 
 
 # Supabase Integration Tools
-def add_supabase_tools(mcp_server: FastMCP, supabase_manager: SupabaseManager) -> None:
+def add_supabase_tools(mcp_server: FastMCP) -> None:
     """If the Supabase integration is enabled, adds the tools to the given MCP server."""
 
     # Tools to be added with successful Supabase integration
     @mcp_server.tool
     async def get_new_email_summaries(
-        from_date: str | None = Field(
+        from_date: datetime | str | None = Field(
             default=None,
             description=(
                 "Start date for fetching summaries. Accepts 'YYYY-MM-DD', ISO 8601, or relative phrases like 'one week ago'."
             ),
         ),
-        to_date: str | None = Field(
+        to_date: datetime | str | None = Field(
             default=None,
             description=(
                 "End date for fetching summaries. Accepts 'YYYY-MM-DD', ISO 8601, or relative phrases like 'yesterday'."
@@ -1308,7 +1376,7 @@ def add_supabase_tools(mcp_server: FastMCP, supabase_manager: SupabaseManager) -
             description="Whether to include previously reviewed email summaries. Default is False.",
         ),
     ):
-        """Retrieve email summaries from Supabase via the Supabase manager and present them as text."""
+        """Retrieve email summaries from the Supabase integration."""
 
         def _parse_date(dt_str: str | None) -> datetime | None:
             if not dt_str:
@@ -1361,13 +1429,15 @@ def add_supabase_tools(mcp_server: FastMCP, supabase_manager: SupabaseManager) -
             logger.error(f"Unrecognized date format: {dt_str}")
             return None
 
-        start_dt = _parse_date(from_date)
-        end_dt = _parse_date(to_date)
+        if isinstance(from_date, str):
+            from_date = _parse_date(from_date)
+        if isinstance(to_date, str):
+            to_date = _parse_date(to_date)
 
-        # Retrieve email summaries
+        # Retrieve email summaries, if available
         try:
-            summaries = await supabase_manager.get_email_summaries(
-                from_date=start_dt, to_date=end_dt, include_reviewed=include_reviewed
+            summaries = await manager.get_email_summaries(
+                from_date=from_date, to_date=to_date, include_reviewed=include_reviewed
             )
         except Exception as e:
             raise ToolError(f"Failed to retrieve email summaries: {e}")
@@ -1379,31 +1449,13 @@ def add_supabase_tools(mcp_server: FastMCP, supabase_manager: SupabaseManager) -
 
         # Format the email summaries
         lines.append(await print_email_summaries(summaries))
-        logger.info(
-            f"Marking {len(summaries)} email summaries as reviewed in Supabase in background..."
-        )
-        asyncio.create_task(supabase_manager.mark_as_reviewed(summaries))
+
+        # Mark the messages as reviewed in the background, to save a little time
+        logger.info(f"Marking {len(summaries)} messages as reviewed")
+        asyncio.create_task(manager.mark_as_reviewed(summaries))
+
         result = "\n".join(lines) + "\n"
         return result
-
-    @mcp_server.tool
-    async def sync_supabase():
-        """Replace Supabase KG tables with a cleaned snapshot from the local knowledge graph."""
-        try:
-            graph = await manager.read_graph()
-            result = await supabase_manager.sync_knowledge_graph(graph)
-            return result
-        except Exception as e:
-            raise ToolError(f"Failed to sync Supabase: {e}")
-
-    @mcp_server.tool
-    async def read_supabase_graph():
-        """Read the knowledge graph from Supabase and return it as a text string."""
-        try:
-            result = await supabase_manager.get_knowledge_graph()
-            return result
-        except Exception as e:
-            raise ToolError(f"Failed to read Supabase graph: {e}")
 
 
 # ----- KEEP AT THE END AFTER OTHER FUNCTIONS -----#
@@ -1415,17 +1467,7 @@ async def read_graph():
         User/LLM-friendly summary of the entire knowledge graph in text/markdown format
     """
 
-    if settings.supabase_enabled and supabase_manager:
-        try:
-            graph = await supabase_manager.get_knowledge_graph()
-            logger.info("☁️ Supabase graph read successfully!")
-        except Exception as e:
-            raise ToolError(f"(Supabase) Failed to read graph: {e}")
-        # Save a backup to local JSONL storage
-        await manager.save_graph(graph)
-    else:
-        graph = await manager.read_graph()
-        logger.warning("Supabase integration is disabled, reading graph from JSONL storage...")
+    graph = await manager.read_graph()
 
     # Print user info
     lines: list[str] = ["💭 You remember the following information about the user:"]
@@ -1460,9 +1502,9 @@ async def read_graph():
         lines.append("(No relations found for user entity - this may be an error!)")
 
     # Supabase integration: Print email summaries
-    if supabase_manager:
+    if settings.supabase_enabled:
         try:
-            email_summaries = await supabase_manager.get_email_summaries()
+            email_summaries = await manager.get_email_summaries()
         except Exception as e:
             raise ToolError(f"(Supabase) Error while getting email summaries: {e}")
         if email_summaries:
@@ -1479,6 +1521,7 @@ async def read_graph():
                         ),
                     )
                 )
+                asyncio.create_task(manager.mark_as_reviewed(email_summaries))
             except Exception as e:
                 raise ToolError(f"(Supabase) Error while printing email summaries: {e}")
         else:
@@ -1495,8 +1538,6 @@ async def read_graph():
             lines.remove(line)
             continue
     result = "\n".join(lines)
-
-    asyncio.create_task(supabase_manager.mark_as_reviewed(email_summaries))
     return result
 
 
@@ -1533,8 +1574,8 @@ async def start_server():
         sys.exit(1)
 
     # Supabase integration: conditionally initialize if enabled and configured
-    if supabase_manager:
-        add_supabase_tools(mcp, supabase_manager)
+    if settings.supabase_enabled:
+        add_supabase_tools(mcp)
         logger.info("☁️ Supabase integration enabled and initialized!")
     else:
         logger.warning("⛔ Supabase integration is disabled, no Supabase tools will be available")

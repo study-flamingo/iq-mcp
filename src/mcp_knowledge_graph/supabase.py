@@ -161,7 +161,7 @@ class SupabaseManager:
                 f"(Supabase) Marked {len(email_ids)} email summaries as reviewed in Supabase"
             )
 
-    async def sync_knowledge_graph(self, graph: KnowledgeGraph) -> None:  # TODO: Implement
+    async def save_knowledge_graph(self, graph: KnowledgeGraph) -> None:
         """
         Replace Supabase knowledge graph tables with a cleaned snapshot from the provided graph.
 

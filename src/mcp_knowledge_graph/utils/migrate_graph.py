@@ -117,7 +117,6 @@ def migrate_graph(path: str, dry_run: bool = False) -> KnowledgeGraph:
                             data.get("nickname") if data.get("nickname") else None
                         )
                         new_user_info = UserIdentifier.from_dict(raw_user_info)
-                        # TODO: you were working here
 
                     case "entity":
                         raw_entity: dict[str, Any] = {}

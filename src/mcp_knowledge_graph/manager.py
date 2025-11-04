@@ -33,6 +33,9 @@ from .models import (
     MemoryRecord,
     GraphMeta,
 )
+from .supabase import SupabaseManager, EmailSummary
+
+supabase_manager = SupabaseManager(settings.supabase)
 
 
 class KnowledgeGraphManager:
@@ -431,14 +434,19 @@ class KnowledgeGraphManager:
         Load the knowledge graph from Supabase (EXPERIMENTAL) and back up to JSONL storage.
 
         Returns:
-            KnowledgeGraph loaded from Supabase (EXPERIMENTAL) and back up to JSONL storage.
+            The Knowledge Graph
         """
+        if settings.supabase_enabled and supabase_manager:
+            graph = await supabase_manager.get_knowledge_graph()
+            logger.info("☁️ Supabase graph read successfully!")
+            return graph
+
         # Resolve and validate memory file path
         self.memory_file_path = Path(self.memory_file_path).resolve()
         if not self.memory_file_path.exists():
             raise RuntimeError(f"⛔ Memory file not found at {self.memory_file_path}")
 
-        # Load and parse graph components from file
+        # Load and parse graph components
         meta: GraphMeta | None = None
         user_info: UserIdentifier | None = None
         entities: list[Entity] = []
@@ -574,8 +582,13 @@ class KnowledgeGraphManager:
             logger.warning("⚠️ Dry run mode enabled, skipping save")
             return
 
-        logger.debug(f"manager._save_graph() called, saving to {self.memory_file_path}")
-        # Note: Avoid calling cleanup here to prevent recursive save cycles.
+        if settings.supabase_enabled and supabase_manager:
+            try:
+                await supabase_manager.save_knowledge_graph(graph)
+                logger.info("☁️ Supabase graph saved successfully!")
+            except Exception as e:
+                logger.error(f"Failed to save graph to Supabase: {e}")
+        logger.info(f"💾 Saving backup of graph to {self.memory_file_path}")
 
         try:
             lines = []
@@ -586,17 +599,8 @@ class KnowledgeGraphManager:
                 lines.append(
                     json.dumps({"type": "meta", "data": meta_payload}, separators=(",", ":"))
                 )
-                if graph.user_info:
-                    user_info_payload = graph.user_info.model_dump(mode="json")
-                    record = {"type": "user_info", "data": user_info_payload}
-                    lines.append(json.dumps(record, separators=(",", ":")))
-                else:
-                    # If for some reason the user info is not set, save with default info
-                    user_info_payload = UserIdentifier.from_default().model_dump(mode="json")
-                    record = {"type": "user_info", "data": user_info_payload}
-                    lines.append(json.dumps(record, separators=(",", ":")))
             except Exception as e:
-                raise RuntimeError(f"Failed to save user info: {e}")
+                raise RuntimeError(f"Failed to save meta: {e}")
 
             # Save entities
             try:
@@ -1072,7 +1076,7 @@ class KnowledgeGraphManager:
         return self._group_by_durability(entity.observations)
 
     async def delete_entities(
-        self, entity_names: list[str] | None = None, entity_ids: list[str] | None = None
+        self, entity_names: list[str] | None = None, entity_ids: list[EntityID | str] | None = None
     ) -> None:
         """
         Delete multiple entities and their associated relations.
@@ -1199,7 +1203,7 @@ class KnowledgeGraphManager:
         Search for nodes in the knowledge graph based on a query.
 
         Args:
-            query: Search query to match against names, types, and observation content
+            query: Search query to match against ID, names, aliases, types, and observation content
 
         Returns:
             Filtered knowledge graph containing only matching entities and their relations
@@ -1217,6 +1221,10 @@ class KnowledgeGraphManager:
         # Filter entities that match the query
         filtered_entities = []
         for entity in graph.entities:
+            # Check entity ID
+            if query == entity.id:
+                return entity
+
             # Check entity name and type
             name_match = query_lower in entity.name.lower()
             type_match = query_lower in entity.entity_type.lower()
@@ -1568,8 +1576,9 @@ class KnowledgeGraphManager:
     def get_user_linked_entity(self) -> Entity:
         """
         Get the user-linked entity from the graph. Returns the entity if it exists, otherwise raises an error.
-        This is an alias for get_user_entity().
+        This is an alias for get_user_entity(), and will be deprecated.
         """
+        logger.warning("get_user_linked_entity() is deprecated, use get_user_entity() instead")
         return self.get_user_entity()
 
     async def update_user_info(self, new_user_info: UserIdentifier) -> UserIdentifier:
@@ -1720,39 +1729,35 @@ class KnowledgeGraphManager:
         await self._save_graph(graph)
         return target
 
-    # async def sync_supabase(self, supabase_manager: Any) -> str:
-    #     """
-    #     Load, clean, and synchronize the local knowledge graph to Supabase via the provided manager.
+    async def get_email_summaries(
+        self,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        include_reviewed: bool = False,
+    ) -> list[EmailSummary]:
+        """Get email summaries from Supabase. If Supabase integration is disabled, this returns an empty list."""
+        if settings.supabase_enabled and supabase_manager:
+            return await supabase_manager.get_email_summaries(
+                from_date=from_date, to_date=to_date, include_reviewed=include_reviewed
+            )
+        else:
+            return []
 
-    #     Steps:
-    #     - Load graph from disk
-    #     - Prune observations (outdated + duplicate)
-    #     - Dedupe relations
-    #     - Push cleaned snapshot to Supabase
-    #     """
-    #     # Load current graph
-    #     graph = await self._load_graph()
+    async def mark_as_reviewed(self, email_summaries: list[EmailSummary]) -> None:
+        """Mark email summaries as reviewed in Supabase. If Supabase integration is disabled, this does nothing."""
+        if settings.dry_run:
+            logger.warning("(Supabase) Dry run mode enabled, skipping mark_as_reviewed()")
+            return
 
-    #     # Clean observations
-    #     try:
-    #         graph = await self._prune_observations(graph)
-    #     except Exception as e:
-    #         logger.error(f"Error pruning observations before Supabase sync: {e}")
-
-    #     # Dedupe relations
-    #     try:
-    #         graph.relations = self._dedupe_relations_in_place(graph.relations or [])
-    #     except Exception as e:
-    #         logger.error(f"Error deduplicating relations before Supabase sync: {e}")
-
-    #     # Sync to Supabase
-    #     try:
-    #         await supabase_manager.sync_knowledge_graph(graph)
-    #     except Exception as e:
-    #         raise KnowledgeGraphException(f"Supabase sync failed: {e}")
-
-    #     return (
-    #         f"Synchronized knowledge graph to Supabase: {len(graph.entities)} entities, "
-    #         f"{sum(len(e.observations or []) for e in graph.entities)} observations, "
-    #         f"{len(graph.relations)} relations"
-    #     )
+        if settings.supabase_enabled and supabase_manager:
+            try:
+                await supabase_manager.mark_as_reviewed(email_summaries)
+                logger.info(
+                    f"(Supabase) Marked {len(email_summaries)} email summaries as reviewed!"
+                )
+            except Exception as e:
+                logger.error(f"(Supabase) Failed to mark email summaries as reviewed: {e}")
+        else:
+            logger.warning(
+                "(Supabase) Supabase integration is disabled, skipping mark_as_reviewed()"
+            )
