@@ -9,7 +9,7 @@ import sys
 import asyncio
 import json
 import re
-from datetime import tzinfo, datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta
 from fastmcp import FastMCP
 from pydantic import Field
 from pydantic.main import IncEx
@@ -37,7 +37,7 @@ from .models import (
 )
 from .settings import Settings as settings
 from .settings import IQ_MCP_VERSION
-from .supabase import SupabaseManager, EmailSummary
+from .supabase import EmailSummary
 
 
 manager = KnowledgeGraphManager(settings.memory_path)

@@ -2,7 +2,13 @@ from typing import Any
 from dotenv import load_dotenv
 from datetime import datetime, timezone
 
-from supabase import create_client, Client as SBClient
+try:
+    from supabase import create_client, Client as SBClient  # type: ignore
+    SUPABASE_AVAILABLE = True
+except Exception:  # ImportError or runtime import errors
+    create_client = None  # type: ignore[assignment]
+    SBClient = object  # type: ignore[assignment, misc]
+    SUPABASE_AVAILABLE = False
 
 from .models import KnowledgeGraph, Entity, Observation, Relation, UserIdentifier, GraphMeta
 from .logging import logger
@@ -58,13 +64,21 @@ class SupabaseManager:
     """
 
     def __init__(self, config: SupabaseConfig) -> None:
+        if not SUPABASE_AVAILABLE:
+            raise SupabaseException(
+                "Supabase integration is not available. Install `supabase` package or disable Supabase features."
+            )
         self.settings: SupabaseConfig = config
-        self.client = create_client(self.settings.url, self.settings.key)
+        self.client = create_client(self.settings.url, self.settings.key)  # type: ignore[arg-type]
 
-    def _ensure_client(self) -> SBClient:
+    def _ensure_client(self) -> SBClient:  # type: ignore[override]
         if not self.client:
             logger.error("IQ-MCP Supabase client not initialized, (re)initializing...")
-            self.client = create_client(self.settings.url, self.settings.key)
+            if not SUPABASE_AVAILABLE:
+                raise SupabaseException(
+                    "Supabase integration is not available. Install `supabase` package or disable Supabase features."
+                )
+            self.client = create_client(self.settings.url, self.settings.key)  # type: ignore[arg-type]
         return self.client
 
     async def get_email_summaries(

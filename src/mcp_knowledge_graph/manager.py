@@ -33,9 +33,11 @@ from .models import (
     MemoryRecord,
     GraphMeta,
 )
-from .supabase import SupabaseManager, EmailSummary
+from .supabase import SupabaseManager, EmailSummary, SUPABASE_AVAILABLE
 
-supabase_manager = SupabaseManager(settings.supabase)
+supabase_manager = None
+if getattr(settings, "supabase", None) and SUPABASE_AVAILABLE:
+    supabase_manager = SupabaseManager(settings.supabase)
 
 
 class KnowledgeGraphManager:
@@ -134,6 +136,43 @@ class KnowledgeGraphManager:
             return f"{age_days} days old"
         except Exception:
             return "unknown age"
+
+    def _is_observation_outdated(self, obs: Observation) -> bool:
+        """Heuristic to determine if an observation is likely outdated based on durability and timestamp."""
+        try:
+            durability = getattr(obs, "durability", None)
+            ts = getattr(obs, "timestamp", None)
+
+            # Never remove permanent observations
+            if durability == DurabilityType.PERMANENT:
+                return False
+
+            # Parse timestamp
+            if not ts:
+                return False
+            if isinstance(ts, str):
+                obs_date = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            else:
+                obs_date = ts
+            if obs_date.tzinfo is None:
+                obs_date = obs_date.replace(tzinfo=timezone.utc)
+            else:
+                obs_date = obs_date.astimezone(timezone.utc)
+
+            age_days = (datetime.now(timezone.utc) - obs_date).days
+
+            # Thresholds by durability
+            if durability == DurabilityType.TEMPORARY:
+                return age_days > 7
+            if durability == DurabilityType.SHORT_TERM:
+                return age_days > 30
+            if durability == DurabilityType.LONG_TERM:
+                return age_days > 365
+
+            # Unknown durability: keep
+            return False
+        except Exception:
+            return False
 
     def _group_by_durability(
         self, observations: list[Observation]
@@ -444,7 +483,33 @@ class KnowledgeGraphManager:
         # Resolve and validate memory file path
         self.memory_file_path = Path(self.memory_file_path).resolve()
         if not self.memory_file_path.exists():
-            raise RuntimeError(f"⛔ Memory file not found at {self.memory_file_path}")
+            # Initialize a minimal, valid graph on first use
+            try:
+                default_user_entity = Entity.from_values(
+                    name="user",
+                    entity_type="person",
+                    observations=[],
+                    aliases=[],
+                    id=str(uuid4())[:8],
+                )
+                default_user_info = UserIdentifier.from_values(
+                    preferred_name="user",
+                    linked_entity=default_user_entity,
+                )
+                meta = GraphMeta()
+                initial_graph = KnowledgeGraph.from_components(
+                    user_info=default_user_info,
+                    entities=[default_user_entity],
+                    relations=[],
+                    meta=meta,
+                )
+                # Ensure directory exists and persist the initialized graph
+                self.memory_file_path.parent.mkdir(parents=True, exist_ok=True)
+                await self._save_graph(initial_graph)
+                logger.info(f"🆕 Initialized new memory file at {self.memory_file_path}")
+                return initial_graph
+            except Exception as e:
+                raise RuntimeError(f"Failed to initialize memory file: {e}")
 
         # Load and parse graph components
         meta: GraphMeta | None = None
@@ -494,17 +559,16 @@ class KnowledgeGraphManager:
         except Exception as e:
             raise RuntimeError(f"Error reading memory file: {e}")
 
-        # Validate components are present
-        if not all([user_info, entities, relations, meta]):
+        # Validate required components are present
+        # Note: allow empty entities/relations lists, but require user_info and meta
+        if user_info is None or meta is None:
             missing = [
                 k
                 for k, v in [
                     ("user_info", user_info),
-                    ("entities", entities),
-                    ("relations", relations),
                     ("meta", meta),
                 ]
-                if not v
+                if v is None
             ]
             raise KnowledgeGraphException(f"Missing required components: {', '.join(missing)}")
 
@@ -601,6 +665,17 @@ class KnowledgeGraphManager:
                 )
             except Exception as e:
                 raise RuntimeError(f"Failed to save meta: {e}")
+
+            # Save user info
+            try:
+                ui_payload = (graph.user_info or UserIdentifier.from_default()).model_dump(
+                    mode="json", exclude_none=True
+                )
+                lines.append(
+                    json.dumps({"type": "user_info", "data": ui_payload}, separators=(",", ":"))
+                )
+            except Exception as e:
+                raise RuntimeError(f"Failed to save user info: {e}")
 
             # Save entities
             try:
@@ -967,15 +1042,14 @@ class KnowledgeGraphManager:
                 continue
 
             # Create observations with timestamps from the request
-            observations: list[str] = [old_obs.content for old_obs in entity.observations] or []
+            existing_contents: set[str] = {old_obs.content for old_obs in (entity.observations or [])}
             new_observations: list[Observation] = []
             for o in request.observations:
                 obs = Observation.from_values(o.content, o.durability)
                 # Avoid duplicates
-                if obs.content not in observations:
+                if obs.content not in existing_contents:
                     new_observations.append(obs)
-            else:
-                new_observations.append(obs)
+                    existing_contents.add(obs.content)
             entity.observations.extend(new_observations)
 
             try:
@@ -1249,13 +1323,14 @@ class KnowledgeGraphManager:
         filtered_relations = [
             r
             for r in graph.relations
-            if r.from_id in filtered_entity_ids and r.to_id in filtered_entity_ids
+            if r.from_id in filtered_entity_ids or r.to_id in filtered_entity_ids
         ]
 
-        return KnowledgeGraph(
+        return KnowledgeGraph.from_components(
             user_info=graph.user_info,
             entities=filtered_entities,
             relations=filtered_relations,
+            meta=graph.meta,
         )
 
     async def open_nodes(

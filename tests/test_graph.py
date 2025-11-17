@@ -1,7 +1,6 @@
 """Core tests for KnowledgeGraphManager operations."""
 
 import sys
-import asyncio
 import tempfile
 from pathlib import Path
 
