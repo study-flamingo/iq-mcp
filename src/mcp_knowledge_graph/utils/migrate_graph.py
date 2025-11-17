@@ -65,13 +65,10 @@ def migrate_graph(path: str, dry_run: bool = False) -> KnowledgeGraph:
             raise SystemExit(f"Error reading file: {e}")
 
         i = -1
-        new_entities: list[Entity] = []
-        new_relations: list[Relation] = []
         new_user_info: UserIdentifier | None = None
         for line in lines_raw:
             i += 1  # increment at start to avoid interruption by errors
             try:
-                errors: list[str] = []
                 line = line.strip()
                 if not line:
                     if i == 0:  # if first line is empty, assume empty file

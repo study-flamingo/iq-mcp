@@ -137,42 +137,7 @@ class KnowledgeGraphManager:
         except Exception:
             return "unknown age"
 
-    def _is_observation_outdated(self, obs: Observation) -> bool:
-        """Heuristic to determine if an observation is likely outdated based on durability and timestamp."""
-        try:
-            durability = getattr(obs, "durability", None)
-            ts = getattr(obs, "timestamp", None)
-
-            # Never remove permanent observations
-            if durability == DurabilityType.PERMANENT:
-                return False
-
-            # Parse timestamp
-            if not ts:
-                return False
-            if isinstance(ts, str):
-                obs_date = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-            else:
-                obs_date = ts
-            if obs_date.tzinfo is None:
-                obs_date = obs_date.replace(tzinfo=timezone.utc)
-            else:
-                obs_date = obs_date.astimezone(timezone.utc)
-
-            age_days = (datetime.now(timezone.utc) - obs_date).days
-
-            # Thresholds by durability
-            if durability == DurabilityType.TEMPORARY:
-                return age_days > 7
-            if durability == DurabilityType.SHORT_TERM:
-                return age_days > 30
-            if durability == DurabilityType.LONG_TERM:
-                return age_days > 365
-
-            # Unknown durability: keep
-            return False
-        except Exception:
-            return False
+    # _is_observation_outdated removed in favor of Observation.is_outdated()
 
     def _group_by_durability(
         self, observations: list[Observation]
@@ -753,7 +718,7 @@ class KnowledgeGraphManager:
             if not entity.observations:
                 continue
             entity.observations = [
-                obs for obs in entity.observations if not self._is_observation_outdated(obs)
+                obs for obs in entity.observations if not obs.is_outdated()
             ]
         return graph
 
@@ -1103,7 +1068,7 @@ class KnowledgeGraphManager:
             # Filter out outdated observations
             kept_observations = []
             for obs in entity.observations:
-                if self._is_observation_outdated(obs):
+                if obs.is_outdated():
                     removed_details.append(
                         {
                             "entity_name": entity.name,
