@@ -5,6 +5,22 @@ All notable changes to the Enhanced Memory MCP Server with Temporal Observations
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2025-11-17
+
+### 🔄 Changed
+- Project version aligned to 1.2.0 across codebase:
+  - Updated `pyproject.toml` project version to 1.2.0
+  - Updated `src/mcp_knowledge_graph/__init__.py` `__version__` to 1.2.0
+  - Confirmed runtime `IQ_MCP_VERSION` is 1.2.0 in `settings.py`
+- Normalized migration tool `CURRENT_VERSION` to `1.2.0` (no leading `v`)
+
+### 🛠️ Maintenance
+- Prepared for release PR to merge `dev` → `main`
+- No storage schema changes; `IQ_MCP_SCHEMA_VERSION` remains 1
+
+### 📚 References
+- See `docs/PROJECT_OVERVIEW.md` (schema/versioning) and `docs/LLM_COLLAB.md` (semver & migrations).
+
 ## [0.7.0] - 2025-06-26
 
 ### 🆕 Added
