@@ -17,6 +17,11 @@ from .settings import SupabaseConfig
 load_dotenv()
 
 
+# Versioning for Supabase schema (tables/columns stored in Supabase)
+# Bump when Supabase-side data model changes incompatibly.
+SUPABASE_SCHEMA_VERSION: int = 1
+
+
 class SupabaseException(Exception):
     """Exception raised for errors in the IQ-MCP Supabase integration."""
 
@@ -80,6 +85,10 @@ class SupabaseManager:
                 )
             self.client = create_client(self.settings.url, self.settings.key)  # type: ignore[arg-type]
         return self.client
+
+    def get_schema_version(self) -> int:
+        """Return the current Supabase schema version expected by this codebase."""
+        return SUPABASE_SCHEMA_VERSION
 
     async def get_email_summaries(
         self,
@@ -426,4 +435,4 @@ class SupabaseManager:
 #         raise SupabaseException(f"Error getting email summaries from Supabase: {e}")
 
 
-__all__ = ["EmailSummary", "SupabaseManager", "SupabaseException"]
+__all__ = ["EmailSummary", "SupabaseManager", "SupabaseException", "SUPABASE_SCHEMA_VERSION"]

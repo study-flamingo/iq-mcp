@@ -1,3 +1,5 @@
+Supabase schema version: 1
+
 The SupaBase database for cloud memory storage should be constructed as follows:
 
 ```sql
@@ -51,3 +53,7 @@ CREATE TABLE public.kgRelations (
   PRIMARY KEY (from_id, to_id, relation)
 );
 ```
+
+Versioning
+- Code expects Supabase schema version 1 (see `SUPABASE_SCHEMA_VERSION` in `src/mcp_knowledge_graph/supabase.py`).
+- When changing table/column contracts incompatibly, bump `SUPABASE_SCHEMA_VERSION`, update this document with [version: N], and provide a migration note.
