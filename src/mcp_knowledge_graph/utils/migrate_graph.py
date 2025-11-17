@@ -158,11 +158,11 @@ def migrate_graph(path: str, dry_run: bool = False) -> KnowledgeGraph:
                     with open(path, "w", encoding="utf-8") as f:
                         f.write(json.dumps(obj) + "\n")
                 if typ == "user_info":
-                    print(f"Updated line {i}: User info: {user_info}")
+                    print(f"Updated line {i}: User info: {new_user_info}")
                 if typ == "entity":
-                    print(f"Updated line {i}: Entity: {entity}")
+                    print(f"Updated line {i}: Entity: {new_entity}")
                 if typ == "relation":
-                    print(f"Updated line {i}: Relation: {relation}")
+                    print(f"Updated line {i}: Relation: {new_relation}")
 
             except Exception as e:
                 if IGNORE_ERRORS:
