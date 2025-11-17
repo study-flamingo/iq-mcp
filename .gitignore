@@ -113,3 +113,7 @@ __pycache__/
 *.egg-info/
 *.pyc
 .pytest_cache/
+[!example]*.jsonl
+
+# private docs
+docs/.*

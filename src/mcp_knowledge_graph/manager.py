@@ -6,14 +6,15 @@ including CRUD operations, temporal observation handling, and smart cleanup.
 """
 
 import json
-import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 from pathlib import Path
-from .settings import Settings as settings, Logger as logger
-
+from uuid import uuid4
+from .settings import Settings as settings
+from .logging import logger
 from .models import (
     Entity,
+    EntityID,
     Relation,
     KnowledgeGraph,
     Observation,
@@ -23,10 +24,20 @@ from .models import (
     CleanupResult,
     DurabilityGroupedObservations,
     DurabilityType,
-    CreateEntityResult,
     CreateRelationResult,
+    CreateRelationRequest,
+    CreateEntityRequest,
+    CreateEntityResult,
     UserIdentifier,
+    KnowledgeGraphException,
+    MemoryRecord,
+    GraphMeta,
 )
+from .supabase import SupabaseManager, EmailSummary, SUPABASE_AVAILABLE
+
+supabase_manager = None
+if getattr(settings, "supabase", None) and SUPABASE_AVAILABLE:
+    supabase_manager = SupabaseManager(settings.supabase)
 
 
 class KnowledgeGraphManager:
@@ -49,9 +60,17 @@ class KnowledgeGraphManager:
         # Ensure the directory exists
         self.memory_file_path.parent.mkdir(parents=True, exist_ok=True)
 
+    @classmethod
+    def from_settings(cls) -> "KnowledgeGraphManager":
+        """
+        Initialize the knowledge graph manager via the settings object.
+        """
+        # Uses the already-initialized settings object
+        return cls(settings.memory_path)
+
     # ---------- Alias helpers ----------
     def _get_entity_by_name_or_alias(self, graph: KnowledgeGraph, identifier: str) -> Entity | None:
-        """Return the first entity whose name or aliases match the identifier (case-insensitive)."""
+        """Return the first entity whose name or aliases match the identifier (case-insensitive). If no entity is found, returns None."""
         ident_lower = (identifier or "").strip().lower()
         if not ident_lower:
             return None
@@ -67,6 +86,28 @@ class KnowledgeGraphManager:
                 # In case legacy data has non-list or invalid aliases field
                 pass
         return None
+
+    def _get_entity_by_id(self, graph: KnowledgeGraph, id: str) -> Entity | None:
+        """
+        Return the entity whose ID matches the provided ID.
+        If no entity is found, returns None.
+
+        Intended for use during loading and validation of the graph.
+        """
+        if not id:
+            return None
+        for e in graph.entities:
+            if e.id == id:
+                return e
+        return None
+
+    def _get_user_linked_entity(self, graph: KnowledgeGraph) -> Entity:
+        """Return the user-linked entity. It should exist, so an error is raised if it doesn't."""
+        try:
+            user_entity = self._get_entity_by_id(graph=graph, id=graph.user_info.linked_entity_id)
+            return user_entity
+        except Exception as e:
+            raise KnowledgeGraphException(f"Error retrieving user-linked entity: {e}")
 
     def _canonicalize_entity_name(self, graph: KnowledgeGraph, identifier: str) -> str:
         """Return canonical entity name if identifier matches a name or alias; otherwise return identifier unchanged."""
@@ -96,6 +137,8 @@ class KnowledgeGraphManager:
         except Exception:
             return "unknown age"
 
+    # _is_observation_outdated removed in favor of Observation.is_outdated()
+
     def _group_by_durability(
         self, observations: list[Observation]
     ) -> DurabilityGroupedObservations:
@@ -116,138 +159,445 @@ class KnowledgeGraphManager:
         """Deduplicate relations by (from, to, type), keeping last occurrence order."""
         unique: dict[tuple[str, str, str], Relation] = {}
         for rel in relations:
-            key = (rel.from_entity, rel.to_entity, rel.relation_type)
+            key = (rel.from_entity, rel.to_entity, rel.relation)
             unique[key] = rel
         return list(unique.values())
 
-    def _is_observation_outdated(self, obs: Observation) -> bool:
+    def _generate_new_valid_entity_id(self, graph: KnowledgeGraph) -> str:
+        """Generate a unique new entity ID, ensuring it is not already in the graph. Entity IDs are UUID4s truncated to 8 characters. Convenience
+        function for future proofing against changes in ID format."""
+        while True:
+            new_id = str(uuid4())[:8]
+            if new_id not in [e.id for e in graph.entities]:
+                break
+        return new_id
+
+    def _validate_new_entity_id(self, entity: Entity, graph: KnowledgeGraph) -> Entity:
         """
-        Check if an observation is likely outdated based on durability and age.
+        Validate the ID of a new entity before it is added to the graph.
+
+        If not set (which should not happen), generate a new one, ensure it is unique, and assign it to the entity.
+        If set, check if it is unique and return the entity.
 
         Args:
-            obs: The observation to check
+            entity: The entity to validate.
+            graph: The graph to use to get the entities list. Loads the default graph from disk if not provided.
+            entities_list: You can also provide a list of entities to use to validate the ID. Takes precedence over the graph if both are provided.
 
         Returns:
-            True if the observation should be considered outdated
+            The Entity with the ID set and validated against the provided graph or entities list.
         """
         try:
-            now = datetime.now(timezone.utc)
+            if not entity.id:
+                logger.error(f"Entity {entity.name} has no ID, investigate!!! Generating new ID.")
+                entity.id = self._generate_new_valid_entity_id(graph)
+            for e in graph.entities:
+                if e.id == entity.id:
+                    logger.warning(
+                        f"Entity {entity.name} has a duplicate ID: {entity.id}. Generating new ID."
+                    )
+                    entity.id = self._generate_new_valid_entity_id(graph)
 
-            # If the observation has no timestamp, add one
-            if not obs.timestamp:
-                # Normalize missing timestamp to an ISO UTC string
-                obs.timestamp = now.isoformat().replace("+00:00", "Z")
-                # This observation didn't have a timestamp, but now it does, so assume it's not outdated
-                return False
+            return entity
+        except Exception as e:
+            raise KnowledgeGraphException(f"Error validating entity ID: {e}")
 
-            obs_date_any = obs.timestamp
-            if isinstance(obs_date_any, str):
-                obs_date = datetime.fromisoformat(obs_date_any.replace("Z", "+00:00"))
-            else:
-                obs_date = obs_date_any
+    def _validate_entity(self, entity: Entity, graph: KnowledgeGraph) -> Entity:
+        """
+        Validates an entity object against the knowledge graph. Intended for use during loading and
+        validation of the graph.
 
-            # Ensure timezone-aware UTC for safe arithmetic
-            if obs_date.tzinfo is None:
-                obs_date = obs_date.replace(tzinfo=timezone.utc)
-            else:
-                obs_date = obs_date.astimezone(timezone.utc)
+        Most data validation is handled by pydantic. Additional validation is performed on entities to ensure
+        interoperability between components of the knowledge graph. This method:
 
-            days_old = (now - obs_date).days
-            months_old = days_old / 30.0
+        - Ensures an entity is valid and unique (including ID strings). Compares entire Entity objects, not just ID strings.
+        - If the entity appears to be the user-linked entity, verify that the user_info.linked_entity_id matches the entity ID.
 
-            if obs.durability == DurabilityType.PERMANENT:
-                return False  # Never outdated
-            elif obs.durability == DurabilityType.LONG_TERM:
-                return months_old > 12  # 1+ years old
-            elif obs.durability == DurabilityType.SHORT_TERM:
-                return months_old > 3  # 3+ months old
-            elif obs.durability == DurabilityType.TEMPORARY:
-                return months_old > 1  # 1+ month old
-            else:
-                return False
-        except (ValueError, AttributeError, TypeError):
-            # If timestamp parsing fails, assume not outdated
-            return False
+        Args:
+            entity: The entity to validate.
+            graph: The knowledge graph to use to get the entities list.
+
+        Returns:
+            The Entity with the ID set and validated against the provided graph.
+        """
+        entities_list = graph.entities
+
+        # Ensure the entity actually exists in the graph without mutating the list under iteration
+        try:
+            if entity not in entities_list:
+                raise ValueError("entity not present in entities list")
+        except Exception as e:
+            raise KnowledgeGraphException(f"Entity {entity.name} must exist in graph: {e}")
+
+        # Ensure the entity has a valid ID
+        try:
+            if entity.id in entities_list:
+                logger.warning(f"Entity {entity.name} has a duplicate ID: {entity.id}")
+
+            # Also make sure this isn't a copy of another with a different id
+            # Compare against all other entities without mutating the source list
+            others = [e for e in entities_list if e is not entity]
+            other_entity_dicts = [e.model_dump(exclude_none=True, exclude={"id"}) for e in others]
+            entity_no_id = entity.model_dump(exclude_none=True, exclude={"id"})
+            for e_dict in other_entity_dicts:
+                if e_dict == entity_no_id:
+                    raise KnowledgeGraphException(
+                        f"Entity {entity.id} is a duplicate of an existing entity"
+                    )
+        except Exception as e:
+            raise KnowledgeGraphException(f"Error validating existing entity ID: {e}")
+
+        # If this entity's name is "__user__", it should be the user-linked entity
+        if entity.name == "__user__":
+            if entity.id != graph.user_info.linked_entity_id:
+                logger.error(
+                    f"Entity named '__user__' no longer linked to user - should have ID '{graph.user_info.linked_entity_id}', but has ID {entity.id}. Giving name 'unknown'."
+                )
+                entity.name = "unknown"
+
+        # Make sure mtime is after ctime for weird edge cases
+        entity.mtime = max(entity.mtime, entity.ctime)
+
+        # Return the validated entity
+        return entity
+
+    def _verify_relation(self, relation: Relation, graph: KnowledgeGraph) -> Relation:
+        """
+        Verify that the relation endpoints exist in the graph. If the entities themselves are
+        required, use the _get_entities_from_relation() method instead.
+
+        Args:
+            relation: The Relation object to verify.
+            graph: The graph to use to get the entities list.
+
+        Returns:
+            The relation with the endpoints validated.
+
+        Raises:
+            - ValueError if the relation is missing one or both endpoint IDs
+            - RuntimeError if entity lookup fails with error
+            - KnowledgeGraphException if entity lookup succeeds, but returns no results
+        """
+        graph = graph
+
+        if not relation.from_id or not relation.to_id:
+            raise ValueError(
+                f"Relation `A {relation.relation} B` is missing one or both endpoint IDs!"
+            )
+        try:
+            a = self._get_entity_by_id(graph, relation.from_id)
+            b = self._get_entity_by_id(graph, relation.to_id)
+        except Exception as e:
+            raise RuntimeError(f"Error getting entities from relation: {e}")
+
+        errors: list[str] = []
+        if not a:
+            errors.append(f"Invalid from ID: {str(relation.from_id)}")
+        if not b:
+            errors.append(
+                KnowledgeGraphException(
+                    f"Relation `{relation.relation}` has invalid endpoints: {relation.from_id} and {relation.to_id}"
+                )
+            )
+        if len(errors) > 0:
+            raise RuntimeError(f"Error verifying relation: {errors}")
+        return relation
+
+    def _get_entities_from_relation(
+        self, relation: Relation, graph: KnowledgeGraph
+    ) -> (Entity | None, Entity | None):
+        """
+        (Internal) Resolve the entities from a Relation object. Returns the 'from' entity and 'to'
+        entity as a tuple.
+        """
+        # Load the graph if not provided
+        if not relation.from_id or not relation.to_id:
+            raise ValueError(f"Relation {relation.relation} missing one or both endpoint IDs!")
+        try:
+            from_entity = self._get_entity_by_id(graph, relation.from_id)
+            to_entity = self._get_entity_by_id(graph, relation.to_id)
+
+            return from_entity, to_entity
+        except Exception as e:
+            raise KnowledgeGraphException(f"Error getting entities from relation: {e}")
+
+    def _get_relations_from_entities(
+        self, entities: list[Entity], graph: KnowledgeGraph
+    ) -> list[Relation]:
+        """
+        (Internal) Get the relations to and from each entity in a list of entities.
+        """
+        relations = []
+        for entity in entities:
+            try:
+                for r in graph.relations:
+                    if r.from_id == entity.id or r.to_id == entity.id:
+                        relations.append(r)
+            except Exception as e:
+                logger.error(f"Error getting relations from entity {entity.name}: {e}")
+                continue
+        return relations
+
+    async def get_relations_from_entities(self, entities: list[Entity]) -> list[Relation]:
+        """
+        Get the relations to and from each entity in a list of entities. To get relations from a single entity, use get_relations_from_entity().
+        """
+        graph = await self._load_graph()
+        return self._get_relations_from_entities(entities=entities, graph=graph)
+
+    async def get_relations_from_entity(self, entity: Entity) -> list[Relation]:
+        """
+        Get the relations to and from a single entity. To get relations from multiple entities, use get_relations_from_entities().
+        """
+        graph = await self._load_graph()
+        return self._get_relations_from_entities(entities=[entity], graph=graph)
+
+    async def get_relations_from_id(self, entity_id: str) -> list[Relation]:
+        """
+        Get the relations to and from a single entity by its ID. Returns None if no entity is found, or no relations are found.
+        """
+        graph = await self._load_graph()
+        entity = self._get_entity_by_id(graph=graph, id=entity_id)
+        if not entity:
+            return None
+        relations = self._get_relations_from_entities(entities=[entity], graph=graph)
+        if not relations:
+            return None
+        return relations
+
+    def _process_memory_line(self, line: str) -> tuple[str, Any] | None:
+        """
+        Parse a line from the memory file into its component parts.
+
+        Args:
+            line: The line of the memory file to load
+
+        Returns:
+            A tuple of (record_type, parsed_object) where record_type is one of:
+            "meta", "user_info", "entity", "relation"
+            Returns None if the line is empty or invalid
+        """
+        line = line.strip()
+        if not line:
+            return None
+
+        try:
+            rec = MemoryRecord.model_validate_json(line)
+            match rec.type:
+                case "meta":
+                    return ("meta", GraphMeta.model_validate(rec.data))
+                case "entity":
+                    return ("entity", Entity.from_dict(rec.data))
+                case "relation":
+                    return ("relation", Relation.from_dict(rec.data))
+                case "user_info":
+                    return ("user_info", UserIdentifier.from_dict(rec.data))
+                case _:
+                    raise ValueError(f"Unknown record type: {rec.type}")
+        except Exception as e:
+            raise ValueError(f"Error parsing line: {e}")
+
+    def _validate_user_info(
+        self, graph: KnowledgeGraph, new_user_info: UserIdentifier | None = None
+    ) -> UserIdentifier | None:
+        """
+        Validate the existing user info object of the knowledge graph, or a new user info object against the existing graph.
+
+        Raises:
+         - ValueError if the user info is invalid
+         - KnowledgeGraphException if the user info appears valid, but the user-linked entity cannot be found
+
+        Returns:
+          - If a separate user info object is provided, returns the validated user info object
+          - If no separate user info object is provided, returns None
+        """
+        if new_user_info:
+            user_info = new_user_info
+            separate_ui = True
+        else:
+            user_info = graph.user_info
+            separate_ui = False
+
+        user_info = new_user_info or graph.user_info
+        entity_ids = [str(e.id) for e in graph.entities]
+
+        if not user_info.preferred_name:
+            raise ValueError("User info must have a preferred name")
+        if not user_info.linked_entity_id:
+            raise ValueError("User info must have a linked entity ID")
+
+        if user_info.linked_entity_id not in entity_ids:
+            raise KnowledgeGraphException(
+                f"No entitiy found for user-linked entity ID `{user_info.linked_entity_id}`"
+            )
+        else:
+            return user_info if separate_ui else None
 
     async def _load_graph(self) -> KnowledgeGraph:
         """
-        Load the knowledge graph from JSONL storage.
+        Load the knowledge graph from Supabase (EXPERIMENTAL) and back up to JSONL storage.
 
         Returns:
-            KnowledgeGraph loaded from file, or empty graph if file doesn't exist
+            The Knowledge Graph
         """
+        if settings.supabase_enabled and supabase_manager:
+            graph = await supabase_manager.get_knowledge_graph()
+            logger.info("☁️ Supabase graph read successfully!")
+            return graph
+
+        # Resolve and validate memory file path
+        self.memory_file_path = Path(self.memory_file_path).resolve()
         if not self.memory_file_path.exists():
-            logger.warning(
-                f"⛔ Memory file not found at {self.memory_file_path}! Returning empty graph."
-            )
-            return KnowledgeGraph(), True
-        else:
-            logger.info(f"📈 Loaded graph from {self.memory_file_path}")
+            # Initialize a minimal, valid graph on first use
+            try:
+                default_user_entity = Entity.from_values(
+                    name="user",
+                    entity_type="person",
+                    observations=[],
+                    aliases=[],
+                    id=str(uuid4())[:8],
+                )
+                default_user_info = UserIdentifier.from_values(
+                    preferred_name="user",
+                    linked_entity=default_user_entity,
+                )
+                meta = GraphMeta()
+                initial_graph = KnowledgeGraph.from_components(
+                    user_info=default_user_info,
+                    entities=[default_user_entity],
+                    relations=[],
+                    meta=meta,
+                )
+                # Ensure directory exists and persist the initialized graph
+                self.memory_file_path.parent.mkdir(parents=True, exist_ok=True)
+                await self._save_graph(initial_graph)
+                logger.info(f"🆕 Initialized new memory file at {self.memory_file_path}")
+                return initial_graph
+            except Exception as e:
+                raise RuntimeError(f"Failed to initialize memory file: {e}")
+
+        # Load and parse graph components
+        meta: GraphMeta | None = None
+        user_info: UserIdentifier | None = None
+        entities: list[Entity] = []
+        relations: list[Relation] = []
 
         try:
-            user_info: UserIdentifier | None = None
-            entities = []
-            relations = []
-
-            with open(self.memory_file_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        break
-
+            with open(self.memory_file_path, mode="r", encoding="utf-8") as f:
+                for i, line in enumerate(f, start=1):
                     try:
-                        item = json.loads(line)
-
-                        item_type = item.get("type")
-
-                        payload: dict | None = None
-                        if item_type in ("entity", "relation", "user_info"):
-                            if isinstance(item.get("data"), dict):
-                                payload = item["data"]
-                                if not payload:
-                                    raise logger.error(f"Invalid payload: {item}")
-                            else:
-                                raise logger.error(f"{item} has invalid item type: {item_type}")
-
-                        if item_type == "entity" and isinstance(payload, dict):
-                            entity = Entity(**payload)
-                            entities.append(entity)
-
-                        elif item_type == "relation" and isinstance(payload, dict):
-                            relations.append(Relation(**payload))
-
-                        elif item_type == "user_info" and isinstance(payload, dict):
-                            user_info = UserIdentifier(**payload)
-                            logger.debug(f"Loaded user info: {user_info}")
-
-                        else:
-                            # Unrecognized line; skip with warning but continue
-                            logger.warning(
-                                f"Warning: Skipping unrecognized line in {self.memory_file_path}: Missing or invalid type/payload"
-                            )
-                            continue
-                    except (json.JSONDecodeError, ValueError, TypeError) as e:
-                        # Skip invalid lines but continue processing
-                        logger.warning(
-                            f"Warning: Skipping invalid line in {self.memory_file_path}: {e}"
-                        )
+                        result = self._process_memory_line(line)
+                    except Exception as e:
+                        logger.warning(f"Skipping invalid line {i}: {e}")
                         continue
 
-            if not user_info:
-                logger.warning(
-                    "No valid user info object found in memory file! Initializing new user info object with default user info."
-                )
-                user_info = UserIdentifier.from_default()
+                    if not result:
+                        continue
 
-            logger.info(
-                f"💾 Loaded {len(entities)} entities and {len(relations)} relations from memory file"
-            )
-            return KnowledgeGraph(user_info=user_info, entities=entities, relations=relations)
+                    record_type, parsed_obj = result
 
+                    # Store parsed object based on type
+                    match record_type:
+                        case "meta":
+                            meta = parsed_obj
+                        case "user_info":
+                            user_info = parsed_obj
+                        case "entity":
+                            entities.append(parsed_obj)
+                        case "relation":
+                            relations.append(parsed_obj)
+                        case _:
+                            # Fallback for unknown types - should not happen
+                            logger.warning(f"Unexpected record type '{record_type}' at line {i}")
+
+                    # Early validation checks for large files
+                    if i > 50 and (len(entities) == 0 and len(relations) == 0 and not user_info):
+                        raise RuntimeError(
+                            "Memory file appears corrupt: no valid data found in first 50 lines"
+                        )
+                    if i > 500 and (len(entities) == 0 or len(relations) == 0 or not user_info):
+                        raise RuntimeError(
+                            "Memory file appears corrupt: incomplete data after 500 lines"
+                        )
+        except RuntimeError:
+            raise
         except Exception as e:
-            raise RuntimeError(f"Error loading graph: {e}")
+            raise RuntimeError(f"Error reading memory file: {e}")
 
-    async def _save_graph(self, graph: KnowledgeGraph, test: bool = False) -> None:
+        # Validate required components are present
+        # Note: allow empty entities/relations lists, but require user_info and meta
+        if user_info is None or meta is None:
+            missing = [
+                k
+                for k, v in [
+                    ("user_info", user_info),
+                    ("meta", meta),
+                ]
+                if v is None
+            ]
+            raise KnowledgeGraphException(f"Missing required components: {', '.join(missing)}")
+
+        # Build preliminary graph
+        try:
+            raw_graph = KnowledgeGraph(
+                user_info=user_info, entities=entities, relations=relations, meta=meta
+            )
+        except Exception as e:
+            raise KnowledgeGraphException(f"Failed to construct pre-validation graph: {e}")
+
+        # TODO: Graph version control and migration logic
+        logger.info(f"🏷️ Graph version: {raw_graph.meta.schema_version}")
+
+        # Validate the graph, starting with entities
+        valid_entities: list[Entity] = []
+        entity_errors: list[str] = []
+
+        for e in raw_graph.entities:
+            try:
+                e = e.cleanup_observations()
+                valid_entities.append(self._validate_entity(e, raw_graph))
+            except Exception as err:
+                entity_errors.append(f"Bad entity `{str(e)[:24]}...`: {err}")
+
+        if entity_errors and not valid_entities:
+            raise RuntimeError(f"⛔👤 All entities invalid: {' | '.join(entity_errors)}")
+        if entity_errors:
+            logger.error(
+                f"⚠️👤 {len(entity_errors)} invalid entities excluded: {' | '.join(entity_errors)}"
+            )
+        logger.debug(f"✅👤 Validated {len(valid_entities)} entities")
+
+        # Validate relations
+        valid_relations: list[Relation] = []
+        relation_errors: list[str] = []
+
+        for r in raw_graph.relations:
+            try:
+                self._verify_relation(r, raw_graph)
+                valid_relations.append(r)
+            except Exception as ex:
+                relation_errors.append(f"Bad relation `{str(r)[:24]}...`: {ex}")
+
+        if relation_errors and not valid_relations:
+            raise RuntimeError(f"⛔🔗 All relations invalid: {' | '.join(relation_errors)}")
+        if relation_errors:
+            logger.error(
+                f"⚠️🔗 {len(relation_errors)} invalid relations excluded: {' | '.join(relation_errors)}"
+            )
+        logger.debug(f"✅🔗 Validated {len(valid_relations)} relations")
+
+        # Build and validate final graph
+        try:
+            validated_graph = KnowledgeGraph.from_components(
+                user_info=user_info, entities=valid_entities, relations=valid_relations, meta=meta
+            )
+            self._validate_user_info(validated_graph)
+            logger.debug("✅😃 Graph validation complete")
+            return validated_graph
+        except Exception as e:
+            raise RuntimeError(f"Graph validation failed: {e}")
+
+    async def _save_graph(self, graph: KnowledgeGraph) -> None:
         """
         Save the knowledge graph to JSONL storage.
 
@@ -256,85 +606,294 @@ class KnowledgeGraphManager:
 
         For information on the format of the graph, see the README.md file.
         """
-        # Clean up outdated observations on each save (idempotent and safe)
-        try:
-            r = await self.cleanup_outdated_observations()
-            logger.debug(
-                f"🧹 Cleaned up {r.observations_removed_count} outdated observations from {r.entities_processed_count} entities"
-            )
-        except Exception as e:
-            # Do not block saving if cleanup fails; log and continue
-            logger.warning(f"Cleanup failed prior to save: {e}")
+
+        if settings.dry_run:
+            logger.warning("⚠️ Dry run mode enabled, skipping save")
+            return
+
+        if settings.supabase_enabled and supabase_manager:
+            try:
+                await supabase_manager.save_knowledge_graph(graph)
+                logger.info("☁️ Supabase graph saved successfully!")
+            except Exception as e:
+                logger.error(f"Failed to save graph to Supabase: {e}")
+        logger.info(f"💾 Saving backup of graph to {self.memory_file_path}")
 
         try:
             lines = []
 
+            # Save meta / user info
+            try:
+                meta_payload = (graph.meta or GraphMeta()).model_dump(mode="json")
+                lines.append(
+                    json.dumps({"type": "meta", "data": meta_payload}, separators=(",", ":"))
+                )
+            except Exception as e:
+                raise RuntimeError(f"Failed to save meta: {e}")
+
             # Save user info
-            if graph.user_info:
-                user_info_payload = graph.user_info.model_dump()
-                record = {"type": "user_info", "data": user_info_payload}
-                lines.append(json.dumps(record, separators=(",", ":")))
-            else:
-                # If for some reason the user info is not set, save with default info
-                user_info_payload = UserIdentifier.from_default().model_dump()
-                record = {"type": "user_info", "data": user_info_payload}
-                lines.append(json.dumps(record, separators=(",", ":")))
+            try:
+                ui_payload = (graph.user_info or UserIdentifier.from_default()).model_dump(
+                    mode="json", exclude_none=True
+                )
+                lines.append(
+                    json.dumps({"type": "user_info", "data": ui_payload}, separators=(",", ":"))
+                )
+            except Exception as e:
+                raise RuntimeError(f"Failed to save user info: {e}")
 
             # Save entities
-            for entity in graph.entities:
-                entity_payload = entity.model_dump()
-                record = {"type": "entity", "data": entity_payload}
-                lines.append(json.dumps(record, separators=(",", ":")))
+            try:
+                for e in graph.entities:
+                    record = {
+                        "type": "entity",
+                        "data": e.model_dump(mode="json", exclude_none=True),
+                    }
+                    lines.append(json.dumps(record, separators=(",", ":")))
+            except Exception as e:
+                raise RuntimeError(f"Failed to save entities: {e}")
 
             # Save relations
-            for relation in graph.relations:
-                relation_payload = relation.model_dump()
-                record = {"type": "relation", "data": relation_payload}
-                lines.append(json.dumps(record, separators=(",", ":")))
+            try:
+                for r in graph.relations:
+                    record = {
+                        "type": "relation",
+                        "data": r.model_dump(
+                            mode="json",
+                            by_alias=True,
+                            exclude_none=True,
+                            include={"relation", "from_id", "to_id"},
+                        ),
+                    }
+                    lines.append(json.dumps(record, separators=(",", ":")))
+            except Exception as e:
+                raise RuntimeError(f"Failed to save relations: {e}")
 
-            if test:
-                memory_file_path = self.memory_file_path.with_suffix("_test.jsonl")
-            else:
-                memory_file_path = self.memory_file_path
-            with open(memory_file_path, "w", encoding="utf-8") as f:
-                f.write("\n".join(lines))
+            try:
+                with open(self.memory_file_path, "w", encoding="utf-8") as f:
+                    f.write("\n".join(lines))
+            except Exception as e:
+                raise RuntimeError(f"Failed to write graph to {self.memory_file_path}: {e}")
+
+            logger.debug(f"💾 Successfully saved graph to {self.memory_file_path}")
 
         except Exception as e:
-            raise RuntimeError(f"Failed to save graph: {e}")
+            logger.error(f"⛔ Failed to save graph: {e}")
+            raise RuntimeError(f"⛔ Failed to save graph: {e}")
 
-    async def create_entities(self, entities: list[Entity]) -> CreateEntityResult:
+    async def _get_entity_id_map(self, graph: KnowledgeGraph) -> dict[EntityID, Entity]:
         """
-        Create multiple new entities in the knowledge graph.
+        (Internal) Returns a map of entity IDs to entity names, including aliases.
 
-        Args:
-            entities: list of entities to create
+        Map format: dict[EntityID(str), Entity]
+        """
+        if not graph.entities:
+            raise ValueError("Invalid graph provided!")
+        entities_list = graph.entities
 
-        Returns:
-            CreateEntityResult containing the entities that were actually created (excludes existing names)
+        entity_id_map = {}
+        for e in entities_list:
+            if e.id:
+                entity_id_map[e.id] = e
+            else:
+                logger.error(f"Entity {e.name} has no ID, skipping")
+
+        return entity_id_map
+
+    async def get_entity_id_map(
+        self, graph: KnowledgeGraph | None = None
+    ) -> dict[EntityID, Entity]:
+        """
+        Returns a map of entity IDs to entity objects from the provided knowledge graph or the default graph from the manager.
+        """
+        if graph is None:
+            graph = await self._load_graph()
+        return await self._get_entity_id_map(graph)
+
+    async def _prune_outdated_observations(self, graph: KnowledgeGraph) -> KnowledgeGraph:
+        """
+        Prune outdated observations from the knowledge graph. Returns the pruned graph.
+        """
+        for entity in graph.entities:
+            if not entity.observations:
+                continue
+            entity.observations = [
+                obs for obs in entity.observations if not obs.is_outdated()
+            ]
+        return graph
+
+    async def _prune_duplicate_observations(self, graph: KnowledgeGraph) -> KnowledgeGraph:
+        """
+        Prune duplicate observations from the knowledge graph. Returns the pruned graph.
+        """
+        for entity in graph.entities:
+            if entity.observations and len(entity.observations) > 1:
+                for o in entity.observations:
+                    other_observations = [
+                        obs for obs in entity.observations if obs.content != o.content
+                    ]
+                    if o in other_observations:
+                        entity.observations.remove(o)
+                        logger.info(f"Pruned duplicate observation: {o.content}")
+            else:
+                continue
+        return graph
+
+    async def _prune_observations(
+        self, graph: KnowledgeGraph | None = None, entity: Entity | list[Entity] | None = None
+    ) -> KnowledgeGraph:
+        """
+        Prune outdated and duplicate observations from the knowledge graph or entities. Returns the pruned graph.
+        """
+        if graph:
+            pruned_graph = await self._prune_outdated_observations(graph)
+            pruned_graph = await self._prune_duplicate_observations(pruned_graph)
+            return pruned_graph
+        elif entity:
+            if isinstance(entity, Entity):
+                entity = [entity]
+            for e in entity:
+                await self._prune_observations(entity=e)
+            return entity
+        else:
+            raise ValueError("No graph or entities provided!")
+
+    async def prune_observations(self) -> None:
+        """
+        Prune outdated and duplicate observations from the default knowledge graph, and save the graph.
         """
         graph = await self._load_graph()
-        existing_names = {entity.name for entity in graph.entities}
-        existing_aliases: set[str] = set()
+        pruned_graph = await self._prune_observations(graph)
+        await self._save_graph(pruned_graph)
+
+    async def create_entities(
+        self, new_entities: list[CreateEntityRequest]
+    ) -> list[CreateEntityResult]:
+        """
+        Validate and add multiple new entities to the knowledge graph.
+
+        Args:
+            entities: list of entities to add
+
+        Returns:
+            list of entities that were actually created (excludes existing names)
+        """
+        graph = await self._load_graph()
+
+        # FIX: Create proper name-based lookups instead of ID-based lookups
+        results: list[CreateEntityResult] = []
+
+        # Create a lookup for existing entity names and aliases (case-insensitive)
+        existing_names_lower = set()
+        existing_aliases_lower = set()
+
         for entity in graph.entities:
+            existing_names_lower.add(entity.name.lower().strip())
             try:
-                for alias in entity.aliases:
-                    if isinstance(alias, str):
-                        existing_aliases.add(alias)
+                for alias in entity.aliases or []:
+                    if isinstance(alias, str) and alias.strip():
+                        existing_aliases_lower.add(alias.lower().strip())
             except Exception:
+                # Handle cases where aliases might not be a list
+                pass
+
+        # Process new entity requests
+        for new_entity in new_entities:
+            name_lc = (new_entity.name or "").strip().lower()
+
+            if not name_lc:
+                results.append(
+                    CreateEntityResult(
+                        entity=new_entity,
+                        errors=["Entity name cannot be empty"],
+                    )
+                )
                 continue
 
-        # Only create entities whose canonical name does not collide with existing names or aliases
-        new_entities = [
-            entity
-            for entity in entities
-            if entity.name not in existing_names and entity.name not in existing_aliases
-        ]
+            # Check if the entity already exists by name or alias
+            if name_lc in existing_names_lower or name_lc in existing_aliases_lower:
+                # Find the existing entity for better error message
+                existing_entity = None
+                for entity in graph.entities:
+                    if entity.name.lower().strip() == name_lc:
+                        existing_entity = entity
+                        break
+                    try:
+                        for alias in entity.aliases or []:
+                            if isinstance(alias, str) and alias.lower().strip() == name_lc:
+                                existing_entity = entity
+                                break
+                    except Exception:
+                        pass
+                    if existing_entity:
+                        break
 
-        graph.entities.extend(new_entities)
-        await self._save_graph(graph)
-        return new_entities
+                if existing_entity:
+                    results.append(
+                        CreateEntityResult(
+                            entity=new_entity,
+                            errors=[
+                                f'Entity "{new_entity.name}" already exists as "{existing_entity.name}" ({existing_entity.id}); skipped'
+                            ],
+                        )
+                    )
+                else:
+                    results.append(
+                        CreateEntityResult(
+                            entity=new_entity,
+                            errors=[f'Entity "{new_entity.name}" already exists; skipped'],
+                        )
+                    )
+                continue
 
-    async def create_relations(self, relations: list[Relation]) -> CreateRelationResult:
+            # If not existing, create the entity
+            try:
+                entity = Entity.from_values(
+                    name=new_entity.name,
+                    entity_type=new_entity.entity_type,
+                    observations=new_entity.observations or [],
+                    aliases=new_entity.aliases or [],
+                    icon=new_entity.icon,
+                    id=self._generate_new_valid_entity_id(graph),
+                )
+
+                # Add the entity to the graph
+                graph.entities.append(entity)
+
+                # Add to existing lookups to prevent duplicates in this batch
+                existing_names_lower.add(entity.name.lower().strip())
+                try:
+                    for alias in entity.aliases or []:
+                        if isinstance(alias, str) and alias.strip():
+                            existing_aliases_lower.add(alias.lower().strip())
+                except Exception:
+                    pass
+
+                # Add the success to the results
+                results.append(CreateEntityResult(entity=entity, errors=None))
+            except Exception as e:
+                results.append(
+                    CreateEntityResult(
+                        entity=new_entity,
+                        errors=[f"Failed to create entity: {str(e)}"],
+                    )
+                )
+        # Save the graph only if there were successful creations
+        successful_creations = [r for r in results if not r.errors]
+        if successful_creations:
+            try:
+                await self._save_graph(graph)
+            except Exception as exc:
+                # If save fails, mark all successful creations as failed
+                for result in successful_creations:
+                    result.errors = [f"Failed to save graph: {str(exc)}"]
+                raise RuntimeError(f"Failed to save graph during entity addition: {exc}")
+
+        return results
+
+    async def create_relations(
+        self, relations: list[CreateRelationRequest]
+    ) -> CreateRelationResult:
         """
         Create multiple new relations between entities.
 
@@ -346,36 +905,54 @@ class KnowledgeGraphManager:
         """
         graph = await self._load_graph()
 
-        # Canonicalize endpoints to entity names if aliases provided
-        canonicalized: list[Relation] = []
-        for rel in relations:
-            from_c = self._canonicalize_entity_name(graph, rel.from_entity)
-            to_c = self._canonicalize_entity_name(graph, rel.to_entity)
-            canonicalized.append(
-                Relation(from_entity=from_c, to_entity=to_c, relation_type=rel.relation_type)
-            )
+        valid_relations: list[Relation] = []
+        for r in relations:
+            errors: list[str] = []
+            try:
+                if not r.from_entity_id:
+                    from_entity = self._get_entity_by_name_or_alias(graph, r.from_entity_name)
+                else:
+                    from_entity = self._get_entity_by_id(graph, r.from_entity_id)
+            except Exception as e:
+                errors.append(f"Error matching 'from' entity to relation endpoint: {e}")
 
-        # Create set of existing relations for duplicate checking (with canonical names)
-        existing_relations = {
-            (r.from_entity, r.to_entity, r.relation_type) for r in graph.relations
-        }
+            try:
+                if not r.to_entity_id:
+                    to_entity = self._get_entity_by_name_or_alias(graph, r.to_entity_name)
+                else:
+                    to_entity = self._get_entity_by_id(graph, r.to_entity_id)
 
-        new_relations = [
-            relation
-            for relation in canonicalized
-            if (relation.from_entity, relation.to_entity, relation.relation_type)
-            not in existing_relations
-        ]
+            except Exception as e:
+                errors.append(f"Error matching 'to' entity to relation endpoint: {e}")
 
-        graph.relations.extend(new_relations)
+            if errors:
+                logger.error(f"Error adding relation: {', '.join(errors)}. Skipping.")
+                continue
+            else:
+                new_relation = Relation.from_entities(from_entity, to_entity, r.relation)
+                valid_relations.append(new_relation)
+
+        if not valid_relations:
+            raise KnowledgeGraphException("No valid relations to add!")
+
+        # Add valid relations to the graph
+        succeeded_rels: list[Relation] = []
+        for r in valid_relations:
+            try:
+                graph.relations.append(r)
+                succeeded_rels.append(r)
+            except Exception as e:
+                logger.error(f"Error adding relation: {e}")
+                continue
+
         await self._save_graph(graph)
-        return new_relations
+        return CreateRelationResult(relations=succeeded_rels)
 
     async def apply_observations(
         self, requests: list[ObservationRequest]
     ) -> list[AddObservationResult]:
         """
-        Add new observations to existing entities with temporal metadata.
+        Add new observations to existing entities.
 
         Args:
             requests: list of observation addition requests
@@ -389,39 +966,90 @@ class KnowledgeGraphManager:
         graph = await self._load_graph()
         results: list[AddObservationResult] = []
 
-        # Track errors, while allowing the tool to continue processing other requests
-        errors: list[Exception] = []
         for request in requests:
-            # Find the entity by name or alias
-            entity = self._get_entity_by_name_or_alias(graph, request.entity_name)
-            if entity is None:
-                errors.append(ValueError(f"Entity with name {request.entity_name} not found"))
+            # Resolve entity by ID first, else by name/alias; support 'user' shortcut in name
+            try:
+                if request.entity_id:
+                    entity = self._get_entity_by_id(graph, request.entity_id)
+                elif request.entity_name:
+                    name = (request.entity_name or "").strip()
+                    if (
+                        name.lower() in {"user", "__user__"}
+                        and graph.user_info
+                        and graph.user_info.linked_entity_id
+                    ):
+                        entity = self._get_entity_by_id(graph, graph.user_info.linked_entity_id)
+                    else:
+                        entity = self._get_entity_by_name_or_alias(graph, name)
+
+                # If we didn't find an entity, append an error to the results and continue
+                if not entity:
+                    results.append(
+                        AddObservationResult(
+                            entity=entity,
+                            errors=[
+                                f"Entity not found for request (name='{request.entity_name}', id='{request.entity_id}')"
+                            ],
+                        )
+                    )
+                    continue
+
+            # If we encountered an error, append an error to the results and continue
+            except Exception as e:
+                (
+                    results.append(
+                        AddObservationResult(
+                            entity=entity,
+                            errors=[f"Error resolving entity to add observations: {e}"],
+                        )
+                    ),
+                )
                 continue
 
             # Create observations with timestamps from the request
-            observations_list: list[Observation] = []
+            existing_contents: set[str] = {old_obs.content for old_obs in (entity.observations or [])}
+            new_observations: list[Observation] = []
             for o in request.observations:
-                observations_list.append(Observation.add_timestamp(o.content.strip(), o.durability))
+                obs = Observation.from_values(o.content, o.durability)
+                # Avoid duplicates
+                if obs.content not in existing_contents:
+                    new_observations.append(obs)
+                    existing_contents.add(obs.content)
+            entity.observations.extend(new_observations)
 
-            # Get existing observation contents for duplicate checking
-            existing_contents = {obs.content for obs in entity.observations}
-
-            # Filter out duplicates
-            unique_new_obs = [
-                obs for obs in observations_list if obs.content not in existing_contents
-            ]
-
-            # Add new observations
-            entity.observations.extend(unique_new_obs)
-
-            results.append(
-                AddObservationResult(
-                    entity_name=request.entity_name, added_observations=unique_new_obs
+            try:
+                results.append(
+                    AddObservationResult(entity=entity, added_observations=new_observations)
                 )
-            )
+            except Exception as e:
+                results.append(
+                    AddObservationResult(
+                        entity=entity, errors=[f"Error appending observations to entity: {e}"]
+                    )
+                )
+                continue
 
         await self._save_graph(graph)
         return results
+
+    async def get_entity_by_id(self, entity_id: str) -> Entity | None:
+        """
+        Get an entity by its ID. Returns None if no entity is found.
+        """
+        graph = await self._load_graph()
+        return self._get_entity_by_id(graph, entity_id)
+
+    async def get_entities_from_relation(
+        self, relation: Relation
+    ) -> (Entity | None, Entity | None):
+        """
+        Resolve the entities from a Relation object. Returns the 'from' entity and 'to' entity as a tuple.
+        """
+        graph = await self._load_graph()
+
+        from_entity = self._get_entity_by_id(graph, relation.from_id)
+        to_entity = self._get_entity_by_id(graph, relation.to_id)
+        return from_entity, to_entity
 
     async def cleanup_outdated_observations(self) -> CleanupResult:
         """
@@ -440,7 +1068,7 @@ class KnowledgeGraphManager:
             # Filter out outdated observations
             kept_observations = []
             for obs in entity.observations:
-                if self._is_observation_outdated(obs):
+                if obs.is_outdated():
                     removed_details.append(
                         {
                             "entity_name": entity.name,
@@ -486,37 +1114,48 @@ class KnowledgeGraphManager:
 
         return self._group_by_durability(entity.observations)
 
-    async def delete_entities(self, entity_names: list[str]) -> None:
+    async def delete_entities(
+        self, entity_names: list[str] | None = None, entity_ids: list[EntityID | str] | None = None
+    ) -> None:
         """
         Delete multiple entities and their associated relations.
 
         Args:
             entity_names: list of entity names to delete
+            entity_ids: list of entity IDs to delete
+
+            If both entity_names and entity_ids are provided, both will be used to delete the entities.
         """
-        if not entity_names:
-            raise ValueError("No entities deleted - no data provided!")
+        try:
+            entities_to_delete: list[Entity] = []
+            graph = await self._load_graph()
+            if entity_names:
+                for name in entity_names:
+                    entity = self._get_entity_by_name_or_alias(graph, name)
+                    if entity:
+                        entities_to_delete.append(entity)
+            if entity_ids:
+                for id in entity_ids:
+                    entity = self._get_entity_by_id(graph, id)
+                    if entity:
+                        entities_to_delete.append(entity)
+            if not entities_to_delete:
+                raise ValueError("No valid data provided")
 
-        graph = await self._load_graph()
-        # Resolve identifiers to canonical entity names
-        resolved_names: set[str] = set()
-        for ident in entity_names:
-            entity = self._get_entity_by_name_or_alias(graph, ident)
-            if entity:
-                resolved_names.add(entity.name)
+            # Delete the entities
+            graph.entities = [e for e in graph.entities if e not in entities_to_delete]
 
-        if not resolved_names:
-            logger.warning("No entities deleted - no valid entities provided in data")
+            # Remove relations involving deleted entities
+            new_relations: list[Relation] = []
+            for r in graph.relations:
+                from_e, to_e = self._get_entities_from_relation(r, graph)
+                if from_e not in entities_to_delete and to_e not in entities_to_delete:
+                    new_relations.append(r)
+            graph.relations = new_relations
+        except Exception as e:
+            raise KnowledgeGraphException(f"Error deleting entities: {e}")
 
-        # Remove entities
-        graph.entities = [e for e in graph.entities if e.name not in resolved_names]
-
-        # Remove relations involving deleted entities
-        graph.relations = [
-            r
-            for r in graph.relations
-            if r.from_entity not in resolved_names and r.to_entity not in resolved_names
-        ]
-
+        # If no errors, save the graph
         await self._save_graph(graph)
 
     async def delete_observations(self, deletions: list[DeleteObservationRequest]) -> None:
@@ -529,7 +1168,25 @@ class KnowledgeGraphManager:
         graph = await self._load_graph()
 
         for deletion in deletions:
-            entity = self._get_entity_by_name_or_alias(graph, deletion.entity_name)
+            # Resolve entity by ID first, else by name/alias; support 'user' shortcut in name
+            entity: Entity | None = None
+            try:
+                if getattr(deletion, "entity_id", None):
+                    entity = self._get_entity_by_id(graph, deletion.entity_id)  # type: ignore[arg-type]
+                if entity is None:
+                    name = (deletion.entity_name or "").strip()
+                    if (
+                        name.lower() in {"user", "__user__"}
+                        and graph.user_info
+                        and graph.user_info.linked_entity_id
+                    ):
+                        entity = self._get_entity_by_id(graph, graph.user_info.linked_entity_id)
+                    else:
+                        entity = self._get_entity_by_name_or_alias(graph, name)
+            except Exception as e:
+                logger.error(f"Error resolving entity for deletion: {e}")
+                entity = None
+
             if entity:
                 # Create set of observations to delete
                 to_delete = set(deletion.observations)
@@ -550,21 +1207,22 @@ class KnowledgeGraphManager:
         """
         graph = await self._load_graph()
 
-        # Canonicalize relation endpoints before building deletion set
-        canonical_to_delete = {
-            (
-                self._canonicalize_entity_name(graph, r.from_entity),
-                self._canonicalize_entity_name(graph, r.to_entity),
-                r.relation_type,
-            )
-            for r in relations
-        }
+        # Build a set of (from_id, to_id, relation) tuples to delete; resolve by names if needed
+        to_delete: set[tuple[str, str, str]] = set()
+        for rel in relations:
+            from_id = rel.from_id
+            to_id = rel.to_id
+            if not from_id and rel.from_entity:
+                ent = self._get_entity_by_name_or_alias(graph, rel.from_entity)
+                from_id = ent.id if ent else None
+            if not to_id and rel.to_entity:
+                ent = self._get_entity_by_name_or_alias(graph, rel.to_entity)
+                to_id = ent.id if ent else None
+            if from_id and to_id and rel.relation:
+                to_delete.add((from_id, to_id, rel.relation))
 
-        # Filter out matching relations
         graph.relations = [
-            r
-            for r in graph.relations
-            if (r.from_entity, r.to_entity, r.relation_type) not in canonical_to_delete
+            r for r in graph.relations if (r.from_id, r.to_id, r.relation) not in to_delete
         ]
 
         await self._save_graph(graph)
@@ -584,17 +1242,28 @@ class KnowledgeGraphManager:
         Search for nodes in the knowledge graph based on a query.
 
         Args:
-            query: Search query to match against names, types, and observation content
+            query: Search query to match against ID, names, aliases, types, and observation content
 
         Returns:
             Filtered knowledge graph containing only matching entities and their relations
         """
         graph = await self._load_graph()
+
+        # Prune outdated observations
+        try:
+            graph = await self._prune_observations(graph)
+        except Exception as e:
+            logger.error(f"Error pruning outdated observations: {e}")
+
         query_lower = query.lower()
 
         # Filter entities that match the query
         filtered_entities = []
         for entity in graph.entities:
+            # Check entity ID
+            if query == entity.id:
+                return entity
+
             # Check entity name and type
             name_match = query_lower in entity.name.lower()
             type_match = query_lower in entity.entity_type.lower()
@@ -614,56 +1283,179 @@ class KnowledgeGraphManager:
                     filtered_entities.append(entity)
                     break
 
-        # Get names of filtered entities for relation filtering
-        filtered_entity_names = {entity.name for entity in filtered_entities}
-
-        # Filter relations between filtered entities
+        # Filter relations using IDs of filtered entities
+        filtered_entity_ids = {entity.id for entity in filtered_entities if entity.id}
         filtered_relations = [
             r
             for r in graph.relations
-            if r.from_entity in filtered_entity_names and r.to_entity in filtered_entity_names
+            if r.from_id in filtered_entity_ids or r.to_id in filtered_entity_ids
         ]
 
-        return KnowledgeGraph(
+        return KnowledgeGraph.from_components(
             user_info=graph.user_info,
             entities=filtered_entities,
             relations=filtered_relations,
+            meta=graph.meta,
         )
 
-    async def open_nodes(self, names: list[str] | str) -> KnowledgeGraph:
+    async def open_nodes(
+        self,
+        ids: list[EntityID] | None = None,
+        names: list[str] | str | None = None,
+        # include_observations: bool = True,
+        # include_relations: bool = True,
+    ) -> list[Entity]:
         """
-        Open specific nodes in the knowledge graph by their names.
+        Open specific nodes (entities) in the knowledge graph by their names or IDs.
+        If both names and ids are provided, both will be used to filter the entities.
 
         Args:
+            ids: list of entity IDs to retrieve
             names: list of entity names to retrieve
 
         Returns:
-            Knowledge graph containing only the specified entities and their relations
+
+            A list of entities that match the provided names or IDs.
         """
         graph = await self._load_graph()
-        # Resolve identifiers to canonical names that exist in the graph
-        names_list: list[str] = [names] if isinstance(names, str) else names
-        names_set: set[str] = set()
-        for ident in names_list:
-            entity = self._get_entity_by_name_or_alias(graph, ident)
-            if entity:
-                names_set.add(entity.name)
+        user_info = graph.user_info
+        if not ids and not names:
+            raise ValueError("Either ids or names must be provided")
 
-        # Filter entities by name
-        filtered_entities = [e for e in graph.entities if e.name in names_set]
+        # Check if ids is a string representation of a list
+        resolved_ids: list[str] = []
+        if ids is not None:
+            if isinstance(ids, str):
+                logger.debug(f"DEBUG: ids is a string, attempting to parse: {ids}")
+                try:
+                    # Try to parse as JSON first (for string representations of lists)
+                    parsed = json.loads(ids)
+                    if isinstance(parsed, list):
+                        resolved_ids = [str(item) for item in parsed]
+                        logger.debug(f"open_nodes: parsed ids as JSON list: {resolved_ids}")
+                    else:
+                        resolved_ids = [ids]
+                        logger.debug(f"open_nodes: treating ids as single string: {resolved_ids}")
+                except (json.JSONDecodeError, ValueError):
+                    # If JSON parsing fails, treat as single string
+                    resolved_ids = [ids]
+                    logger.debug(
+                        f"open_nodes: JSON parsing failed, treating as single string: {resolved_ids}"
+                    )
+            elif isinstance(ids, list):
+                # Handle case where list contains JSON-encoded strings
+                for id_item in ids:
+                    if id_item is None:
+                        continue
+                    id_str = str(id_item)
+                    try:
+                        # Try to parse each item as JSON in case it's a JSON-encoded list
+                        parsed = json.loads(id_str)
+                        if isinstance(parsed, list):
+                            resolved_ids.extend([str(item) for item in parsed])
+                        else:
+                            resolved_ids.append(id_str)
+                    except (json.JSONDecodeError, ValueError):
+                        # If JSON parsing fails, treat as regular string
+                        resolved_ids.append(id_str)
+                logger.debug(f"open_nodes: ids received as a list, resolved to: {resolved_ids}")
 
-        # Filter relations between the specified entities
-        filtered_relations = [
-            r for r in graph.relations if r.from_entity in names_set and r.to_entity in names_set
-        ]
+        # Check if names is a string representation of a list
+        resolved_names: list[str] = []
+        if names is not None:
+            if isinstance(names, str):
+                try:
+                    # Try to parse as JSON first (for string representations of lists)
+                    parsed = json.loads(names)
+                    if isinstance(parsed, list):
+                        resolved_names = [str(item) for item in parsed]
+                    else:
+                        resolved_names = [names]
+                except (json.JSONDecodeError, ValueError):
+                    # If JSON parsing fails, treat as single string
+                    resolved_names = [names]
+            elif isinstance(names, list):
+                # Handle case where list contains JSON-encoded strings
+                for name_item in names:
+                    if name_item is None:
+                        continue
+                    name_str = str(name_item)
+                    try:
+                        # Try to parse each item as JSON in case it's a JSON-encoded list
+                        parsed = json.loads(name_str)
+                        if isinstance(parsed, list):
+                            resolved_names.extend([str(item) for item in parsed])
+                        else:
+                            resolved_names.append(name_str)
+                    except (json.JSONDecodeError, ValueError):
+                        # If JSON parsing fails, treat as regular string
+                        resolved_names.append(name_str)
 
-        logger.debug(f"Filtered entities: {filtered_entities}")
-        logger.debug(f"Filtered relations: {filtered_relations}")
-        return KnowledgeGraph(
-            user_info=graph.user_info,
-            entities=filtered_entities,
-            relations=filtered_relations,
-        )
+        opened_nodes: list[Entity] = []
+
+        # Get the entities that match the provided names
+        try:
+            if resolved_names and len(resolved_names) > 0:
+                logger.debug(f"Getting entities by names: {resolved_names}")
+                for ident in resolved_names:
+                    if not ident or not isinstance(ident, str):
+                        logger.warning(f"Skipping invalid identifier: {ident}")
+                        continue
+
+                    # Special case for user
+                    logger.debug(f"Getting entity: {ident}")
+                    if (
+                        ident.lower() in {"user", "__user__"}
+                        and user_info
+                        and user_info.linked_entity_id
+                    ):
+                        try:
+                            entity = self._get_user_linked_entity(graph=graph)
+                            if entity:
+                                opened_nodes.append(entity)
+                            else:
+                                logger.error(
+                                    f"User-linked entity not found for identifier: {ident}"
+                                )
+                        except Exception as e:
+                            logger.error(f"Error getting user-linked entity for {ident}: {e}")
+                    else:
+                        entity = self._get_entity_by_name_or_alias(graph, ident)
+                        if entity:
+                            opened_nodes.append(entity)
+                        else:
+                            logger.error(f"Entity not found: {ident}")
+        except Exception as e:
+            logger.error(f"Error getting entities by names: {e}")
+            raise ValueError(f"Error getting entities by names: {e}")
+
+        # Get the entities that match the provided IDs
+        try:
+            if resolved_ids and len(resolved_ids) > 0:
+                logger.debug(f"Getting entities by IDs: {resolved_ids}")
+                for entity_id in resolved_ids:
+                    if not entity_id:
+                        logger.warning(f"Skipping empty ID: {entity_id}")
+                        continue
+
+                    entity = self._get_entity_by_id(graph, str(entity_id))
+                    if entity:
+                        opened_nodes.append(entity)
+                    else:
+                        logger.error(f"Entity not found for ID: {entity_id}")
+        except Exception as e:
+            logger.error(f"Error getting entities by IDs: {e}")
+            raise ValueError(f"Error getting entities by IDs: {e}")
+
+        # Remove duplicates while preserving order
+        seen = set()
+        result = []
+        for entity in opened_nodes:
+            if entity.id not in seen:
+                seen.add(entity.id)
+                result.append(entity)
+
+        return result
 
     async def merge_entities(self, new_entity_name: str, entity_names: list[str]) -> Entity:
         """
@@ -761,16 +1553,6 @@ class KnowledgeGraphManager:
         names_to_remove = set(canonical_merge_names)
         graph.entities = [e for e in graph.entities if e.name not in names_to_remove]
 
-        # Rewrite relations to point to the new entity where applicable
-        for rel in graph.relations:
-            if rel.from_entity in names_to_remove:
-                rel.from_entity = new_entity_name
-            if rel.to_entity in names_to_remove:
-                rel.to_entity = new_entity_name
-
-        # Deduplicate relations after rewrite
-        graph.relations = self._dedupe_relations_in_place(graph.relations)
-
         # Merge aliases: include all prior names and aliases, excluding the new name
         merged_aliases: set[str] = set()
         for ent in entities_to_merge:
@@ -787,23 +1569,235 @@ class KnowledgeGraphManager:
             except Exception:
                 pass
 
-        # Create and insert the new merged entity
+        # Create and insert the new merged entity, ensuring a unique ID
         merged_entity = Entity(
             name=new_entity_name,
             entity_type=chosen_type,
             observations=merged_observations,
             aliases=sorted(merged_aliases),
         )
+        merged_entity = self._validate_new_entity_id(merged_entity, graph)
         graph.entities.append(merged_entity)
+
+        # Rewrite relations to point to the new entity where applicable (by IDs)
+        ids_to_rewrite = {
+            existing_by_name[name].id for name in names_to_remove if existing_by_name[name].id
+        }
+        for rel in graph.relations:
+            if rel.from_id in ids_to_rewrite:
+                rel.from_id = merged_entity.id
+            if rel.to_id in ids_to_rewrite:
+                rel.to_id = merged_entity.id
+
+        # Deduplicate relations after rewrite by (from_id, to_id, relation)
+        dedup: dict[tuple[str, str, str], Relation] = {}
+        for rel in graph.relations:
+            key = (rel.from_id, rel.to_id, rel.relation)
+            dedup[key] = rel
+        graph.relations = list(dedup.values())
 
         await self._save_graph(graph)
         return merged_entity
 
-    async def update_user_info(self, user_info: UserIdentifier) -> UserIdentifier:
+    async def get_user_info(self) -> UserIdentifier:
         """
-        Update the user's identifying information in the graph.
+        Get the user info from the graph.
         """
         graph = await self._load_graph()
-        graph.user_info = user_info
+        return graph.user_info
+
+    async def get_user_entity(self) -> Entity:
+        """
+        Get the user-linked entity from the graph. Returns the entity if it exists, otherwise raises an error.
+        """
+        graph = await self._load_graph()
+        return self._get_user_linked_entity(graph=graph)
+
+    def get_user_linked_entity(self) -> Entity:
+        """
+        Get the user-linked entity from the graph. Returns the entity if it exists, otherwise raises an error.
+        This is an alias for get_user_entity(), and will be deprecated.
+        """
+        logger.warning("get_user_linked_entity() is deprecated, use get_user_entity() instead")
+        return self.get_user_entity()
+
+    async def update_user_info(self, new_user_info: UserIdentifier) -> UserIdentifier:
+        """Update the user's identifying information in the graph.
+        Accepts a fully-formed `UserIdentifier` which will be validated against the current graph.
+        """
+        graph = await self._load_graph()
+        try:
+            validated = self._validate_user_info(graph, new_user_info)
+        except Exception as e:
+            raise KnowledgeGraphException(f"New user info invalid: {e}")
+        graph.user_info = validated
         await self._save_graph(graph)
-        return user_info
+        return validated
+
+    async def update_entity(
+        self,
+        identifier: str | None = None,
+        entity_id: str | None = None,
+        name: str | None = None,
+        entity_type: str | None = None,
+        aliases: list[str] | None = None,
+        icon: str | None = None,
+        merge_aliases: bool = True,
+    ) -> Entity:
+        """
+        Update mutable properties of a single entity.
+
+        Args:
+            identifier: Canonical name or alias of the entity to update. Used if entity_id not provided.
+            entity_id: ID of the entity to update. Takes precedence over identifier when provided.
+            name: New canonical name for the entity
+            entity_type: New type for the entity
+            aliases: Aliases to add or replace (based on merge_aliases)
+            icon: New emoji icon. Use empty string to clear
+            merge_aliases: When True, merge provided aliases into existing list; when False, replace list
+
+        Returns:
+            The updated Entity
+
+        Raises:
+            KnowledgeGraphException or ValueError on invalid input or conflicts
+        """
+        graph = await self._load_graph()
+
+        # Locate entity
+        target: Entity | None = None
+        try:
+            if entity_id:
+                target = self._get_entity_by_id(graph, entity_id)
+            else:
+                if not identifier:
+                    raise ValueError("Either entity_id or identifier is required")
+                target = self._get_entity_by_name_or_alias(graph, identifier)
+        except Exception as e:
+            raise KnowledgeGraphException(f"Error locating entity: {e}")
+
+        if not target:
+            raise ValueError("Entity not found")
+
+        # Build fast lookups excluding the target entity
+        other_entities = [e for e in graph.entities if e is not target]
+        existing_names_lc = {e.name.strip().lower() for e in other_entities}
+        existing_aliases_lc: set[str] = set()
+        for e in other_entities:
+            try:
+                for a in e.aliases or []:
+                    if isinstance(a, str):
+                        existing_aliases_lc.add(a.strip().lower())
+            except Exception:
+                pass
+
+        # Apply name change
+        if name is not None:
+            new_name = (name or "").strip()
+            if not new_name:
+                raise ValueError("Entity name must not be empty")
+            # Prevent conflicts with other entities' names or aliases
+            if (
+                new_name.strip().lower() in existing_names_lc
+                or new_name.strip().lower() in existing_aliases_lc
+            ):
+                raise KnowledgeGraphException(
+                    f"Cannot rename entity to '{new_name}': name conflicts with an existing entity or alias"
+                )
+            target.name = new_name
+
+        # Apply type change
+        if entity_type is not None:
+            new_type = (entity_type or "").strip()
+            if not new_type:
+                raise ValueError("Entity type must not be empty")
+            target.entity_type = new_type
+
+        # Apply icon change
+        if icon is not None:
+            # Allow clearing by empty string
+            target.icon = icon
+
+        # Apply alias updates
+        if aliases is not None:
+            # Normalize provided aliases
+            normalized_incoming: list[str] = [str(a).strip() for a in aliases if str(a).strip()]
+
+            # Ensure no incoming alias conflicts with other entities' canonical names or aliases
+            for a in normalized_incoming:
+                a_lc = a.lower()
+                if a_lc in existing_names_lc or a_lc in existing_aliases_lc:
+                    raise KnowledgeGraphException(
+                        f"Cannot set alias '{a}': conflicts with an existing entity or alias"
+                    )
+
+            if merge_aliases:
+                merged: list[str] = []
+                seen: set[str] = set()
+                # Start with current aliases
+                for a in target.aliases or []:
+                    a_norm = (a or "").strip()
+                    if not a_norm:
+                        continue
+                    a_lc = a_norm.lower()
+                    if a_lc not in seen:
+                        seen.add(a_lc)
+                        merged.append(a_norm)
+                # Add incoming
+                for a in normalized_incoming:
+                    a_lc = a.lower()
+                    if a_lc not in seen:
+                        seen.add(a_lc)
+                        merged.append(a)
+                target.aliases = [a for a in merged if a.lower() != target.name.strip().lower()]
+            else:
+                # Replace aliases entirely
+                target.aliases = [
+                    a for a in normalized_incoming if a.lower() != target.name.strip().lower()
+                ]
+
+        # Update modification time
+        target.update_mtime()
+
+        # Final validation step for updated entity
+        try:
+            self._validate_entity(target, graph)
+        except Exception as e:
+            raise KnowledgeGraphException(f"Updated entity failed validation: {e}")
+
+        # Persist changes
+        await self._save_graph(graph)
+        return target
+
+    async def get_email_summaries(
+        self,
+        from_date: datetime | None = None,
+        to_date: datetime | None = None,
+        include_reviewed: bool = False,
+    ) -> list[EmailSummary]:
+        """Get email summaries from Supabase. If Supabase integration is disabled, this returns an empty list."""
+        if settings.supabase_enabled and supabase_manager:
+            return await supabase_manager.get_email_summaries(
+                from_date=from_date, to_date=to_date, include_reviewed=include_reviewed
+            )
+        else:
+            return []
+
+    async def mark_as_reviewed(self, email_summaries: list[EmailSummary]) -> None:
+        """Mark email summaries as reviewed in Supabase. If Supabase integration is disabled, this does nothing."""
+        if settings.dry_run:
+            logger.warning("(Supabase) Dry run mode enabled, skipping mark_as_reviewed()")
+            return
+
+        if settings.supabase_enabled and supabase_manager:
+            try:
+                await supabase_manager.mark_as_reviewed(email_summaries)
+                logger.info(
+                    f"(Supabase) Marked {len(email_summaries)} email summaries as reviewed!"
+                )
+            except Exception as e:
+                logger.error(f"(Supabase) Failed to mark email summaries as reviewed: {e}")
+        else:
+            logger.warning(
+                "(Supabase) Supabase integration is disabled, skipping mark_as_reviewed()"
+            )
