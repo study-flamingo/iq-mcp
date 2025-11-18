@@ -25,7 +25,9 @@ from typing import Literal
 import logging as lg
 
 logger = lg.getLogger("iq-mcp-bootstrap")
-
+logger.addHandler(lg.FileHandler(Path(__file__).parents[2].resolve() / "iq-mcp-bootstrap.log"))
+logger.setLevel(lg.DEBUG)
+logger.debug("Bootstrap logger set to debug")
 
 # Default memory file at repo root
 DEFAULT_MEMORY_PATH = Path(__file__).parents[2].resolve() / "memory.jsonl"
@@ -214,7 +216,7 @@ class SupabaseConfig:
         self.user_info_table = user_info_table
 
     @classmethod
-    def load(cls, dry_run: bool = False) -> "SupabaseConfig":
+    def load(cls, dry_run: bool = False) -> "SupabaseConfig" | None:
         """Load Supabase configuration from CLI args and environment variables.
 
         Args:
@@ -236,6 +238,11 @@ class SupabaseConfig:
             if args.enable_supabase is not None
             else os.getenv("IQ_ENABLE_SUPABASE", "false").lower() == "true"
         )
+        if enabled:
+            logger.info("Supabase integration is enabled!")
+        else:
+            logger.info("Supabase integration is disabled!")
+            return None
 
         # Supabase URL: CLI > IQ_SUPABASE_URL env > SUPABASE_URL env (backward compat)
         url = args.supabase_url or os.getenv("IQ_SUPABASE_URL")
@@ -297,6 +304,12 @@ class Settings:
 
         # Load Supabase config (checks enable flag internally)
         supabase_config = SupabaseConfig.load(dry_run=core.dry_run)
+
+        if not supabase_config:
+            return cls(
+                core=core,
+                supabase=None,
+            )
 
         # Only include if enabled and valid
         supabase = supabase_config if supabase_config.is_valid() else None

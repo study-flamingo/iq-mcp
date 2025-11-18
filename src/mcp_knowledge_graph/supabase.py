@@ -2,13 +2,7 @@ from typing import Any
 from dotenv import load_dotenv
 from datetime import datetime, timezone
 
-try:
-    from supabase import create_client, Client as SBClient  # type: ignore
-    SUPABASE_AVAILABLE = True
-except Exception:  # ImportError or runtime import errors
-    create_client = None  # type: ignore[assignment]
-    SBClient = object  # type: ignore[assignment, misc]
-    SUPABASE_AVAILABLE = False
+from supabase import create_client, Client as SBClient  # type: ignore
 
 from .models import KnowledgeGraph, Entity, Observation, Relation, UserIdentifier, GraphMeta
 from .logging import logger
@@ -69,21 +63,13 @@ class SupabaseManager:
     """
 
     def __init__(self, config: SupabaseConfig) -> None:
-        if not SUPABASE_AVAILABLE:
-            raise SupabaseException(
-                "Supabase integration is not available. Install `supabase` package or disable Supabase features."
-            )
         self.settings: SupabaseConfig = config
-        self.client = create_client(self.settings.url, self.settings.key)  # type: ignore[arg-type]
+        self.client = create_client(self.settings.url, self.settings.key)
 
-    def _ensure_client(self) -> SBClient:  # type: ignore[override]
+    def _ensure_client(self) -> SBClient:
         if not self.client:
             logger.error("IQ-MCP Supabase client not initialized, (re)initializing...")
-            if not SUPABASE_AVAILABLE:
-                raise SupabaseException(
-                    "Supabase integration is not available. Install `supabase` package or disable Supabase features."
-                )
-            self.client = create_client(self.settings.url, self.settings.key)  # type: ignore[arg-type]
+            self.client = create_client(self.settings.url, self.settings.key)
         return self.client
 
     def get_schema_version(self) -> int:
@@ -101,7 +87,11 @@ class SupabaseManager:
         Returns:
             list[EmailSummary]: email summaries from the Supabase integration, optionally filtered by time and reviewed status.
         """
-        client = self._ensure_client()
+        try:
+            client = self._ensure_client()
+        except Exception as e:
+            logger.error(f"(Supabase) Error initializing client: {e}")
+            raise SupabaseException(f"(Supabase) Error initializing client: {e}")
 
         # If a time constraint is provided, convert to UTC and set to 00:00:00 (inclusive filtering)
         if from_date:
@@ -120,21 +110,21 @@ class SupabaseManager:
             to_ts = None
 
         email_summary_table = self.settings.email_table
+        logger.debug(f"(Supabase) Getting email summaries from table {email_summary_table}")
+        logger.debug(f"(Supabase) From date: {from_ts}")
+        logger.debug(f"(Supabase) To date: {to_ts}")
+        logger.debug(f"(Supabase) Include reviewed: {include_reviewed}")
 
         # Get the supabase data
 
-        try:
-            query = client.table(email_summary_table).select("*")
-            if not include_reviewed:
-                query = query.eq("reviewed", "false")
-            if from_ts:
-                query = query.gte("received_at", from_ts)
-            if to_ts:
-                query = query.lte("received_at", to_ts)
-            response = query.execute()
-        except Exception as e:
-            logger.error(f"Error getting email summaries from Supabase: {e}")
-            raise SupabaseException(f"Error getting email summaries from Supabase: {e}")
+        query = client.table(email_summary_table).select("*")
+        if not include_reviewed:
+            query = query.eq("reviewed", "false")
+        if from_ts:
+            query = query.gte("received_at", from_ts)
+        if to_ts:
+            query = query.lte("received_at", to_ts)
+        response = query.execute()
 
         summaries: list[EmailSummary] = []
         try:
@@ -153,8 +143,12 @@ class SupabaseManager:
                     )
                 )
         except Exception as e:
-            logger.error(f"Error parsing email summaries from Supabase: {e}")
-            raise SupabaseException(f"Error parsing email summaries from Supabase: {e}")
+            logger.error(f"(Supabase) Error parsing email summaries from Supabase: {e}")
+            raise SupabaseException(f"(Supabase) Error parsing email summaries from Supabase: {e}")
+
+        if not summaries:
+            logger.error("(Supabase) Bad data returned from Supabase!")
+            raise SupabaseException("(Supabase) Bad data returned from Supabase!")
 
         logger.info(
             f"📫 Retrieved {len(summaries)} email summaries from table {email_summary_table}!"

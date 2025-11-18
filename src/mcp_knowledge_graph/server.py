@@ -1503,6 +1503,7 @@ async def read_graph():
 
     # Supabase integration: Print email summaries
     if settings.supabase_enabled:
+        logger.debug("Supabase integration is enabled, getting email summaries")
         try:
             email_summaries = await manager.get_email_summaries()
         except Exception as e:
@@ -1525,7 +1526,6 @@ async def read_graph():
             except Exception as e:
                 raise ToolError(f"(Supabase) Error while printing email summaries: {e}")
         else:
-            lines.append("")
             lines.append("📭 No new email summaries found! The user is all caught up!")
     else:
         logger.info(

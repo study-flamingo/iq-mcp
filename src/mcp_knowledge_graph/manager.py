@@ -33,11 +33,12 @@ from .models import (
     MemoryRecord,
     GraphMeta,
 )
-from .supabase import SupabaseManager, EmailSummary, SUPABASE_AVAILABLE
+from .supabase import SupabaseManager, EmailSummary
 
 supabase_manager = None
-if getattr(settings, "supabase", None) and SUPABASE_AVAILABLE:
+if settings.supabase_enabled:
     supabase_manager = SupabaseManager(settings.supabase)
+    logger.debug(f"(Supabase) Supabase manager initialized: {supabase_manager}")
 
 
 class KnowledgeGraphManager:
@@ -717,9 +718,7 @@ class KnowledgeGraphManager:
         for entity in graph.entities:
             if not entity.observations:
                 continue
-            entity.observations = [
-                obs for obs in entity.observations if not obs.is_outdated()
-            ]
+            entity.observations = [obs for obs in entity.observations if not obs.is_outdated()]
         return graph
 
     async def _prune_duplicate_observations(self, graph: KnowledgeGraph) -> KnowledgeGraph:
@@ -1007,7 +1006,9 @@ class KnowledgeGraphManager:
                 continue
 
             # Create observations with timestamps from the request
-            existing_contents: set[str] = {old_obs.content for old_obs in (entity.observations or [])}
+            existing_contents: set[str] = {
+                old_obs.content for old_obs in (entity.observations or [])
+            }
             new_observations: list[Observation] = []
             for o in request.observations:
                 obs = Observation.from_values(o.content, o.durability)
@@ -1781,6 +1782,8 @@ class KnowledgeGraphManager:
                 from_date=from_date, to_date=to_date, include_reviewed=include_reviewed
             )
         else:
+            logger.warning("(Supabase) Supabase integration is disabled, returning empty list")
+            logger.debug(f"(Supabase) {settings.supabase_enabled} {supabase_manager}")
             return []
 
     async def mark_as_reviewed(self, email_summaries: list[EmailSummary]) -> None:
