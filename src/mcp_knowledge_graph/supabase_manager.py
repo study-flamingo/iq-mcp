@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from supabase import create_client, Client as SBClient  # type: ignore
 
 from .models import KnowledgeGraph, Entity, Observation, Relation, UserIdentifier, GraphMeta
-from .logging import logger
+from .iq_logging import logger
 from .settings import SupabaseConfig
 
 load_dotenv()
@@ -353,68 +353,95 @@ class SupabaseManager:
             relations_response = client.table(relations_table).select("*").execute()
             user_info_response = client.table(user_info_table).select("*").execute()
         except Exception as e:
-            logger.error(f"Error loading knowledgegraph from Supabase: {e}")
-            raise SupabaseException(f"Error loading knowledgegraph from Supabase: {e}")
+            logger.error(f"Error loading knowledge graph from Supabase: {e}")
+            raise SupabaseException(f"Error loading knowledge graph from Supabase: {e}")
+        logger.debug("(Supabase) Responses OK")
 
         entities: list[Entity] = []
         observations: dict[str, list[Observation]] = {}
         relations: list[Relation] = []
         user_info: UserIdentifier | None = None
-        for row in observations_response.data:
-            o = Observation.from_values(
-                content=row.get("content"),
-                durability=row.get("durability"),
-                timestamp=row.get("created_at"),
+        try:
+            for row in observations_response.data:
+                o = Observation.from_values(
+                    content=row.get("content"),
+                    durability=row.get("durability"),
+                    timestamp=row.get("created_at"),
+                )
+                if row.get("linked_entity") not in observations:
+                    observations[row.get("linked_entity")] = []
+                observations[row.get("linked_entity")].append(o)
+        except Exception as e:
+            logger.error(f"Error parsing observations from Supabase: {e}")
+            raise SupabaseException(f"Error parsing observations from Supabase: {e}")
+        try:
+            for row in entities_response.data:
+                e_id = row.get("id")
+                if e_id not in observations:
+                    logger.warning(f"No observations found for entity `{e_id}` in Supabase!")
+                    e_obs = []
+                else:
+                    e_obs = observations[e_id]
+
+                e = Entity.from_values(
+                    id=row.get("id"),
+                    name=row.get("name"),
+                    entity_type=row.get("type"),
+                    aliases=row.get("aliases"),
+                    icon=row.get("icon"),
+                    ctime=row.get("created_at"),
+                    mtime=row.get("modified_at"),
+                    observations=e_obs,
+                )
+                entities.append(e)
+        except Exception as e:
+            logger.error(f"Error parsing entities from Supabase: {e}")
+            raise SupabaseException(f"Error parsing entities from Supabase: {e}")
+        try:
+            for row in relations_response.data:
+                r = Relation.from_values(
+                    from_id=row.get("from"),
+                    to_id=row.get("to"),
+                    relation=row.get("content"),
+                    ctime=row.get("created_at"),
+                )
+                relations.append(r)
+        except Exception as e:
+            logger.error(f"Error parsing relations from Supabase: {e}")
+            raise SupabaseException(f"Error parsing relations from Supabase: {e}")
+        try:
+            for row in user_info_response.data:
+                ui = UserIdentifier.from_values(
+                    preferred_name=row.get("preferred_name"),
+                    first_name=row.get("first_name"),
+                    last_name=row.get("last_name"),
+                    middle_names=row.get("middle_names"),
+                    pronouns=row.get("pronouns"),
+                    nickname=row.get("nickname"),
+                    prefixes=row.get("prefixes"),
+                    suffixes=row.get("suffixes"),
+                    emails=row.get("emails"),
+                    linked_entity_id=row.get("linked_entity_id"),
+                )
+                user_info = ui
+        except Exception as e:
+            logger.error(f"Error parsing user info from Supabase: {e}")
+            raise SupabaseException(f"Error parsing user info from Supabase: {e}")
+        try:
+            graph = KnowledgeGraph.from_components(
+                user_info=user_info,
+                entities=entities,
+                relations=relations,
+                meta=GraphMeta(),  # TODO: Add metadata from Supabase
             )
-            if row.get("linked_entity") not in observations:
-                observations[row.get("linked_entity")] = []
-            observations[row.get("linked_entity")].append(o)
-        for row in entities_response.data:
-            e_obs = observations[row.get("id")]
-            e = Entity.from_values(
-                id=row.get("id"),
-                name=row.get("name"),
-                entity_type=row.get("type"),
-                aliases=row.get("aliases"),
-                icon=row.get("icon"),
-                ctime=row.get("created_at"),
-                mtime=row.get("modified_at"),
-                observations=e_obs,
-            )
-            entities.append(e)
-        for row in relations_response.data:
-            r = Relation.from_values(
-                from_id=row.get("from"),
-                to_id=row.get("to"),
-                relation=row.get("content"),
-                ctime=row.get("created_at"),
-            )
-            relations.append(r)
-        for row in user_info_response.data:
-            ui = UserIdentifier.from_values(
-                preferred_name=row.get("preferred_name"),
-                first_name=row.get("first_name"),
-                last_name=row.get("last_name"),
-                middle_names=row.get("middle_names"),
-                pronouns=row.get("pronouns"),
-                nickname=row.get("nickname"),
-                prefixes=row.get("prefixes"),
-                suffixes=row.get("suffixes"),
-                emails=row.get("emails"),
-                linked_entity_id=row.get("linked_entity_id"),
-            )
-            user_info = ui
-        graph = KnowledgeGraph.from_components(
-            user_info=user_info,
-            entities=entities,
-            relations=relations,
-            meta=GraphMeta(),  # TODO: Add metadata from Supabase
-        )
+        except Exception as e:
+            logger.error(f"Error constructing knowledge graph from Supabase: {e}")
+            raise SupabaseException(f"Error constructing knowledge graph from Supabase: {e}")
         try:
             graph.validate()
         except Exception as e:
-            logger.error(f"Error getting knowledge graph from Supabase: {e}")
-            raise SupabaseException(f"Error getting knowledge graph from Supabase: {e}")
+            logger.error(f"Error validating knowledge graph from Supabase: {e}")
+            raise SupabaseException(f"Error validating knowledge graph from Supabase: {e}")
 
         return graph
 

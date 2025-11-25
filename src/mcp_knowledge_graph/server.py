@@ -17,7 +17,7 @@ from pydantic.dataclasses import dataclass
 from typing import Any
 from fastmcp.exceptions import ToolError, ValidationError
 
-from .logging import logger
+from .iq_logging import logger
 from .manager import KnowledgeGraphManager
 from .models import (
     DeleteEntryRequest,
@@ -35,9 +35,9 @@ from .models import (
     Observation,
     UpdateEntityRequest,
 )
-from .settings import Settings as settings
+from .settings import settings
 from .settings import IQ_MCP_VERSION
-from .supabase import EmailSummary
+from .supabase_manager import EmailSummary
 
 
 manager = KnowledgeGraphManager(settings.memory_path)
@@ -1465,6 +1465,7 @@ async def read_graph():
 
     Returns:
         User/LLM-friendly summary of the entire knowledge graph in text/markdown format
+        If the Supabase integration is enabled, it will also include any current, unreviewed email summaries.
     """
 
     graph = await manager.read_graph()
@@ -1503,7 +1504,6 @@ async def read_graph():
 
     # Supabase integration: Print email summaries
     if settings.supabase_enabled:
-        logger.debug("Supabase integration is enabled, getting email summaries")
         try:
             email_summaries = await manager.get_email_summaries()
         except Exception as e:
@@ -1526,6 +1526,7 @@ async def read_graph():
             except Exception as e:
                 raise ToolError(f"(Supabase) Error while printing email summaries: {e}")
         else:
+            lines.append("")
             lines.append("📭 No new email summaries found! The user is all caught up!")
     else:
         logger.info(
@@ -1549,7 +1550,7 @@ async def startup_check() -> None:
     try:
         _ = await manager._load_graph()
     except Exception as e:
-        raise ToolError(str(e))
+        raise RuntimeError(f"Failed to load graph: {e}")
 
 
 async def start_server():

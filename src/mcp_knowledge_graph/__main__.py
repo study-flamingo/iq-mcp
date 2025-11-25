@@ -3,8 +3,8 @@ Enhanced MCP server for knowledge graph memory.
 """
 
 import asyncio
-from .settings import Settings as settings
-from .logging import logger
+from .settings import settings
+from .iq_logging import logger
 from .server import start_server
 
 

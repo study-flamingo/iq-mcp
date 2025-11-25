@@ -10,8 +10,8 @@ from datetime import datetime, timezone
 from typing import Any
 from pathlib import Path
 from uuid import uuid4
-from .settings import Settings as settings
-from .logging import logger
+from .settings import settings
+from .iq_logging import logger
 from .models import (
     Entity,
     EntityID,
@@ -33,7 +33,7 @@ from .models import (
     MemoryRecord,
     GraphMeta,
 )
-from .supabase import SupabaseManager, EmailSummary
+from .supabase_manager import SupabaseManager, EmailSummary
 
 supabase_manager = None
 if settings.supabase_enabled:
@@ -434,17 +434,23 @@ class KnowledgeGraphManager:
         else:
             return user_info if separate_ui else None
 
-    async def _load_graph(self) -> KnowledgeGraph:
+    async def _load_graph(self, force_local: bool = False) -> KnowledgeGraph:
         """
         Load the knowledge graph from Supabase (EXPERIMENTAL) and back up to JSONL storage.
 
         Returns:
             The Knowledge Graph
         """
-        if settings.supabase_enabled and supabase_manager:
+        if settings.supabase_enabled and supabase_manager and not force_local:
+            logger.info("Supabase integration enabled, loading graph from Supabase")
             graph = await supabase_manager.get_knowledge_graph()
             logger.info("☁️ Supabase graph read successfully!")
             return graph
+
+        if force_local and settings.supabase_enabled:
+            logger.warning(
+                "⚠️ Force local mode and Supabase integration enabled; Loading graph from local JSONL file."
+            )
 
         # Resolve and validate memory file path
         self.memory_file_path = Path(self.memory_file_path).resolve()
@@ -520,8 +526,6 @@ class KnowledgeGraphManager:
                         raise RuntimeError(
                             "Memory file appears corrupt: incomplete data after 500 lines"
                         )
-        except RuntimeError:
-            raise
         except Exception as e:
             raise RuntimeError(f"Error reading memory file: {e}")
 

@@ -2,7 +2,7 @@
 
 import logging as lg
 from pathlib import Path
-from .settings import Settings as settings
+from .settings import settings
 
 # def get_logger(self) -> lg.Logger:
 #     """Get the main logger for the IQ-MCP server, configured by the settings object."""

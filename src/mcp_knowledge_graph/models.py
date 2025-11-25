@@ -18,8 +18,8 @@ from pydantic import (
 )
 from enum import Enum
 import regex as re
-from .logging import logger
-from .settings import Settings as settings
+from .iq_logging import logger
+from .settings import settings
 from .settings import IQ_MCP_VERSION, IQ_MCP_SCHEMA_VERSION
 
 # Helper functions

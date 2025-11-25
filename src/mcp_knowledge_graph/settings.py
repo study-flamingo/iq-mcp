@@ -7,7 +7,7 @@ variables, and sensible defaults) into a single, validated settings object.
 Architecture:
 - IQSettings: Core application settings (always loaded)
 - SupabaseConfig: Optional Supabase integration settings (loaded if enabled)
-- Settings: Composition class that combines core + optional integrations
+- AppSettings: Composition class that combines core + optional integrations
 
 Precedence (highest first):
 - CLI arguments
@@ -276,7 +276,7 @@ class SupabaseConfig:
         return bool(self.url and self.key)
 
 
-class Settings:
+class AppSettings:
     """Composition of core settings and optional integrations.
 
     This class combines IQSettings (core) with optional integration configs.
@@ -297,7 +297,7 @@ class Settings:
         self.supabase = supabase
 
     @classmethod
-    def load(cls) -> "Settings":
+    def load(cls) -> "AppSettings":
         """Load all settings: core + optional integrations."""
         # Always load core settings
         core = IQSettings.load()
@@ -367,6 +367,6 @@ class Settings:
 
 
 # Module-level settings instance (loads on import)
-Settings = Settings.load()
+settings = AppSettings.load()
 
-__all__ = ["Settings", "IQSettings", "SupabaseConfig"]
+__all__ = ["settings", "AppSettings", "IQSettings", "SupabaseConfig"]
