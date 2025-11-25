@@ -1,11 +1,23 @@
 <!-- markdownlint-disable -->
 ## Workflows — Tools, Manager Methods, and Models
 
+### Initialization Flow
+
+```
+__main__.py
+├── ctx.init()                    # Initialize context (settings, logger, supabase)
+└── start_server()
+    ├── _init_manager()           # Create KnowledgeGraphManager
+    ├── startup_check()           # Validate memory file
+    ├── add_supabase_tools()      # If Supabase enabled
+    └── mcp.run_async()           # Start MCP server
+```
+
 ### Read Graph
 - Tool: `server.read_graph`
 - Manager: `manager.read_graph`
 - Models: `KnowledgeGraph`
-- Notes: Prints user info (optional), entities, and relations; uses async formatting helpers.
+- Notes: Prints user info, entities, and relations; uses async formatting helpers.
 
 ### Read User Info
 - Tool: `server.read_user_info`
@@ -23,7 +35,7 @@
 - Tool: `server.create_relations`
 - Manager: `manager.create_relations`
 - Models: `CreateRelationRequest`, `CreateRelationResult`, `Relation`
-- Validation: endpoints resolved by ID or name; relations use IDs only; no automatic dedupe on save (relations are deduped during `manager.merge_entities` rewrites and during Supabase sync).
+- Validation: endpoints resolved by ID or name; relations use IDs only.
 
 ### Add Observations
 - Tool: `server.add_observations`
@@ -72,11 +84,16 @@
 - Models: `UserIdentifier`
 - Validation: `linked_entity_id` must exist; names derived; IDs validated.
 
-### Supabase Integration (optional)
-- Tools (added only if Supabase is initialized):
-  - `server.get_new_email_summaries` → `SupabaseManager.get_email_summaries`
-  - `server.sync_supabase` → `manager.sync_supabase`
-- Tables used (defaults): `emailSummaries`, `kgEntities`, `kgObservations`, `kgRelations`. See `docs/SUPABASE_SCHEMA.md`.
+### Delete Entities
+- Tool: `server.delete_entities`
+- Manager: `manager.delete_entities`
+- Models: `EntityID`
+- Notes: Also removes all relations involving the deleted entities.
+
+### Delete Relations
+- Tool: `server.delete_relations`
+- Manager: `manager.delete_relations`
+- Models: `Relation`
 
 ### Delete Entry (Unified) — Deprecated
 - Tool: `server.delete_entry`
@@ -84,7 +101,41 @@
 - Models: `DeleteEntryRequest`
 - Caution: destructive; ensure explicit confirmation.
 
+### Supabase Integration (Optional)
+
+Tools added only if Supabase is initialized (`ctx.supabase` is not None):
+
+| Tool | Manager Method |
+|------|----------------|
+| `get_new_email_summaries` | `ctx.supabase.get_email_summaries` |
+
+Tables used (defaults): `emailSummaries`, `kgEntities`, `kgObservations`, `kgRelations`, `kgUserInfo`.
+
+See `docs/SUPABASE_SCHEMA.md` for schema.
+
 ### Storage & Meta
-- Loader: `manager._load_graph()` uses `MemoryRecord.model_validate_json()`
-- Saver: `manager._save_graph()` writes `meta` (GraphMeta), then `user_info`, then entities and relations.
-- Versioning: use `GraphMeta.schema_version` and migration hooks when altering storage.
+
+- **Loader**: `manager._load_graph()` uses `MemoryRecord.model_validate_json()`
+- **Saver**: `manager._save_graph()` writes `meta` (GraphMeta), then `user_info`, then entities and relations
+- **Backups**: Daily backups created automatically in `backups/` subdirectory
+- **Versioning**: Use `GraphMeta.schema_version` and migration hooks when altering storage
+
+### Context Access
+
+All manager and server code accesses dependencies via the context:
+
+```python
+from .context import ctx
+
+# Settings
+ctx.settings.memory_path
+ctx.settings.dry_run
+ctx.settings.no_emojis
+
+# Logger
+ctx.logger.info("...")
+
+# Supabase (if enabled)
+if ctx.supabase:
+    await ctx.supabase.save_knowledge_graph(graph)
+```

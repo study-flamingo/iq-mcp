@@ -3,7 +3,7 @@ import logging
 import argparse
 
 from mcp_knowledge_graph.models import KnowledgeGraph
-from mcp_knowledge_graph.settings import settings
+from mcp_knowledge_graph.context import ctx
 from mcp_knowledge_graph.manager import KnowledgeGraphManager
 from mcp_knowledge_graph.supabase_manager import SupabaseManager
 
@@ -12,6 +12,10 @@ logger = logging.getLogger("supabase_utils.py")
 
 
 async def main():
+    # Initialize context first
+    ctx.init()
+    settings = ctx.settings
+
     logger.info("IQ-MCP Supabase Utils")
     logger.info(
         "Currently, this script serves to recreate the knowledge graph in Supabase from a local JSONL file."
@@ -48,6 +52,9 @@ async def main():
 
     if args.execute:
         logger.info("Initializing Supabase manager and client...")
+        if not settings.supabase:
+            logger.error("Supabase integration is not configured. Please configure it and try again.")
+            exit(1)
         supabase_manager = SupabaseManager(settings.supabase)
         logger.info("Saving graph to Supabase...")
         try:

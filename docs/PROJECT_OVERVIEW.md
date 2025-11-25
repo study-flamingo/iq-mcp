@@ -5,73 +5,112 @@
 
 ### High-level Architecture
 
-- **MCP Server (`src/mcp_knowledge_graph/server.py`)**
-  - Exposes user-facing tools (read, create, search, merge, delete, update user info, update entity).
-  - Formats results for LLM-friendly output.
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Entry Points                            │
+│  __main__.py  →  ctx.init()  →  start_server()             │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│                   Application Context                       │
+│  context.py: AppContext (singleton)                        │
+│  ├── settings: AppSettings                                 │
+│  ├── logger: Logger                                        │
+│  └── supabase: SupabaseManager | None                      │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│                      MCP Server                             │
+│  server.py: FastMCP tools + formatting helpers             │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│                    Business Logic                           │
+│  manager.py: KnowledgeGraphManager                         │
+│  ├── CRUD operations                                       │
+│  ├── Temporal cleanup                                      │
+│  ├── Search and merge                                      │
+│  └── Persistence (JSONL + optional Supabase)               │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│                      Data Models                            │
+│  models.py: Pydantic v2 models                             │
+│  ├── Entity, Relation, Observation                         │
+│  ├── UserIdentifier, KnowledgeGraph                        │
+│  └── Request/Result types                                  │
+└─────────────────────────────────────────────────────────────┘
+```
 
-- **Manager (`src/mcp_knowledge_graph/manager.py`)**
-  - Business logic: CRUD, validation, temporal cleanup, merge, search, persistence.
-  - File I/O to JSONL; handles graph assembly/validation on load.
+### Module Responsibilities
 
-- **Models (`src/mcp_knowledge_graph/models.py`)**
-  - Pydantic v2.11 models for `Entity`, `Relation`, `Observation`, `UserIdentifier`, etc.
-  - Constrained `EntityID` type; `@computed_field` for user `names`.
-  - `MemoryRecord` and `GraphMeta` for storage framing and versioning.
+| Module | Responsibility |
+|--------|----------------|
+| `version.py` | Version constants (`IQ_MCP_VERSION`, `IQ_MCP_SCHEMA_VERSION`) |
+| `settings.py` | Configuration classes (`AppSettings`, `IQSettings`, `SupabaseConfig`) |
+| `context.py` | Runtime state singleton; initialized once at startup |
+| `iq_logging.py` | Lazy logger proxy; works before and after context init |
+| `models.py` | Pydantic data models; no runtime dependencies |
+| `manager.py` | Graph operations, validation, persistence |
+| `server.py` | MCP tool endpoints, result formatting |
+| `supabase_manager.py` | Optional cloud storage and email integration |
 
-- **Settings (`src/mcp_knowledge_graph/settings.py`)**
-  - Runtime configuration and logging.
+### Data Model (Essential)
 
-- **Logging (`src/mcp_knowledge_graph/logging.py`)**
-  - Centralized logger factory configured by settings (`Settings.debug`).
-
-- **Utilities (`src/mcp_knowledge_graph/utils/`)**
-  - Seed/migrate helpers and schema docs for the graph.
-
-- **Optional Integrations (`src/mcp_knowledge_graph/supabase.py`)**
-  - Supabase integration for external data sources (email summaries) and syncing the graph. When initialized (env `SUPABASE_URL`/`SUPABASE_KEY` present), the server adds:
-    - `get_new_email_summaries` (fetch recent email summaries)
-    - `sync_supabase` (push cleaned snapshot of the local graph). See `docs/SUPABASE_SCHEMA.md`.
-
-### Data Model (essential)
-
-- **Entity**: `id: EntityID`, `name`, `entity_type`, `observations[]`, `aliases[]`, `icon?`
-- **Relation**: `from_id: EntityID`, `relation`, `to_id: EntityID` (IDs only; no special strings).
-- **Observation**: `content`, `durability`, `timestamp` (auto via `default_factory`).
-- **UserIdentifier**: user info + derived `names` via `@computed_field`; links to a user entity by `linked_entity_id`.
+- **Entity**: `id: EntityID`, `name`, `entity_type`, `observations[]`, `aliases[]`, `icon?`, `ctime`, `mtime`
+- **Relation**: `from_id: EntityID`, `relation`, `to_id: EntityID` (IDs only; no special strings)
+- **Observation**: `content`, `durability`, `timestamp` (auto via `default_factory`)
+- **UserIdentifier**: User info + derived `names` via `@computed_field`; links to entity by `linked_entity_id`
 
 ### Storage Format (JSONL)
 
 Each line is a single JSON object:
-- `{"type": "meta", "data": GraphMeta}` — optional metadata (written first when saving)
+- `{"type": "meta", "data": GraphMeta}` — metadata (written first)
 - `{"type": "user_info", "data": UserIdentifier}`
 - `{"type": "entity", "data": Entity}`
 - `{"type": "relation", "data": Relation}`
 
-`GraphMeta`: `{ schema_version: int, graph_id: EntityID }`
+`GraphMeta`: `{ schema_version: int, app_version: str, graph_id: EntityID }`
+
+**Daily Backups**: The manager automatically creates daily backups of the memory file in a `backups/` subdirectory after each save.
 
 ### Validation & Conventions
 
-- IDs are constrained strings (`EntityID`), 8-char alphanumeric.
-- Relations must use entity IDs; do not embed literal names or the string `'user'`.
-- Icons must be a single emoji (validated); use `Settings.no_emojis` to suppress display.
-- User `names` are derived; prefer updating user fields and let the model compute.
+- IDs are constrained strings (`EntityID`), 8-char alphanumeric
+- Relations must use entity IDs; do not embed literal names or the string `'user'`
+- Icons must be a single emoji (validated); use `ctx.settings.no_emojis` to suppress display
+- User `names` are derived; prefer updating user fields and let the model compute
 
-### MCP Tools (selected)
+### MCP Tools
 
-- `read_graph`, `read_user_info`, `create_entities`, `create_relations`, `add_observations`,
-  `search_nodes`, `open_nodes`, `merge_entities`, `update_entity`, `update_user_info`,
-  `delete_entry` (deprecated).
+| Tool | Description |
+|------|-------------|
+| `read_graph` | Full graph summary with user info, entities, relations |
+| `read_user_info` | User information and observations |
+| `create_entities` | Add new entities with observations |
+| `create_relations` | Add relations between entities |
+| `add_observations` | Add observations to existing entities |
+| `search_nodes` | Search by name, type, alias, or observation content |
+| `open_nodes` | Retrieve specific entities by ID or name |
+| `merge_entities` | Combine multiple entities into one |
+| `update_entity` | Modify entity properties |
+| `update_user_info` | Update user identifying information |
+| `delete_entities` | Remove entities and their relations |
+| `delete_relations` | Remove specific relations |
+| `delete_entry` | Unified deletion (deprecated) |
+
+### Optional Supabase Integration
+
+When enabled (`--enable-supabase` or `IQ_ENABLE_SUPABASE=true`):
+
+- **Email summaries**: `get_new_email_summaries` fetches recent emails from Supabase
+- **Cloud sync**: Graph is saved to Supabase tables alongside local JSONL
+- **Tables**: `kgEntities`, `kgObservations`, `kgRelations`, `kgUserInfo`, `emailSummaries`
+
+See `docs/SUPABASE_SCHEMA.md` for table definitions.
 
 ### Evolution & Versioning
 
-- `GraphMeta.schema_version` is written/read to support migrations.
-- Add migration steps keyed by version when changing file schemas.
-
-### At-a-glance Responsibilities
-
-- `server.py`: tool endpoints + presentation
-- `manager.py`: graph ops + persistence
-- `models.py`: schema + validation + storage framing
-- `settings.py`: configuration
-- `logging.py`: centralized logging
-- `utils/*`: bootstrap/migration helpers
+- `GraphMeta.schema_version` is written/read to support migrations
+- `IQ_MCP_SCHEMA_VERSION` in `version.py` tracks current schema
+- Add migration steps keyed by version when changing file schemas

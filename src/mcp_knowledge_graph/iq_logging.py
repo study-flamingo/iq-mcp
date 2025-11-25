@@ -1,34 +1,57 @@
-"""Centralized logging for the IQ-MCP server."""
+"""
+Centralized logging for the IQ-MCP server.
+
+This module provides a lazy logger accessor that uses the application context.
+The logger is configured when the context is initialized at startup.
+
+Usage:
+    from .iq_logging import logger
+    logger.info("message")  # Works after ctx.init() is called
+"""
+
+from __future__ import annotations
 
 import logging as lg
-from pathlib import Path
-from .settings import settings
+from typing import TYPE_CHECKING
 
-# def get_logger(self) -> lg.Logger:
-#     """Get the main logger for the IQ-MCP server, configured by the settings object."""
-#     logger = lg.getLogger("iq-mcp")
-#     logger.addHandler(lg.FileHandler(f"{self.project_root}/iq-mcp.log"))
-#     logger.setLevel(lg.DEBUG if self.debug else lg.INFO)
-#     logger.debug("Retrieved debug logger")
-#     return logger
+if TYPE_CHECKING:
+    pass
 
 
-def get_iq_mcp_logger() -> lg.Logger:
-    """Get the logger for the IQ-MCP server, configured by the settings object."""
-    lg.basicConfig(level=lg.DEBUG if settings.debug else lg.INFO)
-    logger = lg.getLogger("iq-mcp")
-    root_log_path = settings.project_root / "iq-mcp.log"
-    root_log_path = Path(root_log_path).resolve()
-    logger.addHandler(
-        lg.FileHandler(
-            filename=root_log_path,
-            encoding="utf-8",
-        )
-    )
-    logger.debug("Retrieved debug logger")
-    return logger
+class _LazyLogger:
+    """
+    Lazy proxy for the application logger.
+    
+    Defers to ctx.logger after initialization, providing a fallback
+    bootstrap logger before ctx.init() is called.
+    """
+    
+    _bootstrap_logger: lg.Logger | None = None
+    
+    def _get_logger(self) -> lg.Logger:
+        """Get the appropriate logger based on context state."""
+        # Import here to avoid circular imports
+        from .context import ctx
+        
+        if ctx.is_initialized:
+            return ctx.logger
+        
+        # Fallback bootstrap logger for early startup messages
+        if self._bootstrap_logger is None:
+            self._bootstrap_logger = lg.getLogger("iq-mcp-bootstrap")
+            self._bootstrap_logger.setLevel(lg.DEBUG)
+            if not self._bootstrap_logger.handlers:
+                handler = lg.StreamHandler()
+                handler.setLevel(lg.DEBUG)
+                self._bootstrap_logger.addHandler(handler)
+        return self._bootstrap_logger
+    
+    def __getattr__(self, name: str):
+        """Proxy attribute access to the underlying logger."""
+        return getattr(self._get_logger(), name)
 
 
-logger = get_iq_mcp_logger()
+# Global lazy logger instance
+logger = _LazyLogger()
 
 __all__ = ["logger"]

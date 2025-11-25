@@ -1,5 +1,4 @@
 from typing import Any
-from dotenv import load_dotenv
 from datetime import datetime, timezone
 
 from supabase import create_client, Client as SBClient  # type: ignore
@@ -7,8 +6,6 @@ from supabase import create_client, Client as SBClient  # type: ignore
 from .models import KnowledgeGraph, Entity, Observation, Relation, UserIdentifier, GraphMeta
 from .iq_logging import logger
 from .settings import SupabaseConfig
-
-load_dotenv()
 
 
 # Versioning for Supabase schema (tables/columns stored in Supabase)

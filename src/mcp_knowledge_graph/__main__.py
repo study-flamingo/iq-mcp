@@ -3,14 +3,16 @@ Enhanced MCP server for knowledge graph memory.
 """
 
 import asyncio
-from .settings import settings
+from .context import ctx
 from .iq_logging import logger
 from .server import start_server
 
 
 def main():
     try:
-        logger.info(f"🔍 Memory path: {settings.memory_path}")
+        # Initialize context first to get settings and logger
+        ctx.init()
+        logger.info(f"🔍 Memory path: {ctx.settings.memory_path}")
         logger.debug("🚀 Starting IQ-MCP server...")
         asyncio.run(start_server())
     except KeyboardInterrupt:
@@ -20,7 +22,6 @@ def main():
         error = f"⛔ IQ-MCP encountered an uncaught exception: {e}"
         logger.error(error)
         raise RuntimeError(error)
-        # exit(1)
 
 
 if __name__ == "__main__":

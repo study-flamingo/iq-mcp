@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import Literal
 import logging as lg
 
+from .version import IQ_MCP_VERSION, IQ_MCP_SCHEMA_VERSION
+
 logger = lg.getLogger("iq-mcp-bootstrap")
 logger.addHandler(lg.FileHandler(Path(__file__).parents[2].resolve() / "iq-mcp-bootstrap.log"))
 logger.setLevel(lg.DEBUG)
@@ -32,9 +34,6 @@ logger.debug("Bootstrap logger set to debug")
 # Default memory file at repo root
 DEFAULT_MEMORY_PATH = Path(__file__).parents[2].resolve() / "memory.jsonl"
 DEFAULT_PORT = 8000
-IQ_MCP_VERSION = "1.2.0"
-IQ_MCP_SCHEMA_VERSION = 1  # TODO: Bump version when schema changes before pushing to production
-
 Transport = Literal["stdio", "sse", "http"]
 
 TRANSPORT_ENUM: dict[str, Transport] = {
@@ -366,7 +365,4 @@ class AppSettings:
         return self.supabase is not None and self.supabase.enabled
 
 
-# Module-level settings instance (loads on import)
-settings = AppSettings.load()
-
-__all__ = ["settings", "AppSettings", "IQSettings", "SupabaseConfig"]
+__all__ = ["AppSettings", "IQSettings", "SupabaseConfig"]

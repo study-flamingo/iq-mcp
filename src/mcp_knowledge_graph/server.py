@@ -18,6 +18,7 @@ from typing import Any
 from fastmcp.exceptions import ToolError, ValidationError
 
 from .iq_logging import logger
+from .context import ctx
 from .manager import KnowledgeGraphManager
 from .models import (
     DeleteEntryRequest,
@@ -35,12 +36,12 @@ from .models import (
     Observation,
     UpdateEntityRequest,
 )
-from .settings import settings
-from .settings import IQ_MCP_VERSION
+from .version import IQ_MCP_VERSION
 from .supabase_manager import EmailSummary
 
 
-manager = KnowledgeGraphManager(settings.memory_path)
+# Manager is initialized lazily after context init
+manager: KnowledgeGraphManager = None  # type: ignore[assignment]
 """
 Tools available from the manager:
 
@@ -237,12 +238,12 @@ async def print_entities(
                     graph = graph or await manager.read_graph()
                     user_info = graph.user_info
                     id = user_info.linked_entity_id
-                    icon = e.icon_()
+                    icon = e.icon_(use_emojis=not ctx.settings.no_emojis)
                     name = user_info.preferred_name
                     type = "user"
             else:
                 id = e.id
-                icon = e.icon_()
+                icon = e.icon_(use_emojis=not ctx.settings.no_emojis)
                 name = e.name
                 type = e.entity_type
 
@@ -371,11 +372,11 @@ async def print_relations(
         else:
             b_name = b.name
 
-        a_icon = a.icon_()
+        a_icon = a.icon_(use_emojis=not ctx.settings.no_emojis)
         a_id = a.id
         a_type = a.entity_type
 
-        b_icon = b.icon_()
+        b_icon = b.icon_(use_emojis=not ctx.settings.no_emojis)
         b_id = b.id
         b_type = b.entity_type
 
@@ -616,7 +617,9 @@ async def print_user_info(
         if include_observations and linked_entity:
             if linked_entity.observations:
                 lines.append("")
-                lines.append("" if settings.no_emojis else "🔍 " + "Observations about the user:")
+                lines.append(
+                    "" if ctx.settings.no_emojis else "🔍 " + "Observations about the user:"
+                )
                 for o in linked_entity.observations:
                     ts = o.timestamp.strftime("%Y-%m-%d %H:%M:%S") + " UTC"
                     lines.append(f"{ind}{ord}{os} {o.content} ({ts}, {o.durability.value})")
@@ -792,7 +795,7 @@ async def create_relations(new_relations: list[CreateRelationRequest]):
 
         for r in relations:
             from_e, to_e = await manager.get_entities_from_relation(r)
-            result += f"{from_e.icon_()}{from_e.name} ({from_e.entity_type}) {r.relation} {to_e.icon_()}{to_e.name} ({to_e.entity_type})\n"
+            result += f"{from_e.icon_(use_emojis=not ctx.settings.no_emojis)}{from_e.name} ({from_e.entity_type}) {r.relation} {to_e.icon_(use_emojis=not ctx.settings.no_emojis)}{to_e.name} ({to_e.entity_type})\n"
 
         return result
     except Exception as e:
@@ -1305,7 +1308,7 @@ async def update_entity(request: UpdateEntityRequest):
         )
 
         # Build a concise human-readable summary
-        result = f"Updated entity: {updated.icon_()}{updated.name} ({updated.entity_type})\n"
+        result = f"Updated entity: {updated.icon_(use_emojis=not ctx.settings.no_emojis)}{updated.name} ({updated.entity_type})\n"
         if updated.aliases:
             result += "  Aliases: " + ", ".join(updated.aliases) + "\n"
         return result
@@ -1503,7 +1506,7 @@ async def read_graph():
         lines.append("(No relations found for user entity - this may be an error!)")
 
     # Supabase integration: Print email summaries
-    if settings.supabase_enabled:
+    if ctx.settings.supabase_enabled:
         try:
             email_summaries = await manager.get_email_summaries()
         except Exception as e:
@@ -1545,6 +1548,12 @@ async def read_graph():
 # ----- MAIN APPLICATION ENTRY POINT -----#
 
 
+def _init_manager() -> None:
+    """Initialize the global manager after context is ready."""
+    global manager
+    manager = KnowledgeGraphManager.from_context()
+
+
 async def startup_check() -> None:
     """Check the startup of the server. Exits with an error if the server will not be able to start."""
     try:
@@ -1555,6 +1564,13 @@ async def startup_check() -> None:
 
 async def start_server():
     """Common entry point for the MCP server."""
+    # Initialize application context (settings, logger, supabase)
+    ctx.init()
+    settings = ctx.settings
+
+    # Initialize the manager now that context is ready
+    _init_manager()
+
     validated_transport = settings.transport
     logger.info(f"🚌 Transport selected: {validated_transport}")
     if validated_transport == "http":
