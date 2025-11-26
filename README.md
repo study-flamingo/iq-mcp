@@ -6,13 +6,14 @@ This is a modern Python implementation using Pydantic models and FastMCP, design
 
 ## ✨ Highlights
 
-  - **Temporal observations** with durability categories and automatic timestamps
-  - **Smart cleanup** that removes outdated observations by durability
-  - **Alias-aware graph**: resolve entities by name or any alias
-  - **Unified tools**: single `create_entry` and `delete_entry` cover CRUD
-  - **Merge entities**: consolidate duplicates while preserving relations and aliases
-  - **Enhanced search** across names, aliases, types, and observation content
-  - **Flexible storage**: robust JSONL reader supports nested and legacy-ish formats
+- **Temporal observations** with durability categories and automatic timestamps
+- **Smart cleanup** that removes outdated observations by durability
+- **Alias-aware graph**: resolve entities by name or any alias
+- **Daily automatic backups** of your memory file
+- **Merge entities**: consolidate duplicates while preserving relations and aliases
+- **Enhanced search** across names, aliases, types, and observation content
+- **Optional Supabase integration** for cloud storage and email summaries
+- **Context-based architecture** with no import-time side effects
 
 ## Core Concepts
 
@@ -20,22 +21,26 @@ This is a modern Python implementation using Pydantic models and FastMCP, design
 
 Entities are the primary nodes in the knowledge graph. Each entity has:
 
-  - A unique name (identifier)
-  - An entity type (e.g., "person", "organization", "event")
-  - A list of timestamped observations (with durability)
-  - Optional aliases (alternative names that map to the same entity)
+- A unique 8-character alphanumeric ID
+- A canonical name (identifier)
+- An entity type (e.g., "person", "organization", "event")
+- A list of timestamped observations (with durability)
+- Optional aliases (alternative names that map to the same entity)
+- Optional emoji icon
 
 Example:
 
 ```json
 {
+  "id": "a1b2c3d4",
   "name": "John_Smith",
   "entity_type": "person",
   "aliases": ["Johnny Smith", "John S."],
+  "icon": "👤",
   "observations": [
     {
       "content": "Speaks fluent Spanish",
-      "ts": "2025-06-26T18:45:00.000Z",
+      "timestamp": "2025-06-26T18:45:00.000Z",
       "durability": "permanent"
     }
   ]
@@ -48,9 +53,9 @@ Relations define directed connections between entities. They are stored in activ
 
 ```json
 {
-  "from": "John_Smith",
-  "to": "Anthropic",
-  "relation_type": "works_at"
+  "from_id": "a1b2c3d4",
+  "to_id": "e5f6g7h8",
+  "relation": "works at"
 }
 ```
 
@@ -59,140 +64,139 @@ Relations define directed connections between entities. They are stored in activ
 Observations include durability and an ISO timestamp to distinguish durable facts from transient state.
 
 Durability categories:
-  - `permanent`: Never expires (e.g., "Born in 1990")
-  - `long-term`: Relevant for ~1+ years (e.g., "Works at Acme Corp")
-  - `short-term`: Relevant for ~3 months (e.g., "Working on Project X")
-  - `temporary`: Relevant for ~1 month (e.g., "Currently learning TypeScript")
 
-## API Reference (FastMCP Tools)
+- `permanent`: Never expires (e.g., "Born in 1990")
+- `long-term`: Relevant for ~1+ years (e.g., "Works at Acme Corp")
+- `short-term`: Relevant for ~3 months (e.g., "Working on Project X")
+- `temporary`: Relevant for ~1 month (e.g., "Currently learning TypeScript")
 
-### Core, Unified CRUD
+### User Information
 
-#### create_entry
+The knowledge graph supports a primary user with separate identity management:
 
-Add observations, entities, or relations.
+- User info (name, pronouns, emails, etc.) stored separately from observations
+- Linked to a user entity for observations about the user
+- Computed `names` field for various name forms
 
-  - Request: `CreateEntryRequest`
-  - Fields:
-    - `entry_type`: one of `"observation" | "entity" | "relation"`
-    - `data`: list of the appropriate objects for the chosen type
+## API Reference (MCP Tools)
 
-Examples:
+### Entity Operations
 
-```json
-{ "entry_type": "entity", "data": [
-  { "name": "Dr_Smith", "entity_type": "person", "aliases": ["Doctor Smith"] }
-]}
-```
+| Tool | Description |
+|------|-------------|
+| `create_entities` | Add new entities with observations |
+| `update_entity` | Modify entity properties (name, type, aliases, icon) |
+| `merge_entities` | Combine multiple entities into one |
+| `delete_entities` | Remove entities and their relations |
 
-```json
-{ "entry_type": "relation", "data": [
-  { "from": "Dr_Smith", "to": "City_Hospital", "relation_type": "works_at" }
-]}
-```
+### Relation Operations
 
-```json
-{ "entry_type": "observation", "data": [
-  { "entityName": "Dr_Smith", "observation": [
-    { "content": "Currently on vacation", "durability": "temporary", "ts": null },
-    { "content": "Speaks three languages", "durability": "long-term", "ts": null }
-  ] }
-]}
-```
+| Tool | Description |
+|------|-------------|
+| `create_relations` | Add relations between entities |
+| `delete_relations` | Remove specific relations |
 
-Notes:
-  - Entity lookups are alias-aware; you can use the entity's name or any alias.
-  - Timestamps are added automatically; you may pass `"ts": null` for convenience.
+### Observation Operations
 
-#### delete_entry
+| Tool | Description |
+|------|-------------|
+| `add_observations` | Add observations to entities |
 
-Delete observations, entities, or relations.
+### Query Operations
 
-  - Request: `DeleteEntryRequest`
-  - Fields:
-    - `entry_type`: `"observation" | "entity" | "relation"`
-    - `data`:
-      - entities: `list[str]` of names or aliases
-      - observations: `list[DeleteObservationRequest]` with `{ entityName, observation: ["content to delete", ...] }`
-      - relations: `list[Relation]` with `{ from, to, relation_type }`
+| Tool | Description |
+|------|-------------|
+| `read_graph` | Full graph summary with user info, entities, relations |
+| `read_user_info` | User information and observations |
+| `search_nodes` | Search by name, type, alias, or observation content |
+| `open_nodes` | Retrieve specific entities by ID or name |
 
-This action is destructive and irreversible. Always confirm with the user before invoking.
+### User Operations
 
-### Graph Operations
+| Tool | Description |
+|------|-------------|
+| `update_user_info` | Update user identifying information |
 
-  - `read_graph()`: Returns full graph. Observations are sorted by newest first.
-  - `search_nodes(query)`: Matches names, aliases, types, and observation content.
-  - `open_nodes(entity_names)`: Returns only the requested nodes and their inter-relations (name or alias supported).
-  - `merge_entities(newentity_name, entity_names)`: Merge multiple entities into a single entity. Combines observations (deduped), rewrites relations, and aggregates aliases. Prevents name/alias conflicts.
+### Supabase Integration (Optional)
 
-### Temporal Management
-
-  - `cleanup_outdated_observations()`
-    - permanent: never removed
-    - long-term: removed after > ~12 months
-    - short-term: removed after > ~3 months
-    - temporary: removed after > ~1 month
-    - Returns counts plus details of removed observations
-
-  - `get_observations_by_durability(entity_name)`: Returns groups `permanent`, `long_term`, `short_term`, `temporary`.
+| Tool | Description |
+|------|-------------|
+| `get_new_email_summaries` | Fetch recent email summaries from Supabase |
 
 ## Usage Examples
 
-### Create entities, relations, and observations
+### Create entities with observations
 
 ```json
-{ "entry_type": "entity", "data": [
-  { "name": "Dr_Smith", "entity_type": "person", "aliases": ["Doctor Smith"] }
-]}
+{
+  "new_entities": [
+    {
+      "name": "Dr_Smith",
+      "entity_type": "person",
+      "aliases": ["Doctor Smith"],
+      "icon": "👨‍⚕️",
+      "observations": [
+        {"content": "Is a cardiologist", "durability": "permanent"},
+        {"content": "Recently promoted to department head", "durability": "long-term"}
+      ]
+    }
+  ]
+}
 ```
 
+### Create relations
+
 ```json
-{ "entry_type": "relation", "data": [
-  { "from": "Dr_Smith", "to": "City_Hospital", "relation_type": "works_at" }
-]}
+{
+  "new_relations": [
+    {
+      "from_entity_name": "Dr_Smith",
+      "to_entity_name": "City_Hospital",
+      "relation": "works at"
+    }
+  ]
+}
 ```
 
-```json
-{ "entry_type": "observation", "data": [
-  { "entityName": "Dr_Smith", "observation": [
-    { "content": "Is a cardiologist", "durability": "permanent", "ts": null },
-    { "content": "Recently promoted to department head", "durability": "long-term", "ts": null },
-    { "content": "Currently on vacation", "durability": "temporary", "ts": null }
-  ] }
-]}
-```
-
-### Temporal management
+### Add observations
 
 ```json
-{ "tool": "get_observations_by_durability", "params": { "entity_name": "Dr_Smith" } }
-```
-
-```json
-{ "tool": "cleanup_outdated_observations", "params": {} }
+{
+  "new_observations": [
+    {
+      "entity_name": "Dr_Smith",
+      "observations": [
+        {"content": "Currently on vacation", "durability": "temporary"}
+      ]
+    }
+  ]
+}
 ```
 
 ### Search and open
 
 ```json
-{ "tool": "search_nodes", "params": { "query": "cardiologist" } }
+{"tool": "search_nodes", "params": {"query": "cardiologist"}}
 ```
 
 ```json
-{ "tool": "open_nodes", "params": { "entity_names": ["Dr_Smith", "City_Hospital"] } }
+{"tool": "open_nodes", "params": {"entity_names": ["Dr_Smith", "City_Hospital"]}}
 ```
 
-### Merge
+### Merge entities
 
 ```json
-{ "tool": "merge_entities", "params": { "newentity_name": "John_Smith", "entity_names": ["John", "Johnny", "J. Smith"] } }
+{
+  "new_entity_name": "John_Smith",
+  "entity_ids": ["a1b2c3d4", "e5f6g7h8"]
+}
 ```
 
 ## Installation & Setup
 
 This server is intended to run locally under FastMCP-compatible clients.
 
-1) Clone and install
+### 1. Clone and install
 
 ```bash
 git clone https://www.github.com/study-flamingo/mcp-knowledge-graph.git
@@ -202,14 +206,16 @@ pip install -e .
 uv pip install -e .
 ```
 
-2) Configure your MCP client (Claude Desktop example)
+### 2. Configure your MCP client
+
+**Claude Desktop example:**
 
 ```json
 {
   "mcpServers": {
     "memory": {
       "command": "python",
-      "args": ["-m", "mcp_knowledge_graph.server", "--memory-path", "/absolute/path/to/memory.jsonl"],
+      "args": ["-m", "mcp_knowledge_graph", "--memory-path", "/absolute/path/to/memory.jsonl"],
       "env": {
         "IQ_TRANSPORT": "stdio",
         "IQ_DEBUG": "false"
@@ -219,32 +225,81 @@ uv pip install -e .
 }
 ```
 
-Notes:
-  - Default transport is `stdio`. You can also use `http` or `sse` by setting `IQ_TRANSPORT` (aliases like `streamable-http` are normalized to `http`).
-  - Memory path may be provided via CLI `--memory-path` or environment `IQ_MEMORY_PATH`.
+**Notes:**
 
-3) Optional: HTTP transport (for streamable clients)
+- Default transport is `stdio`. You can also use `http` or `sse` by setting `IQ_TRANSPORT`
+- Memory path may be provided via CLI `--memory-path` or environment `IQ_MEMORY_PATH`
+
+### 3. Optional: HTTP transport
 
 ```bash
 IQ_TRANSPORT=http IQ_STREAMABLE_HTTP_PORT=8000 \
-python -m mcp_knowledge_graph.server --memory-path /absolute/path/to/memory.jsonl
+python -m mcp_knowledge_graph --memory-path /absolute/path/to/memory.jsonl
 ```
 
-### Configuration (env and CLI)
+### 4. Optional: Supabase integration
 
-Env vars (with CLI equivalents):
-  - `IQ_MEMORY_PATH` (or `--memory-path`): path to `memory.jsonl` (default: repo root `memory.jsonl`, fallback: `example.jsonl` if present)
-  - `IQ_TRANSPORT` (or `--transport`): `stdio` | `http` | `sse`
-  - `IQ_STREAMABLE_HTTP_PORT` (or `--port`): port for `http` transport (default: 8000)
-  - `IQ_STREAMABLE_HTTP_HOST` (or `--http-host`)
-  - `IQ_STREAMABLE_HTTP_PATH` (or `--http-path`)
-  - `IQ_DEBUG` (or `--debug`): `true` enables verbose logging
+```bash
+IQ_ENABLE_SUPABASE=true \
+IQ_SUPABASE_URL=https://xxx.supabase.co \
+IQ_SUPABASE_KEY=xxxxx \
+python -m mcp_knowledge_graph
+```
 
-### Migration
+## Configuration
 
-If you were using the original project, your JSONL files should work as long as entity and relation records are well-formed. Loader accepts nested `data` format and a flattened format; invalid lines are skipped with a warning. Saving uses the modern nested format.
+### Environment Variables
 
-## System Prompt for Temporal Memory
+| Variable | CLI Flag | Description | Default |
+|----------|----------|-------------|---------|
+| `IQ_MEMORY_PATH` | `--memory-path` | Path to memory.jsonl | `./memory.jsonl` |
+| `IQ_TRANSPORT` | `--transport` | Transport type: `stdio`, `http`, `sse` | `stdio` |
+| `IQ_STREAMABLE_HTTP_PORT` | `--port` | Port for HTTP transport | `8000` |
+| `IQ_STREAMABLE_HTTP_HOST` | `--http-host` | Host for HTTP transport | - |
+| `IQ_STREAMABLE_HTTP_PATH` | `--http-path` | Path for HTTP transport | - |
+| `IQ_DEBUG` | `--debug` | Enable verbose logging | `false` |
+| `IQ_NO_EMOJIS` | `--no-emojis` | Disable emoji output | `false` |
+| `IQ_DRY_RUN` | `--dry-run` | Skip saving changes | `false` |
+| `IQ_ENABLE_SUPABASE` | `--enable-supabase` | Enable Supabase integration | `false` |
+| `IQ_SUPABASE_URL` | `--supabase-url` | Supabase project URL | - |
+| `IQ_SUPABASE_KEY` | `--supabase-key` | Supabase API key | - |
+
+### Precedence
+
+1. CLI arguments (highest)
+2. Environment variables
+3. Defaults (lowest)
+
+## Data Format
+
+### JSONL Storage
+
+IQ-MCP stores data in a JSONL file with typed records:
+
+```jsonl
+{"type":"meta","data":{"schema_version":1,"app_version":"1.3.0","graph_id":"abc12345"}}
+{"type":"user_info","data":{"preferred_name":"John","linked_entity_id":"usr12345"}}
+{"type":"entity","data":{"id":"usr12345","name":"user","entity_type":"person","observations":[]}}
+{"type":"relation","data":{"from_id":"usr12345","to_id":"abc12345","relation":"knows"}}
+```
+
+### Automatic Backups
+
+Daily backups are created automatically in a `backups/` subdirectory:
+
+```
+memory.jsonl
+backups/
+  memory_2025-11-25.jsonl
+  memory_2025-11-24.jsonl
+```
+
+### Backward Compatibility
+
+- Loader tolerates both nested (`{"type":"entity","data":{...}}`) and flattened formats
+- Lines that are malformed are skipped with warnings rather than failing the entire load
+
+## System Prompt for Memory
 
 Knowledge graph usage improves with a good system prompt. Example:
 
@@ -253,84 +308,55 @@ Knowledge graph usage improves with a good system prompt. Example:
 
 Follow these steps for conversational interactions:
 
-## User Identification:
-You should assume that you are interacting with the `default_user`.
-If you have not identified default_user, proactively try to do so.
+## User Identification
+Assume you are interacting with the primary user. If you have not identified them, proactively try to do so.
 
-## Memory Retrieval:
-Always begin a new conversation by retrieving all relevant information from your knowledge graph
-Always refer to your knowledge graph as your "memory"
+## Memory Retrieval
+Always begin a new conversation by retrieving relevant information from your knowledge graph.
+Always refer to your knowledge graph as your "memory".
 
-## Memory Gathering:
-While conversing with the user, be attentive to any new information that falls into these categories:
-a) Professional Identity (job title, specializations, software development skills, certifications, business roles, etc.)
-b) Domain-Specific Knowledge (work protocols, project details, scheduling patterns, equipment, software systems, workflow optimizations, etc.)
-c) Technical Projects (current development projects, programming languages, frameworks, AI tools, automation workflows, deployment environments, etc.)
-d) Learning & Development (new technologies being explored, courses taken, conferences attended, skill gaps, learning goals, etc.)
-e) Professional Network (colleagues, software development contacts, AI/tech community connections, business partners, mentors, etc.)
-f) Task Management (recurring responsibilities, project deadlines, appointment patterns, development milestones, automation opportunities, etc.)
-g) Tools & Systems (domain-specific software, development tools, AI assistants, productivity apps, integrations, pain points, etc.)
-h) Business Operations (KPIs, revenue goals, efficiency improvements, technology investments, growth strategies, etc.)
+## Memory Gathering
+While conversing, be attentive to new information:
+- Professional identity and skills
+- Projects and technical work
+- Learning and development goals
+- Professional network
+- Tools and systems used
+- Personal preferences and interests
 
-## Memory Update with Temporal Awareness:
-If any new information was gathered during the interaction, update your memory using appropriate durability:
+## Memory Update with Temporal Awareness
+Update your memory using appropriate durability:
 
 **Permanent**: Core identity, fundamental skills, permanent relationships
-- "Is a software engineer", "Has a degree in Computer Science", "Full name is Ada Lovelace"
+- "Is a software engineer", "Has a degree in Computer Science"
 
 **Long-term**: Stable preferences, established systems, long-term goals
-- "Uses VS Code", "Enjoys long walks on the beach", "Prefers Python"
+- "Uses VS Code", "Prefers Python", "Lives in Seattle"
 
 **Short-term**: Current projects, temporary situations, 3-month goals
-- "Learning how to play the theremin", "Finishing their high school degree"
+- "Learning Rust", "Working on Q4 roadmap"
 
 **Temporary**: Immediate tasks, current states, monthly activities
-- "Currently working on memory server", "Traveling to Saturn next week"
-
-Use `create_entry` with `entry_type="observation"` and appropriate durability when adding new information.
-Regularly run `cleanup_outdated_observations` to maintain data quality.
+- "Currently debugging auth issue", "Traveling next week"
 ```
-
-## Data Format & Migration
-
-### JSONL Storage Format
-
-IQ_MCP stores data in a JSONL file. Entities and Relations are discrete objects and tie Entities together.
-
-Information about the user is stored in the `default_user` object. Within the file is an identifier that provides the user's
-real name, and several possible variations (nickname, etc.).
-
-Save file format:
-
-  - `__default_user__` identifier
-
-```jsonl
-{"type":"entity","data":{"name":"Dr_Smith","entity_type":"person","observation":[{"contents":"Is a cardiologist","durability":"permanent","ts":"2025-01-01T00:00:00"}],"alias":["Doctor Smith"]}}
-{"type":"relation","data":{"from":"Dr_Smith","to":"City_Hospital","relation_type":"works_at"}}
-```
-
-### Backward Compatibility
-
-  - Loader tolerates both nested (`{"type":"entity","data":{...}}`) and flattened (`{"type":"entity", ...}`) variants
-  - Lines that are malformed are skipped with warnings rather than failing the entire load
 
 ## Development
 
-1) Install dev deps and sync
+### Install dev dependencies
 
 ```bash
 pip install -e ".[dev]"
 uv sync
 ```
 
-2) Run tests
+### Run tests
 
 ```bash
 pytest
 pytest --cov=mcp_knowledge_graph
 ```
 
-3) Visualize a graph (optional)
+### Visualize a graph
 
 ```bash
 python -m mcp_knowledge_graph.visualize --input memory.jsonl --output graph.html --title "Knowledge Graph"
@@ -338,39 +364,43 @@ python -m mcp_knowledge_graph.visualize --input memory.jsonl --output graph.html
 
 Open `graph.html` to explore nodes, aliases, observations, and relations with an interactive D3 view.
 
-## Performance & Scalability
+## Architecture
 
-  - **Efficient search** across names, aliases, types, and observation content  
-  - **Incremental cleanup** of outdated observations
-  - **Optimized JSONL storage**
+```
+┌─────────────────────────────────────────────────────────────┐
+│  __main__.py  →  ctx.init()  →  start_server()             │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│  context.py: AppContext (settings, logger, supabase)       │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│  server.py: FastMCP tools + formatting                     │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│  manager.py: Business logic + persistence                  │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│  models.py: Pydantic data models                           │
+└─────────────────────────────────────────────────────────────┘
+```
 
-## Python Features Demonstrated
-
-  - **FastMCP 2.11** server tools
-  - **Pydantic** models with field aliases
-  - **Enums** for durability
-  - **Type hints** throughout
-  - **Async/await** where appropriate
-
-## Contributing
-
-Key improvements over the original baseline:
-
-1) Temporal observation system with durability categorization and timestamps
-2) Unified CRUD via `create_entry`/`delete_entry`
-3) Alias-aware entity resolution and search
-4) Entity merge with relation rewrite and alias aggregation
-5) Robust JSONL reader and safer persistence
+See `docs/` for detailed architecture documentation.
 
 ## Changelog
 
-### Recent
+See [CHANGELOG.md](CHANGELOG.md) for version history.
 
-  - ✨ Temporal observations with durability + timestamps
-  - ✨ Unified tools: `create_entry`, `delete_entry`
-  - ✨ `merge_entities` tool for dedupe/consolidation
-  - ✨ Alias-aware operations across tools
-  - 🔄 Backward-friendly JSONL loading (nested and flattened)
+### Recent (v1.3.0)
+
+- ✨ Context-based architecture with no import-time side effects
+- ✨ Daily automatic backups
+- ✨ Centralized version constants
+- ✨ Lazy logger that works before/after initialization
+- 🔄 Decoupled models from settings
 
 ## License
 

@@ -1,13 +1,49 @@
 # Changelog
 
-All notable changes to the Enhanced Memory MCP Server with Temporal Observations will be documented in this file.
+All notable changes to the IQ-MCP Knowledge Graph Server will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2025-11-25
+
+### 🏗️ Architecture
+
+- **Context-based initialization**: Introduced `AppContext` singleton in `context.py` that manages runtime state (settings, logger, Supabase manager)
+- **No import-time side effects**: Removed module-level `settings = AppSettings.load()` singleton; initialization now happens explicitly via `ctx.init()`
+- **Centralized version constants**: Created `version.py` with `IQ_MCP_VERSION` and `IQ_MCP_SCHEMA_VERSION`
+- **Decoupled models from settings**: `models.py` no longer imports `settings.py`; `Entity.icon_()` now accepts `use_emojis` parameter
+- **Lazy logger**: `iq_logging.py` provides a proxy logger that works before and after context initialization
+
+### 🆕 Added
+
+- **Daily automatic backups**: Memory file is backed up daily to `backups/` subdirectory after each save
+- **`context.py`**: New module for application context management
+- **`version.py`**: New module for centralized version constants
+
+### 🔄 Changed
+
+- **Entry point flow**: `__main__.py` now calls `ctx.init()` before starting server
+- **Manager initialization**: `KnowledgeGraphManager` uses `ctx` for dependencies instead of module-level imports
+- **Server startup**: `start_server()` initializes context and manager explicitly
+- **Supabase manager**: Removed redundant `load_dotenv()` call; configuration comes from context
+
+### 📚 Documentation
+
+- Updated all documentation in `docs/` to reflect new architecture
+- New architecture diagrams and dependency flow documentation
+- Updated `SETTINGS_FLOW.md` with context-based initialization details
+- Added backup feature documentation
+
+### 🛠️ Maintenance
+
+- No storage schema changes; `IQ_MCP_SCHEMA_VERSION` remains 1
+- Improved testability through explicit dependency injection
+
 ## [1.2.0] - 2025-11-17
 
 ### 🔄 Changed
+
 - Project version aligned to 1.2.0 across codebase:
   - Updated `pyproject.toml` project version to 1.2.0
   - Updated `src/mcp_knowledge_graph/__init__.py` `__version__` to 1.2.0
@@ -15,62 +51,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Normalized migration tool `CURRENT_VERSION` to `1.2.0` (no leading `v`)
 
 ### 🛠️ Maintenance
+
 - Prepared for release PR to merge `dev` → `main`
 - No storage schema changes; `IQ_MCP_SCHEMA_VERSION` remains 1
 
 ### 📚 References
+
 - See `docs/PROJECT_OVERVIEW.md` (schema/versioning) and `docs/LLM_COLLAB.md` (semver & migrations).
 
 ## [0.7.0] - 2025-06-26
 
 ### 🆕 Added
-  - **Temporal Observation System**: Observations now support timestamp and durability metadata
-  - **Durability Categories**: Four levels - permanent, long-term, short-term, temporary  
-  - **Smart Cleanup**: `cleanup_outdated_observations` tool for automatic removal of outdated information
-  - **Durability Querying**: `get_observations_by_durability` tool for categorized viewing
-  - **Enhanced TypeScript Interfaces**:
-    - `TimestampedObservation` interface for temporal observations
-    - `ObservationInput` interface for flexible observation creation
-  - **Automatic Normalization**: Legacy string observations converted to temporal format on load
-  - **Mixed Format Support**: `add_observations` accepts both strings and temporal objects
 
-### 🔄 Changed  
-  - **Enhanced `add_observations`**: Now supports temporal metadata while maintaining backward compatibility
-  - **Improved Error Handling**: Better error messages and type safety throughout
-  - **Updated Server Version**: Bumped to 0.7.0 to reflect temporal features
-  - **Comprehensive Documentation**: Updated README with temporal features and examples
+- **Temporal Observation System**: Observations now support timestamp and durability metadata
+- **Durability Categories**: Four levels - permanent, long-term, short-term, temporary
+- **Smart Cleanup**: `cleanup_outdated_observations` tool for automatic removal of outdated information
+- **Durability Querying**: `get_observations_by_durability` tool for categorized viewing
+- **Enhanced TypeScript Interfaces**:
+  - `TimestampedObservation` interface for temporal observations
+  - `ObservationInput` interface for flexible observation creation
+- **Automatic Normalization**: Legacy string observations converted to temporal format on load
+- **Mixed Format Support**: `add_observations` accepts both strings and temporal objects
+
+### 🔄 Changed
+
+- **Enhanced `add_observations`**: Now supports temporal metadata while maintaining backward compatibility
+- **Improved Error Handling**: Better error messages and type safety throughout
+- **Updated Server Version**: Bumped to 0.7.0 to reflect temporal features
+- **Comprehensive Documentation**: Updated README with temporal features and examples
 
 ### 🏗️ Technical Improvements
-  - **Type Safety**: Leveraged TypeScript string literal types for durability categories
-  - **Union Types**: Used for backward compatibility between string and temporal observations  
-  - **Helper Methods**: Added private methods for observation creation and normalization
-  - **Data Migration**: Automatic conversion of legacy JSONL format to temporal format
+
+- **Type Safety**: Leveraged TypeScript string literal types for durability categories
+- **Union Types**: Used for backward compatibility between string and temporal observations
+- **Helper Methods**: Added private methods for observation creation and normalization
+- **Data Migration**: Automatic conversion of legacy JSONL format to temporal format
 
 ### 📚 Documentation
-  - **Updated README**: Comprehensive documentation of temporal features
-  - **API Reference**: Detailed documentation of all tools and their capabilities
-  - **Usage Examples**: Practical examples showing temporal observation usage
-  - **System Prompt**: Enhanced memory prompt template leveraging temporal features
-  - **TypeScript Examples**: Demonstrated modern TypeScript patterns and best practices
+
+- **Updated README**: Comprehensive documentation of temporal features
+- **API Reference**: Detailed documentation of all tools and their capabilities
+- **Usage Examples**: Practical examples showing temporal observation usage
+- **System Prompt**: Enhanced memory prompt template leveraging temporal features
+- **TypeScript Examples**: Demonstrated modern TypeScript patterns and best practices
 
 ### 🔒 Backward Compatibility
-  - **Legacy Support**: All existing string observations continue to work
-  - **Default Behavior**: String observations default to "long-term" durability
-  - **Automatic Migration**: JSONL files automatically converted without data loss
-  - **API Compatibility**: All existing tool signatures remain unchanged
+
+- **Legacy Support**: All existing string observations continue to work
+- **Default Behavior**: String observations default to "long-term" durability
+- **Automatic Migration**: JSONL files automatically converted without data loss
+- **API Compatibility**: All existing tool signatures remain unchanged
 
 ## [0.6.3] - Base Version
 
 ### Original Features from Anthropic MCP Memory Server
-  - Basic entity/relation/observation CRUD operations
-  - Simple string-based search functionality  
-  - JSONL storage format
-  - MCP protocol compliance
-  - Claude Desktop integration support
+
+- Basic entity/relation/observation CRUD operations
+- Simple string-based search functionality
+- JSONL storage format
+- MCP protocol compliance
+- Claude Desktop integration support
 
 ---
 
 ## Migration Guide
+
+### From v1.2.0 to v1.3.0
+
+**No action required!** The upgrade is fully backward compatible:
+
+1. **Existing memory files**: Work without modification
+2. **Existing tools**: Continue to work exactly as before
+3. **New backups**: Will be created automatically in `backups/` subdirectory
+
+**Architecture changes** (for developers extending the codebase):
+
+- Import settings via `ctx.settings` instead of `from .settings import settings`
+- Initialize context with `ctx.init()` before accessing `ctx.settings`, `ctx.logger`, or `ctx.supabase`
+- Use `entity.icon_(use_emojis=True/False)` instead of relying on global settings
 
 ### From v0.6.3 to v0.7.0
 
@@ -82,20 +140,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **To leverage new features**:
 
-```typescript
-// Start using temporal observations
+```python
+# Start using temporal observations
 add_observations([{
-  entity_name: "user", 
-  contents: [
-    { content: "Permanent fact", durability: "permanent" },
-    { content: "Current project", durability: "temporary" }
+  "entity_name": "user",
+  "observations": [
+    {"content": "Permanent fact", "durability": "permanent"},
+    {"content": "Current project", "durability": "temporary"}
   ]
 }])
 
-// Clean up outdated information  
+# Clean up outdated information
 cleanup_outdated_observations()
 
-// View observations by category
+# View observations by category
 get_observations_by_durability("user")
 ```
 

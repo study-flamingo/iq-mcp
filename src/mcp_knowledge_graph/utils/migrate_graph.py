@@ -13,7 +13,7 @@ from mcp_knowledge_graph.models import (
     KnowledgeGraph,
 )
 
-CURRENT_VERSION = "1.2.0"
+CURRENT_VERSION = "1.3.0"
 DRY_RUN = False
 IGNORE_ERRORS = False
 
