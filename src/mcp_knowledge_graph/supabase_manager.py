@@ -10,7 +10,8 @@ from .settings import SupabaseConfig
 
 # Versioning for Supabase schema (tables/columns stored in Supabase)
 # Bump when Supabase-side data model changes incompatibly.
-SUPABASE_SCHEMA_VERSION: int = 1
+# v2: Added unique constraint on (linked_entity, content) for kgObservations to support upserts
+SUPABASE_SCHEMA_VERSION: int = 2
 
 
 class SupabaseException(Exception):
@@ -175,17 +176,20 @@ class SupabaseManager:
                 f"(Supabase) Marked {len(email_ids)} email summaries as reviewed in Supabase"
             )
 
-    async def save_knowledge_graph(self, graph: KnowledgeGraph) -> None:
+    async def save_knowledge_graph(self, graph: KnowledgeGraph) -> str:
         """
-        Replace Supabase knowledge graph tables with a cleaned snapshot from the provided graph.
+        Sync Supabase knowledge graph tables with a cleaned snapshot from the provided graph.
 
-        Order of operations (to satisfy FK constraints):
-        1) Delete relations, then observations, then entities
-        2) Insert entities, then observations, then relations
+        Uses upserts to safely update/insert data without risk of data loss from failed deletes.
+        After successful upserts, orphaned records (not in current graph) are cleaned up.
+
+        Order of operations:
+        1) Upsert entities, then observations, then relations, then user_info
+        2) Clean up orphaned records (relations, observations, entities) that are no longer in the graph
         """
         if self.settings.dry_run:
             logger.warning("(Supabase) 🏜️ Dry run mode enabled, skipping sync_knowledge_graph()")
-            return
+            return "🏜️ Dry run mode - no changes made"
 
         client = self._ensure_client()
 
@@ -305,31 +309,105 @@ class SupabaseManager:
         else:
             raise RuntimeError("User info not found in graph! WTF?")
 
-        # --- Replace remote data ---
-        # Delete in FK-safe order: relations -> observations -> entities
-        try:
-            _ = client.table(relations_table).delete().neq("from", "").execute()
-            _ = client.table(observations_table).delete().neq("linked_entity", "").execute()
-            _ = client.table(entities_table).delete().neq("id", "").execute()
-            _ = client.table(user_info_table).delete().neq("first_name", "").execute()
-        except Exception as e:
-            logger.error(f"Error clearing Supabase tables: {e}")
-            raise SupabaseException(f"Error clearing Supabase tables: {e}")
-
-        # Insert payloads: entities -> observations -> relations
+        # --- Upsert data (safe: existing data preserved on failure) ---
+        # Upsert order: entities -> observations -> relations -> user_info
+        # This ensures FK constraints are satisfied (entities must exist before observations/relations reference them)
         try:
             if entities_payload:
-                _ = client.table(entities_table).insert(entities_payload).execute()
+                # Upsert entities by primary key (id)
+                _ = (
+                    client.table(entities_table)
+                    .upsert(entities_payload, on_conflict="id")
+                    .execute()
+                )
+                logger.debug(f"(Supabase) Upserted {len(entities_payload)} entities")
+
             if observations_payload:
-                # Optional: chunk if very large; current volume expected manageable
-                _ = client.table(observations_table).insert(observations_payload).execute()
+                # Upsert observations - requires unique constraint on (linked_entity, content)
+                _ = (
+                    client.table(observations_table)
+                    .upsert(observations_payload, on_conflict="linked_entity,content")
+                    .execute()
+                )
+                logger.debug(f"(Supabase) Upserted {len(observations_payload)} observations")
+
             if relations_payload:
-                _ = client.table(relations_table).insert(relations_payload).execute()
+                # Upsert relations - requires unique constraint on (from, to, content)
+                _ = (
+                    client.table(relations_table)
+                    .upsert(relations_payload, on_conflict="from,to,content")
+                    .execute()
+                )
+                logger.debug(f"(Supabase) Upserted {len(relations_payload)} relations")
+
             if user_info_payload:
-                _ = client.table(user_info_table).insert(user_info_payload).execute()
+                # Upsert user_info by primary key (linked_entity_id)
+                _ = (
+                    client.table(user_info_table)
+                    .upsert(user_info_payload, on_conflict="linked_entity_id")
+                    .execute()
+                )
+                logger.debug(f"(Supabase) Upserted user info")
+
         except Exception as e:
-            logger.error(f"Error inserting Supabase data: {e}")
-            raise SupabaseException(f"Error inserting Supabase data: {e}")
+            logger.error(f"Error upserting Supabase data: {e}")
+            raise SupabaseException(f"Error upserting Supabase data: {e}")
+
+        # --- Clean up orphaned records (only after successful upserts) ---
+        # Delete records that are no longer in the current graph
+        try:
+            # Get current entity IDs for cleanup queries
+            current_entity_ids = list(entity_by_id.keys())
+
+            # Build set of current observation keys for cleanup
+            current_obs_keys: set[tuple[str, str]] = set()
+            for obs in observations_payload:
+                current_obs_keys.add((obs["linked_entity"], obs["content"]))
+
+            # Build set of current relation keys for cleanup
+            current_rel_keys: set[tuple[str, str, str]] = set()
+            for rel in relations_payload:
+                current_rel_keys.add((rel["from"], rel["to"], rel["content"]))
+
+            # Delete orphaned relations (FK-safe: delete relations first)
+            if current_entity_ids:
+                # Delete relations where from or to entity no longer exists
+                _ = (
+                    client.table(relations_table)
+                    .delete()
+                    .not_.in_("from", current_entity_ids)
+                    .execute()
+                )
+                _ = (
+                    client.table(relations_table)
+                    .delete()
+                    .not_.in_("to", current_entity_ids)
+                    .execute()
+                )
+
+            # Delete orphaned observations (observations for entities that no longer exist)
+            if current_entity_ids:
+                _ = (
+                    client.table(observations_table)
+                    .delete()
+                    .not_.in_("linked_entity", current_entity_ids)
+                    .execute()
+                )
+
+            # Delete orphaned entities (entities no longer in graph)
+            if current_entity_ids:
+                _ = (
+                    client.table(entities_table)
+                    .delete()
+                    .not_.in_("id", current_entity_ids)
+                    .execute()
+                )
+
+            logger.debug("(Supabase) Cleaned up orphaned records")
+
+        except Exception as e:
+            # Log but don't fail - data is already safely upserted
+            logger.warning(f"(Supabase) Non-critical: Error cleaning up orphaned records: {e}")
 
         logger.info(
             f"Supabase sync complete: entities={len(entities_payload)}, observations={len(observations_payload)}, relations={len(relations_payload)}"

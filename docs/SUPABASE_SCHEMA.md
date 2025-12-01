@@ -1,6 +1,6 @@
 # Supabase Schema
 
-**Schema Version:** 1
+**Schema Version:** 2
 
 The Supabase database for cloud memory storage should be constructed as follows:
 
@@ -43,7 +43,9 @@ CREATE TABLE public.kgObservations (
   linked_entity text NOT NULL REFERENCES public.kgEntities(id) ON DELETE CASCADE,
   content text NOT NULL,
   durability text NOT NULL,
-  created_at timestamp with time zone
+  created_at timestamp with time zone,
+  -- Required for upsert support
+  UNIQUE (linked_entity, content)
 );
 
 -- Relations table
@@ -98,15 +100,57 @@ Table names can be customized via environment variables:
 
 When saving to Supabase (`ctx.supabase.save_knowledge_graph()`):
 
-1. **Delete** existing data (relations → observations → entities → user_info)
-2. **Insert** fresh data (entities → observations → relations → user_info)
+1. **Upsert** current graph data (entities → observations → relations → user_info)
+   - Uses `on_conflict` to safely update existing records or insert new ones
+   - Existing data is preserved if upsert fails (no data loss risk)
+2. **Clean up** orphaned records (relations → observations → entities)
+   - Only removes records for entities that no longer exist in the graph
+   - Cleanup failures are logged but don't fail the sync
 
-This is a full replacement, not incremental sync.
+### Required Unique Constraints
+
+For upserts to work correctly, ensure these constraints exist:
+
+| Table | Constraint Columns |
+|-------|-------------------|
+| `kgEntities` | `id` (primary key) |
+| `kgObservations` | `(linked_entity, content)` |
+| `kgRelations` | `(from, to, content)` (primary key) |
+| `kgUserInfo` | `linked_entity_id` (primary key) |
 
 ## Versioning
 
-- Code expects Supabase schema version 1 (see `SUPABASE_SCHEMA_VERSION` in `supabase_manager.py`)
+- Code expects Supabase schema version 2 (see `SUPABASE_SCHEMA_VERSION` in `supabase_manager.py`)
 - When changing table/column contracts incompatibly:
   1. Bump `SUPABASE_SCHEMA_VERSION`
   2. Update this document with `[version: N]`
   3. Provide a migration note
+
+### Migration: v1 → v2
+
+Version 2 changes from delete-then-insert to upserts for safer data handling.
+
+**Required change:** Add unique constraint on `kgObservations`:
+
+```sql
+ALTER TABLE public.kgObservations
+ADD CONSTRAINT kgObservations_linked_entity_content_key
+UNIQUE (linked_entity, content);
+```
+
+Note: If you have duplicate (linked_entity, content) pairs, you'll need to dedupe them first:
+
+```sql
+-- Find duplicates
+SELECT linked_entity, content, COUNT(*)
+FROM public.kgObservations
+GROUP BY linked_entity, content
+HAVING COUNT(*) > 1;
+
+-- Remove duplicates (keeps oldest by created_at)
+DELETE FROM public.kgObservations a
+USING public.kgObservations b
+WHERE a.linked_entity = b.linked_entity
+  AND a.content = b.content
+  AND a.created_at > b.created_at;
+```
