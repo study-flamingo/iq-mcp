@@ -5,7 +5,15 @@ All notable changes to the IQ-MCP Knowledge Graph Server will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.3.0] - 2025-11-25
+## [1.3.0] - 2025-12-07
+
+### 🚀 Deployment & Authentication
+
+- **HTTP deployment stack**: Added Docker + nginx deployment with SSL termination
+- **API key authentication**: New `StaticTokenVerifier` support via `auth.py` module
+- **Stateless HTTP mode**: `FASTMCP_STATELESS_HTTP=true` for Cursor/client compatibility
+- **URL token auth**: nginx configured to accept `?token=` query parameter
+- **Supabase as core dependency**: Moved from optional `[sb]` group to main dependencies
 
 ### 🏗️ Architecture
 
@@ -17,12 +25,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 🆕 Added
 
+- **`auth.py`**: Authentication provider configuration for HTTP deployments
+- **`Dockerfile`**: Production Docker image with Python 3.13
+- **`docker-compose.yml`**: Orchestration with nginx reverse proxy
+- **`nginx/conf.d/mcp.conf`**: SSL termination and path routing
+- **`deploy/` scripts**: `deploy.sh`, `quick-deploy.sh`, `vm-logs.sh`, `vm-ssh.sh`
 - **Daily automatic backups**: Memory file is backed up daily to `backups/` subdirectory after each save
 - **`context.py`**: New module for application context management
 - **`version.py`**: New module for centralized version constants
 
 ### 🔄 Changed
 
+- **FastMCP upgraded**: Now requires `>=2.13.0` for authentication support
 - **Entry point flow**: `__main__.py` now calls `ctx.init()` before starting server
 - **Manager initialization**: `KnowledgeGraphManager` uses `ctx` for dependencies instead of module-level imports
 - **Server startup**: `start_server()` initializes context and manager explicitly
@@ -34,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - New architecture diagrams and dependency flow documentation
 - Updated `SETTINGS_FLOW.md` with context-based initialization details
 - Added backup feature documentation
+- Added `AGENTS.md` scratchpad for agent context
 
 ### 🛠️ Maintenance
 

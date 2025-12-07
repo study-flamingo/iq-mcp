@@ -117,3 +117,12 @@ __pycache__/
 
 # private docs
 docs/.*
+
+# Deployment secrets (keep templates, ignore actual configs)
+deploy/env.production
+nginx/ssl/*.pem
+nginx/ssl/*.key
+data/
+
+# Cursor local MCP config (may contain secrets)
+.cursor/mcp.json

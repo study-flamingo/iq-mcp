@@ -1,24 +1,35 @@
-FROM node:22.12-alpine AS builder
-
-COPY src/memory /app
-COPY tsconfig.json /tsconfig.json
+# IQ-MCP Docker Image
+FROM python:3.13-slim
 
 WORKDIR /app
 
-RUN --mount=type=cache,target=/root/.npm npm install
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN --mount=type=cache,target=/root/.npm-production npm ci --ignore-scripts --omit-dev
+# Copy dependency files first (for better caching)
+COPY pyproject.toml ./
+COPY src/ ./src/
 
-FROM node:22-alpine AS release
+# Install the package (supabase is now in main deps)
+RUN pip install --no-cache-dir -e .
 
-COPY --from=builder /app/dist /app/dist
-COPY --from=builder /app/package.json /app/package.json
-COPY --from=builder /app/package-lock.json /app/package-lock.json
+# Create data directory for persistent storage
+RUN mkdir -p /data /data/backups && \
+    chmod 755 /data
 
-ENV NODE_ENV=production
+# Environment defaults (override via docker-compose or .env)
+ENV IQ_TRANSPORT=http \
+    IQ_STREAMABLE_HTTP_HOST=0.0.0.0 \
+    IQ_STREAMABLE_HTTP_PORT=8000 \
+    IQ_STREAMABLE_HTTP_PATH=/mcp \
+    IQ_MEMORY_PATH=/data/memory.jsonl \
+    IQ_ENABLE_SUPABASE=true \
+    PYTHONUNBUFFERED=1
 
-WORKDIR /app
+EXPOSE 8000
 
-RUN npm ci --ignore-scripts --omit-dev
-
-ENTRYPOINT ["node", "dist/index.js"]
+# Run the server
+CMD ["python", "-m", "mcp_knowledge_graph"]

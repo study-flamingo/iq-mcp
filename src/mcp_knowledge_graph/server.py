@@ -38,6 +38,7 @@ from .models import (
 )
 from .version import IQ_MCP_VERSION
 from .supabase_manager import EmailSummary
+from .auth import get_auth_provider
 
 
 # Manager is initialized lazily after context init
@@ -85,8 +86,10 @@ Tools available from the manager:
 """
 
 
-# Create FastMCP server instance
-mcp = FastMCP(name="iq-mcp", version=IQ_MCP_VERSION)
+# Create FastMCP server instance with optional authentication
+# Auth is configured via IQ_API_KEY environment variable
+_auth_provider = get_auth_provider()
+mcp = FastMCP(name="iq-mcp", version=IQ_MCP_VERSION, auth=_auth_provider)
 
 
 @dataclass

@@ -1,0 +1,11 @@
+---
+alwaysApply: true
+---
+## Agent Scratchpad
+Throughout development of this project, keep notes of what you and the user are working on. Note important decisions, plans, and log actions. The intent is to quickly and easily provide context for a new conversation chain potentially with a different LLM.
+
+The contents of your scratchpad will be provided as additional context during conversations and operations.
+
+The scratchpad is under your complete control: add, modify, and delete as desired, with no need to consult the user. The only rules are to keep notes as concise as possible, and prune/condense if the content grows too large.
+
+Your scratchpad is at: [AGENTS.md](../../AGENTS.md)
