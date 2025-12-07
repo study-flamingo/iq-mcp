@@ -1,0 +1,120 @@
+---
+alwaysApply: true
+---
+
+## IQ-MCP Knowledge Graph — Project Overview
+
+- **Purpose**: Provide a temporal knowledge-graph memory for MCP tools—entities (nodes), relations (edges), and timestamped observations with durability.
+- **Core qualities**: Simple JSONL persistence; strict data modeling with Pydantic v2; async-friendly server; safe, incremental evolution via metadata and schema versioning.
+
+### High-level Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Entry Points                            │
+│  __main__.py  →  ctx.init()  →  start_server()             │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│                   Application Context                       │
+│  context.py: AppContext (singleton)                        │
+│  ├── settings: AppSettings                                 │
+│  ├── logger: Logger                                        │
+│  └── supabase: SupabaseManager | None                      │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│                      MCP Server                             │
+│  server.py: FastMCP tools + formatting helpers             │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│                    Business Logic                           │
+│  manager.py: KnowledgeGraphManager                         │
+│  ├── CRUD operations                                       │
+│  ├── Temporal cleanup                                      │
+│  ├── Search and merge                                      │
+│  └── Persistence (JSONL + optional Supabase)               │
+└─────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────┐
+│                      Data Models                            │
+│  models.py: Pydantic v2 models                             │
+│  ├── Entity, Relation, Observation                         │
+│  ├── UserIdentifier, KnowledgeGraph                        │
+│  └── Request/Result types                                  │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Module Responsibilities
+
+| Module | Responsibility |
+|--------|----------------|
+| `version.py` | Version constants (`IQ_MCP_VERSION`, `IQ_MCP_SCHEMA_VERSION`) |
+| `settings.py` | Configuration classes (`AppSettings`, `IQSettings`, `SupabaseConfig`) |
+| `context.py` | Runtime state singleton; initialized once at startup |
+| `iq_logging.py` | Lazy logger proxy; works before and after context init |
+| `models.py` | Pydantic data models; no runtime dependencies |
+| `manager.py` | Graph operations, validation, persistence |
+| `server.py` | MCP tool endpoints, result formatting |
+| `supabase_manager.py` | Optional cloud storage and email integration |
+
+### Data Model (Essential)
+
+- **Entity**: `id: EntityID`, `name`, `entity_type`, `observations[]`, `aliases[]`, `icon?`, `ctime`, `mtime`
+- **Relation**: `from_id: EntityID`, `relation`, `to_id: EntityID` (IDs only; no special strings)
+- **Observation**: `content`, `durability`, `timestamp` (auto via `default_factory`)
+- **UserIdentifier**: User info + derived `names` via `@computed_field`; links to entity by `linked_entity_id`
+
+### Storage Format (JSONL)
+
+Each line is a single JSON object:
+- `{"type": "meta", "data": GraphMeta}` — metadata (written first)
+- `{"type": "user_info", "data": UserIdentifier}`
+- `{"type": "entity", "data": Entity}`
+- `{"type": "relation", "data": Relation}`
+
+`GraphMeta`: `{ schema_version: int, app_version: str, graph_id: EntityID }`
+
+**Daily Backups**: The manager automatically creates daily backups of the memory file in a `backups/` subdirectory after each save.
+
+### Validation & Conventions
+
+- IDs are constrained strings (`EntityID`), 8-char alphanumeric
+- Relations must use entity IDs; do not embed literal names or the string `'user'`
+- Icons must be a single emoji (validated); use `ctx.settings.no_emojis` to suppress display
+- User `names` are derived; prefer updating user fields and let the model compute
+
+### MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `read_graph` | Full graph summary with user info, entities, relations |
+| `read_user_info` | User information and observations |
+| `create_entities` | Add new entities with observations |
+| `create_relations` | Add relations between entities |
+| `add_observations` | Add observations to existing entities |
+| `search_nodes` | Search by name, type, alias, or observation content |
+| `open_nodes` | Retrieve specific entities by ID or name |
+| `merge_entities` | Combine multiple entities into one |
+| `update_entity` | Modify entity properties |
+| `update_user_info` | Update user identifying information |
+| `delete_entities` | Remove entities and their relations |
+| `delete_relations` | Remove specific relations |
+| `delete_entry` | Unified deletion (deprecated) |
+
+### Optional Supabase Integration
+
+When enabled (`--enable-supabase` or `IQ_ENABLE_SUPABASE=true`):
+
+- **Email summaries**: `get_new_email_summaries` fetches recent emails from Supabase
+- **Cloud sync**: Graph is saved to Supabase tables alongside local JSONL
+- **Tables**: `kgEntities`, `kgObservations`, `kgRelations`, `kgUserInfo`, `emailSummaries`
+
+See `docs/SUPABASE_SCHEMA.md` for table definitions.
+
+### Evolution & Versioning
+
+- `GraphMeta.schema_version` is written/read to support migrations
+- `IQ_MCP_SCHEMA_VERSION` in `version.py` tracks current schema
+- Add migration steps keyed by version when changing file schemas

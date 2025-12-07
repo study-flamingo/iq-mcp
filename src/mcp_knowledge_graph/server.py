@@ -1361,7 +1361,7 @@ def add_supabase_tools(mcp_server: FastMCP) -> None:
 
     # Tools to be added with successful Supabase integration
     @mcp_server.tool
-    async def get_new_email_summaries(
+    async def get_email_summaries(
         from_date: datetime | str | None = Field(
             default=None,
             description=(
@@ -1379,7 +1379,27 @@ def add_supabase_tools(mcp_server: FastMCP) -> None:
             description="Whether to include previously reviewed email summaries. Default is False.",
         ),
     ):
-        """Retrieve email summaries from the Supabase integration."""
+        """Retrieve and format email summaries from the Supabase integration.
+
+        Args:
+          - from_date: Filter lower bound. Accepts:
+            * datetime (UTC or with tz)
+            * 'YYYY-MM-DD' (assumed UTC day start)
+            * ISO 8601 (e.g., '2025-12-05T10:30:00Z')
+            * Relative phrases: 'today', 'yesterday', '1 day ago', '2 weeks ago', 'last week'
+          - to_date: Filter upper bound. Accepts same formats as from_date. When provided, the entire day is included.
+          - include_reviewed: If False (default), only unreviewed summaries are returned.
+
+        Returns:
+          - On success (when summaries exist): a human-friendly string including:
+            * Header line: '📧 <N> new messages found!'
+            * One or more formatted entries with message metadata and 'Links:' section.
+          - If no summaries match filters: 'No new email summaries available!'
+
+        Notes:
+          - After formatting the results, messages returned are marked as reviewed asynchronously.
+          - Use this tool when you want to read current summaries. The read_graph() tool does not fetch or print them.
+        """
 
         def _parse_date(dt_str: str | None) -> datetime | None:
             if not dt_str:
@@ -1464,11 +1484,15 @@ def add_supabase_tools(mcp_server: FastMCP) -> None:
 # ----- KEEP AT THE END AFTER OTHER FUNCTIONS -----#
 @mcp.tool
 async def read_graph():
-    """Read and print a user/LLM-friendly summary of the entire knowledge graph.
+    """Read and print a user/LLM-friendly summary of the knowledge graph.
 
     Returns:
-        User/LLM-friendly summary of the entire knowledge graph in text/markdown format
-        If the Supabase integration is enabled, it will also include any current, unreviewed email summaries.
+        User/LLM-friendly summary in text/markdown format including:
+          - User info (and observations)
+          - A list of entities
+          - Relations involving the user
+          - If Supabase is enabled and the user has any unreviewed email summaries, a single line notice
+            indicating that new email summaries exist (but no summaries are fetched or printed).
     """
 
     graph = await manager.read_graph()
@@ -1505,35 +1529,20 @@ async def read_graph():
     else:
         lines.append("(No relations found for user entity - this may be an error!)")
 
-    # Supabase integration: Print email summaries
+    # Supabase integration: Only check for presence of unreviewed summaries; do not fetch/print them
     if ctx.settings.supabase_enabled:
         try:
-            email_summaries = await manager.get_email_summaries()
-        except Exception as e:
-            raise ToolError(f"(Supabase) Error while getting email summaries: {e}")
-        if email_summaries:
-            lines.append("")
-            lines.append(
-                f"📧 The user's got mail! Retrieved summaries for {len(email_summaries)} email messages:"
-            )
-            try:
+            unreviewed = await manager.get_email_summaries(include_reviewed=False)
+            if unreviewed:
+                lines.append("")
                 lines.append(
-                    await print_email_summaries(
-                        email_summaries,
-                        options=PrintOptions(
-                            ol=True,
-                        ),
-                    )
+                    f"📬 There are {len(unreviewed)} unreviewed email summaries. Use the `get_email_summaries` tool to read them."
                 )
-                asyncio.create_task(manager.mark_as_reviewed(email_summaries))
-            except Exception as e:
-                raise ToolError(f"(Supabase) Error while printing email summaries: {e}")
-        else:
-            lines.append("")
-            lines.append("📭 No new email summaries found! The user is all caught up!")
+        except Exception as e:
+            logger.error(f"(Supabase) Error while checking for unreviewed email summaries: {e}")
     else:
         logger.info(
-            "(Supabase) Supabase integration is disabled, no email summaries will be printed"
+            "(Supabase) Supabase integration is disabled; skipping email summary presence check"
         )
 
     # Remove any invalid lines (None types, etc.)
