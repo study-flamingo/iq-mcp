@@ -9,7 +9,7 @@
 - **API Key:** `iqmcp-sk-qwA9sdZrWdunSPpvUBu9IYju9hbGXRcDOaSRQ0xT7MU`
 - **VM:** `dted-ai-agent-vm` (GCP, `us-central1-c`, IP: `35.193.225.215`)
 - **Auth:** `StaticTokenVerifier` (FastMCP 2.13.3)
-- **Supabase:** Enabled (`ahsrjqkbdtgdlgpfewxz.supabase.co`)
+- **Supabase:** Enabled (`xxx.supabase.co`)
 
 ### Architecture
 ```
