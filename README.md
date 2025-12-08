@@ -225,9 +225,15 @@ uv pip install -e .
 }
 ```
 
+**Claude Desktop Config via GUI**
+
+1. Open `File > Settings...` ![settings](./assets/ss01.png)
+2. Enter a name for your implementation, as well as the URL to your host plus the API key: ![setup](./assets/ss02.png)
+
+
 **Notes:**
 
-- Default transport is `stdio`. You can also use `http` or `sse` by setting `IQ_TRANSPORT`
+- Default transport is `stdio`. If setting up `IQ-MCP` on a remote host, it is preferable to use use `http` by setting `IQ_TRANSPORT`. SSE, while available, is deprecated and not recommended. However, it can also be enabled by setting this environment variable.
 - Memory path may be provided via CLI `--memory-path` or environment `IQ_MEMORY_PATH`
 
 ### 3. Optional: HTTP transport
