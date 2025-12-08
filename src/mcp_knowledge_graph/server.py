@@ -17,7 +17,8 @@ from pydantic.dataclasses import dataclass
 from typing import Any
 from fastmcp.exceptions import ToolError, ValidationError
 
-from .logging import logger
+from .iq_logging import logger
+from .context import ctx
 from .manager import KnowledgeGraphManager
 from .models import (
     DeleteEntryRequest,
@@ -35,12 +36,13 @@ from .models import (
     Observation,
     UpdateEntityRequest,
 )
-from .settings import Settings as settings
-from .settings import IQ_MCP_VERSION
-from .supabase import EmailSummary
+from .version import IQ_MCP_VERSION
+from .supabase_manager import EmailSummary
+from .auth import get_auth_provider
 
 
-manager = KnowledgeGraphManager(settings.memory_path)
+# Manager is initialized lazily after context init
+manager: KnowledgeGraphManager = None  # type: ignore[assignment]
 """
 Tools available from the manager:
 
@@ -84,8 +86,10 @@ Tools available from the manager:
 """
 
 
-# Create FastMCP server instance
-mcp = FastMCP(name="iq-mcp", version=IQ_MCP_VERSION)
+# Create FastMCP server instance with optional authentication
+# Auth is configured via IQ_API_KEY environment variable
+_auth_provider = get_auth_provider()
+mcp = FastMCP(name="iq-mcp", version=IQ_MCP_VERSION, auth=_auth_provider)
 
 
 @dataclass
@@ -237,12 +241,12 @@ async def print_entities(
                     graph = graph or await manager.read_graph()
                     user_info = graph.user_info
                     id = user_info.linked_entity_id
-                    icon = e.icon_()
+                    icon = e.icon_(use_emojis=not ctx.settings.no_emojis)
                     name = user_info.preferred_name
                     type = "user"
             else:
                 id = e.id
-                icon = e.icon_()
+                icon = e.icon_(use_emojis=not ctx.settings.no_emojis)
                 name = e.name
                 type = e.entity_type
 
@@ -371,11 +375,11 @@ async def print_relations(
         else:
             b_name = b.name
 
-        a_icon = a.icon_()
+        a_icon = a.icon_(use_emojis=not ctx.settings.no_emojis)
         a_id = a.id
         a_type = a.entity_type
 
-        b_icon = b.icon_()
+        b_icon = b.icon_(use_emojis=not ctx.settings.no_emojis)
         b_id = b.id
         b_type = b.entity_type
 
@@ -616,7 +620,9 @@ async def print_user_info(
         if include_observations and linked_entity:
             if linked_entity.observations:
                 lines.append("")
-                lines.append("" if settings.no_emojis else "🔍 " + "Observations about the user:")
+                lines.append(
+                    "" if ctx.settings.no_emojis else "🔍 " + "Observations about the user:"
+                )
                 for o in linked_entity.observations:
                     ts = o.timestamp.strftime("%Y-%m-%d %H:%M:%S") + " UTC"
                     lines.append(f"{ind}{ord}{os} {o.content} ({ts}, {o.durability.value})")
@@ -792,7 +798,7 @@ async def create_relations(new_relations: list[CreateRelationRequest]):
 
         for r in relations:
             from_e, to_e = await manager.get_entities_from_relation(r)
-            result += f"{from_e.icon_()}{from_e.name} ({from_e.entity_type}) {r.relation} {to_e.icon_()}{to_e.name} ({to_e.entity_type})\n"
+            result += f"{from_e.icon_(use_emojis=not ctx.settings.no_emojis)}{from_e.name} ({from_e.entity_type}) {r.relation} {to_e.icon_(use_emojis=not ctx.settings.no_emojis)}{to_e.name} ({to_e.entity_type})\n"
 
         return result
     except Exception as e:
@@ -1305,7 +1311,7 @@ async def update_entity(request: UpdateEntityRequest):
         )
 
         # Build a concise human-readable summary
-        result = f"Updated entity: {updated.icon_()}{updated.name} ({updated.entity_type})\n"
+        result = f"Updated entity: {updated.icon_(use_emojis=not ctx.settings.no_emojis)}{updated.name} ({updated.entity_type})\n"
         if updated.aliases:
             result += "  Aliases: " + ", ".join(updated.aliases) + "\n"
         return result
@@ -1358,7 +1364,7 @@ def add_supabase_tools(mcp_server: FastMCP) -> None:
 
     # Tools to be added with successful Supabase integration
     @mcp_server.tool
-    async def get_new_email_summaries(
+    async def get_email_summaries(
         from_date: datetime | str | None = Field(
             default=None,
             description=(
@@ -1376,7 +1382,27 @@ def add_supabase_tools(mcp_server: FastMCP) -> None:
             description="Whether to include previously reviewed email summaries. Default is False.",
         ),
     ):
-        """Retrieve email summaries from the Supabase integration."""
+        """Retrieve and format email summaries from the Supabase integration.
+
+        Args:
+          - from_date: Filter lower bound. Accepts:
+            * datetime (UTC or with tz)
+            * 'YYYY-MM-DD' (assumed UTC day start)
+            * ISO 8601 (e.g., '2025-12-05T10:30:00Z')
+            * Relative phrases: 'today', 'yesterday', '1 day ago', '2 weeks ago', 'last week'
+          - to_date: Filter upper bound. Accepts same formats as from_date. When provided, the entire day is included.
+          - include_reviewed: If False (default), only unreviewed summaries are returned.
+
+        Returns:
+          - On success (when summaries exist): a human-friendly string including:
+            * Header line: '📧 <N> new messages found!'
+            * One or more formatted entries with message metadata and 'Links:' section.
+          - If no summaries match filters: 'No new email summaries available!'
+
+        Notes:
+          - After formatting the results, messages returned are marked as reviewed asynchronously.
+          - Use this tool when you want to read current summaries. The read_graph() tool does not fetch or print them.
+        """
 
         def _parse_date(dt_str: str | None) -> datetime | None:
             if not dt_str:
@@ -1461,10 +1487,15 @@ def add_supabase_tools(mcp_server: FastMCP) -> None:
 # ----- KEEP AT THE END AFTER OTHER FUNCTIONS -----#
 @mcp.tool
 async def read_graph():
-    """Read and print a user/LLM-friendly summary of the entire knowledge graph.
+    """Read and print a user/LLM-friendly summary of the knowledge graph.
 
     Returns:
-        User/LLM-friendly summary of the entire knowledge graph in text/markdown format
+        User/LLM-friendly summary in text/markdown format including:
+          - User info (and observations)
+          - A list of entities
+          - Relations involving the user
+          - If Supabase is enabled and the user has any unreviewed email summaries, a single line notice
+            indicating that new email summaries exist (but no summaries are fetched or printed).
     """
 
     graph = await manager.read_graph()
@@ -1501,35 +1532,20 @@ async def read_graph():
     else:
         lines.append("(No relations found for user entity - this may be an error!)")
 
-    # Supabase integration: Print email summaries
-    if settings.supabase_enabled:
-        logger.debug("Supabase integration is enabled, getting email summaries")
+    # Supabase integration: Only check for presence of unreviewed summaries; do not fetch/print them
+    if ctx.settings.supabase_enabled:
         try:
-            email_summaries = await manager.get_email_summaries()
-        except Exception as e:
-            raise ToolError(f"(Supabase) Error while getting email summaries: {e}")
-        if email_summaries:
-            lines.append("")
-            lines.append(
-                f"📧 The user's got mail! Retrieved summaries for {len(email_summaries)} email messages:"
-            )
-            try:
+            unreviewed = await manager.get_email_summaries(include_reviewed=False)
+            if unreviewed:
+                lines.append("")
                 lines.append(
-                    await print_email_summaries(
-                        email_summaries,
-                        options=PrintOptions(
-                            ol=True,
-                        ),
-                    )
+                    f"📬 There are {len(unreviewed)} unreviewed email summaries. Use the `get_email_summaries` tool to read them."
                 )
-                asyncio.create_task(manager.mark_as_reviewed(email_summaries))
-            except Exception as e:
-                raise ToolError(f"(Supabase) Error while printing email summaries: {e}")
-        else:
-            lines.append("📭 No new email summaries found! The user is all caught up!")
+        except Exception as e:
+            logger.error(f"(Supabase) Error while checking for unreviewed email summaries: {e}")
     else:
         logger.info(
-            "(Supabase) Supabase integration is disabled, no email summaries will be printed"
+            "(Supabase) Supabase integration is disabled; skipping email summary presence check"
         )
 
     # Remove any invalid lines (None types, etc.)
@@ -1544,16 +1560,29 @@ async def read_graph():
 # ----- MAIN APPLICATION ENTRY POINT -----#
 
 
+def _init_manager() -> None:
+    """Initialize the global manager after context is ready."""
+    global manager
+    manager = KnowledgeGraphManager.from_context()
+
+
 async def startup_check() -> None:
     """Check the startup of the server. Exits with an error if the server will not be able to start."""
     try:
         _ = await manager._load_graph()
     except Exception as e:
-        raise ToolError(str(e))
+        raise RuntimeError(f"Failed to load graph: {e}")
 
 
 async def start_server():
     """Common entry point for the MCP server."""
+    # Initialize application context (settings, logger, supabase)
+    ctx.init()
+    settings = ctx.settings
+
+    # Initialize the manager now that context is ready
+    _init_manager()
+
     validated_transport = settings.transport
     logger.info(f"🚌 Transport selected: {validated_transport}")
     if validated_transport == "http":

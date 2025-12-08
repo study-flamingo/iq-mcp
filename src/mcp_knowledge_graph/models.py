@@ -18,9 +18,8 @@ from pydantic import (
 )
 from enum import Enum
 import regex as re
-from .logging import logger
-from .settings import Settings as settings
-from .settings import IQ_MCP_VERSION, IQ_MCP_SCHEMA_VERSION
+from .iq_logging import logger
+from .version import IQ_MCP_VERSION, IQ_MCP_SCHEMA_VERSION
 
 # Helper functions
 _GRAPHEMES = re.compile(r"\X")
@@ -261,9 +260,9 @@ class Entity(BaseModel):
                 f"Error setting icon for entity '{cls.name}': value must be a single valid emoji. Instead, received '{v}'"
             )
 
-    def icon_(self) -> str:
-        """Return the icon of the entity if it exists and its display is not disabled in settings, plus a single whitespace. Otherwise, return an empty string."""
-        if settings.no_emojis or not self.icon:
+    def icon_(self, use_emojis: bool = True) -> str:
+        """Return the icon of the entity with a trailing space if emojis are enabled and an icon exists; otherwise, return an empty string."""
+        if not use_emojis or not self.icon:
             return ""
         return self.icon + " "
 

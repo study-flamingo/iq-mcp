@@ -1,110 +1,131 @@
 # Settings and Initialization Flow
 
-This document explains how the settings and initialization flow works after the composition pattern refactor.
+This document explains how settings and initialization work with the context-based architecture.
 
 ## Architecture Overview
 
-The settings system uses a **composition pattern** to separate core settings from optional integrations:
+The application uses a **context pattern** to manage runtime state:
 
-1. **`IQSettings`**: Core application settings (always loaded)
-2. **`SupabaseConfig`**: Optional Supabase integration settings (loaded if enabled)
-3. **`Settings`**: Composition class that combines core + optional integrations
-
-## Settings Loading Flow
-
-### Step 1: Module Import
-```python
-# When settings.py is imported
-Settings = Settings.load()  # Executed at module level
-```
-
-### Step 2: Settings.load() - Composition
-```python
-Settings.load()
-├── IQSettings.load()        # Always loads core settings
-│   ├── Parse CLI args
-│   ├── Load env vars (.env)
-│   └── Apply defaults
-│
-└── SupabaseConfig.load()     # Conditionally loads Supabase settings
-    ├── Parse CLI args (same parser, different args)
-    ├── Check enable flag
-    ├── Load URL/key from env vars
-    └── Return config (enabled or disabled)
-```
-
-### Step 3: Validation and Composition
-```python
-supabase_config = SupabaseConfig.load(...)
-supabase = supabase_config if supabase_config.is_valid() else None
-
-# Return Settings with:
-# - core: IQSettings (always present)
-# - supabase: SupabaseConfig | None (only if enabled AND valid)
-```
-
-## Settings Structure
-
-```python
-Settings
-├── core: IQSettings
-│   ├── debug: bool
-│   ├── transport: Transport
-│   ├── port: int
-│   ├── memory_path: str
-│   ├── streamable_http_host: str | None
-│   ├── streamable_http_path: str | None
-│   ├── project_root: Path
-│   ├── no_emojis: bool
-│   └── dry_run: bool
-│
-└── supabase: SupabaseConfig | None
-    ├── enabled: bool
-    ├── url: str | None
-    ├── key: str | None
-    └── dry_run: bool
-```
-
-## Backward Compatibility
-
-The `Settings` class provides convenience properties that delegate to `core`:
-
-```python
-settings.debug          # → settings.core.debug
-settings.transport      # → settings.core.transport
-settings.memory_path    # → settings.core.memory_path
-# ... etc
-```
-
-This means existing code like `settings.debug` still works without changes.
+1. **`version.py`**: Pure constants (`IQ_MCP_VERSION`, `IQ_MCP_SCHEMA_VERSION`)
+2. **`settings.py`**: Configuration classes (no module-level side effects)
+   - `IQSettings`: Core application settings
+   - `SupabaseConfig`: Optional Supabase integration settings
+   - `AppSettings`: Composition class combining core + integrations
+3. **`context.py`**: Runtime state container (`AppContext`)
+   - Holds initialized settings, logger, and optional Supabase manager
+   - Singleton pattern; initialized once at startup via `ctx.init()`
 
 ## Initialization Flow
 
-### Server Startup (`start_server()`)
+### Step 1: Entry Point (`__main__.py`)
+
+```python
+from .context import ctx
+from .server import start_server
+
+def main():
+    ctx.init()  # Initialize context first
+    logger.info(f"Memory path: {ctx.settings.memory_path}")
+    asyncio.run(start_server())
+```
+
+### Step 2: Context Initialization (`ctx.init()`)
+
+```python
+ctx.init()
+├── AppSettings.load()           # Load all settings
+│   ├── IQSettings.load()        # Core settings from CLI/env/defaults
+│   │   ├── Parse CLI args
+│   │   ├── Load .env file
+│   │   └── Apply defaults
+│   │
+│   └── SupabaseConfig.load()    # Optional Supabase settings
+│       ├── Check enable flag
+│       ├── Load URL/key
+│       └── Validate config
+│
+├── Configure logger             # Set up logging based on settings
+│
+└── Initialize Supabase          # Only if enabled and valid
+    └── SupabaseManager(config)
+```
+
+### Step 3: Server Startup (`start_server()`)
 
 ```python
 async def start_server():
-    # 1. Startup checks (memory file validation)
+    ctx.init()  # Idempotent; safe to call again
+    settings = ctx.settings
+    
+    _init_manager()  # Create KnowledgeGraphManager
+    
+    # Configure transport
+    validated_transport = settings.transport
+    
+    # Startup checks
     await startup_check()
     
-    # 2. Configure transport
-    validated_transport = settings.transport
-    # ... transport kwargs
+    # Add Supabase tools if enabled
+    if settings.supabase_enabled:
+        add_supabase_tools(mcp)
     
-    # 3. Supabase Integration (conditional)
-    if settings.enable_supabase and settings.supabase:
-        # settings.supabase exists → config is valid
-        supabase_manager = SupabaseManager(...)
-        add_supabase_tools(mcp, supabase_manager)
-    elif settings.enable_supabase and not settings.supabase:
-        # Enable flag is True, but config is invalid
-        logger.warning("Supabase enabled but invalid config")
-    else:
-        # Supabase disabled
-        logger.debug("Supabase disabled")
-    
-    # 4. Start server
-    await mcp.run_async(...)
+    # Run server
+    await mcp.run_async(transport=validated_transport, ...)
+```
+
+## Context Structure
+
+```python
+ctx: AppContext
+├── settings: AppSettings
+│   ├── core: IQSettings
+│   │   ├── debug: bool
+│   │   ├── transport: Transport
+│   │   ├── port: int
+│   │   ├── memory_path: str
+│   │   ├── streamable_http_host: str | None
+│   │   ├── streamable_http_path: str | None
+│   │   ├── project_root: Path
+│   │   ├── no_emojis: bool
+│   │   └── dry_run: bool
+│   │
+│   └── supabase: SupabaseConfig | None
+│       ├── enabled: bool
+│       ├── url: str | None
+│       ├── key: str | None
+│       ├── dry_run: bool
+│       └── table names...
+│
+├── logger: logging.Logger
+│
+└── supabase: SupabaseManager | None
+```
+
+## Accessing Settings
+
+Throughout the application, use the context:
+
+```python
+from .context import ctx
+
+# After ctx.init() is called:
+ctx.settings.debug           # Core setting
+ctx.settings.memory_path     # Core setting (convenience property)
+ctx.settings.supabase_enabled  # Check if Supabase is active
+ctx.supabase                 # SupabaseManager instance (or None)
+ctx.logger                   # Configured logger
+```
+
+## Lazy Logger
+
+The `iq_logging` module provides a lazy logger that works before and after initialization:
+
+```python
+from .iq_logging import logger
+
+# Before ctx.init(): uses bootstrap logger (stderr)
+# After ctx.init(): uses ctx.logger (file + configured level)
+logger.info("This works at any time")
 ```
 
 ## Configuration Precedence
@@ -113,23 +134,24 @@ For all settings, precedence is (highest first):
 
 1. **CLI arguments** (`--enable-supabase`, `--supabase-url`, etc.)
 2. **Environment variables** (`IQ_ENABLE_SUPABASE`, `IQ_SUPABASE_URL`, etc.)
-3. **Backward-compat env vars** (`SUPABASE_URL`, `SUPABASE_KEY`)
-4. **Defaults** (usually `False` or `None`)
+3. **Defaults** (usually `False` or `None`)
 
 ## Examples
 
 ### Example 1: Supabase Disabled (Default)
+
 ```bash
 python -m mcp_knowledge_graph
 ```
 
 **Result:**
-- `settings.supabase = None`
-- `settings.enable_supabase = False`
+- `ctx.settings.supabase = None`
+- `ctx.settings.supabase_enabled = False`
+- `ctx.supabase = None`
 - No Supabase tools registered
-- No Supabase imports loaded
 
 ### Example 2: Supabase Enabled via CLI
+
 ```bash
 python -m mcp_knowledge_graph \
     --enable-supabase \
@@ -138,12 +160,13 @@ python -m mcp_knowledge_graph \
 ```
 
 **Result:**
-- `settings.supabase` = `SupabaseConfig(enabled=True, url=..., key=...)`
-- `settings.enable_supabase = True`
+- `ctx.settings.supabase` = `SupabaseConfig(enabled=True, ...)`
+- `ctx.settings.supabase_enabled = True`
+- `ctx.supabase` = `SupabaseManager` instance
 - Supabase tools registered
-- Supabase manager initialized
 
 ### Example 3: Supabase Enabled via Env Vars
+
 ```bash
 export IQ_ENABLE_SUPABASE=true
 export IQ_SUPABASE_URL=https://xxx.supabase.co
@@ -151,48 +174,58 @@ export IQ_SUPABASE_KEY=xxxxx
 python -m mcp_knowledge_graph
 ```
 
-**Result:**
-- Same as Example 2
+**Result:** Same as Example 2
 
 ### Example 4: Enabled but Invalid Config
+
 ```bash
 python -m mcp_knowledge_graph --enable-supabase
 # (missing URL/key)
 ```
 
 **Result:**
-- `settings.enable_supabase = True`
-- `settings.supabase = None` (invalid config)
-- Warning logged: "Supabase enabled but configuration is invalid"
+- `ctx.settings.supabase = None` (config invalid)
+- `ctx.supabase = None`
+- Warning logged
 - No Supabase tools registered
 
 ## Benefits of This Pattern
 
-1. **Separation of Concerns**: Core settings separate from integrations
-2. **Extensibility**: Easy to add more integrations (Redis, Postgres, etc.)
-3. **Backward Compatible**: Existing code using `settings.debug` still works
-4. **Validation**: Invalid configs are caught early
-5. **Lazy Loading**: Integration configs only loaded if enabled
-6. **Clean API**: `settings.supabase.url` vs `settings.supabase_url`
+1. **No import-time side effects**: Settings classes don't execute code on import
+2. **Explicit initialization**: `ctx.init()` is called once at a known point
+3. **Testability**: Can initialize context with different settings for tests
+4. **Separation of concerns**: Config classes vs runtime state vs business logic
+5. **Lazy dependencies**: Supabase only initialized if enabled
+6. **Clean dependency injection**: Manager and tools access deps via `ctx`
 
-## Future Extensibility
+## Adding New Integrations
 
 To add a new integration (e.g., Redis):
 
-1. Create `RedisConfig` class (similar to `SupabaseConfig`)
-2. Add to `Settings.load()`:
+1. Create `RedisConfig` class in `settings.py`:
    ```python
-   redis_config = RedisConfig.load(dry_run=core.dry_run)
-   redis = redis_config if redis_config.is_valid() else None
-   ```
-3. Add to `Settings.__init__()`:
-   ```python
-   def __init__(self, *, core: IQSettings, supabase: SupabaseConfig | None = None,
-                redis: RedisConfig | None = None):
-       self.core = core
-       self.supabase = supabase
-       self.redis = redis
+   class RedisConfig:
+       def __init__(self, *, enabled: bool, url: str | None, ...): ...
+       
+       @classmethod
+       def load(cls, dry_run: bool = False) -> "RedisConfig | None": ...
+       
+       def is_valid(self) -> bool: ...
    ```
 
-The pattern scales cleanly without bloating the core settings class.
+2. Add to `AppSettings`:
+   ```python
+   class AppSettings:
+       def __init__(self, *, core, supabase=None, redis=None):
+           self.core = core
+           self.supabase = supabase
+           self.redis = redis
+   ```
 
+3. Initialize in `context.py`:
+   ```python
+   if self._settings.redis_enabled and self._settings.redis:
+       self._redis = RedisManager(self._settings.redis)
+   ```
+
+The pattern scales cleanly without bloating any single module.

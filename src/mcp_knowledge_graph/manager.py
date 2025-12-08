@@ -6,12 +6,13 @@ including CRUD operations, temporal observation handling, and smart cleanup.
 """
 
 import json
-from datetime import datetime, timezone
-from typing import Any
+import shutil
+from datetime import datetime, timezone, date
+from typing import Any, TYPE_CHECKING
 from pathlib import Path
 from uuid import uuid4
-from .settings import Settings as settings
-from .logging import logger
+from .context import ctx
+from .iq_logging import logger
 from .models import (
     Entity,
     EntityID,
@@ -33,12 +34,9 @@ from .models import (
     MemoryRecord,
     GraphMeta,
 )
-from .supabase import SupabaseManager, EmailSummary
 
-supabase_manager = None
-if settings.supabase_enabled:
-    supabase_manager = SupabaseManager(settings.supabase)
-    logger.debug(f"(Supabase) Supabase manager initialized: {supabase_manager}")
+if TYPE_CHECKING:
+    from .supabase_manager import SupabaseManager, EmailSummary
 
 
 class KnowledgeGraphManager:
@@ -62,12 +60,11 @@ class KnowledgeGraphManager:
         self.memory_file_path.parent.mkdir(parents=True, exist_ok=True)
 
     @classmethod
-    def from_settings(cls) -> "KnowledgeGraphManager":
+    def from_context(cls) -> "KnowledgeGraphManager":
         """
-        Initialize the knowledge graph manager via the settings object.
+        Initialize the knowledge graph manager via the application context.
         """
-        # Uses the already-initialized settings object
-        return cls(settings.memory_path)
+        return cls(ctx.settings.memory_path)
 
     # ---------- Alias helpers ----------
     def _get_entity_by_name_or_alias(self, graph: KnowledgeGraph, identifier: str) -> Entity | None:
@@ -434,17 +431,23 @@ class KnowledgeGraphManager:
         else:
             return user_info if separate_ui else None
 
-    async def _load_graph(self) -> KnowledgeGraph:
+    async def _load_graph(self, force_local: bool = False) -> KnowledgeGraph:
         """
         Load the knowledge graph from Supabase (EXPERIMENTAL) and back up to JSONL storage.
 
         Returns:
             The Knowledge Graph
         """
-        if settings.supabase_enabled and supabase_manager:
-            graph = await supabase_manager.get_knowledge_graph()
+        if ctx.settings.supabase_enabled and ctx.supabase and not force_local:
+            logger.info("Supabase integration enabled, loading graph from Supabase")
+            graph = await ctx.supabase.get_knowledge_graph()
             logger.info("☁️ Supabase graph read successfully!")
             return graph
+
+        if force_local and ctx.settings.supabase_enabled:
+            logger.warning(
+                "⚠️ Force local mode and Supabase integration enabled; Loading graph from local JSONL file."
+            )
 
         # Resolve and validate memory file path
         self.memory_file_path = Path(self.memory_file_path).resolve()
@@ -520,8 +523,6 @@ class KnowledgeGraphManager:
                         raise RuntimeError(
                             "Memory file appears corrupt: incomplete data after 500 lines"
                         )
-        except RuntimeError:
-            raise
         except Exception as e:
             raise RuntimeError(f"Error reading memory file: {e}")
 
@@ -598,6 +599,43 @@ class KnowledgeGraphManager:
         except Exception as e:
             raise RuntimeError(f"Graph validation failed: {e}")
 
+    def _get_backup_dir(self) -> Path:
+        """Get the backup directory path, creating it if necessary."""
+        backup_dir = self.memory_file_path.parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        return backup_dir
+
+    def _get_daily_backup_path(self) -> Path:
+        """Get the path for today's backup file."""
+        today = date.today().isoformat()  # e.g., "2025-11-25"
+        backup_filename = f"{self.memory_file_path.stem}_{today}{self.memory_file_path.suffix}"
+        return self._get_backup_dir() / backup_filename
+
+    def _create_daily_backup(self) -> bool:
+        """
+        Create a daily backup of the memory file if one doesn't exist for today.
+
+        Returns:
+            True if a backup was created, False if skipped (already exists or source missing)
+        """
+        if not self.memory_file_path.exists():
+            logger.debug("No memory file to backup yet")
+            return False
+
+        backup_path = self._get_daily_backup_path()
+
+        if backup_path.exists():
+            logger.debug(f"Daily backup already exists: {backup_path.name}")
+            return False
+
+        try:
+            shutil.copy2(self.memory_file_path, backup_path)
+            logger.info(f"📦 Created daily backup: {backup_path.name}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to create daily backup: {e}")
+            return False
+
     async def _save_graph(self, graph: KnowledgeGraph) -> None:
         """
         Save the knowledge graph to JSONL storage.
@@ -608,13 +646,13 @@ class KnowledgeGraphManager:
         For information on the format of the graph, see the README.md file.
         """
 
-        if settings.dry_run:
+        if ctx.settings.dry_run:
             logger.warning("⚠️ Dry run mode enabled, skipping save")
             return
 
-        if settings.supabase_enabled and supabase_manager:
+        if ctx.settings.supabase_enabled and ctx.supabase:
             try:
-                await supabase_manager.save_knowledge_graph(graph)
+                await ctx.supabase.save_knowledge_graph(graph)
                 logger.info("☁️ Supabase graph saved successfully!")
             except Exception as e:
                 logger.error(f"Failed to save graph to Supabase: {e}")
@@ -677,6 +715,9 @@ class KnowledgeGraphManager:
                 raise RuntimeError(f"Failed to write graph to {self.memory_file_path}: {e}")
 
             logger.debug(f"💾 Successfully saved graph to {self.memory_file_path}")
+
+            # Create daily backup after successful save
+            self._create_daily_backup()
 
         except Exception as e:
             logger.error(f"⛔ Failed to save graph: {e}")
@@ -1775,26 +1816,26 @@ class KnowledgeGraphManager:
         from_date: datetime | None = None,
         to_date: datetime | None = None,
         include_reviewed: bool = False,
-    ) -> list[EmailSummary]:
+    ) -> list["EmailSummary"]:
         """Get email summaries from Supabase. If Supabase integration is disabled, this returns an empty list."""
-        if settings.supabase_enabled and supabase_manager:
-            return await supabase_manager.get_email_summaries(
+        if ctx.settings.supabase_enabled and ctx.supabase:
+            return await ctx.supabase.get_email_summaries(
                 from_date=from_date, to_date=to_date, include_reviewed=include_reviewed
             )
         else:
             logger.warning("(Supabase) Supabase integration is disabled, returning empty list")
-            logger.debug(f"(Supabase) {settings.supabase_enabled} {supabase_manager}")
+            logger.debug(f"(Supabase) supabase_enabled={ctx.settings.supabase_enabled}")
             return []
 
-    async def mark_as_reviewed(self, email_summaries: list[EmailSummary]) -> None:
+    async def mark_as_reviewed(self, email_summaries: list["EmailSummary"]) -> None:
         """Mark email summaries as reviewed in Supabase. If Supabase integration is disabled, this does nothing."""
-        if settings.dry_run:
+        if ctx.settings.dry_run:
             logger.warning("(Supabase) Dry run mode enabled, skipping mark_as_reviewed()")
             return
 
-        if settings.supabase_enabled and supabase_manager:
+        if ctx.settings.supabase_enabled and ctx.supabase:
             try:
-                await supabase_manager.mark_as_reviewed(email_summaries)
+                await ctx.supabase.mark_as_reviewed(email_summaries)
                 logger.info(
                     f"(Supabase) Marked {len(email_summaries)} email summaries as reviewed!"
                 )

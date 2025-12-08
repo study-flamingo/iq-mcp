@@ -7,7 +7,7 @@ variables, and sensible defaults) into a single, validated settings object.
 Architecture:
 - IQSettings: Core application settings (always loaded)
 - SupabaseConfig: Optional Supabase integration settings (loaded if enabled)
-- Settings: Composition class that combines core + optional integrations
+- AppSettings: Composition class that combines core + optional integrations
 
 Precedence (highest first):
 - CLI arguments
@@ -24,6 +24,8 @@ from pathlib import Path
 from typing import Literal
 import logging as lg
 
+from .version import IQ_MCP_VERSION, IQ_MCP_SCHEMA_VERSION
+
 logger = lg.getLogger("iq-mcp-bootstrap")
 logger.addHandler(lg.FileHandler(Path(__file__).parents[2].resolve() / "iq-mcp-bootstrap.log"))
 logger.setLevel(lg.DEBUG)
@@ -32,9 +34,6 @@ logger.debug("Bootstrap logger set to debug")
 # Default memory file at repo root
 DEFAULT_MEMORY_PATH = Path(__file__).parents[2].resolve() / "memory.jsonl"
 DEFAULT_PORT = 8000
-IQ_MCP_VERSION = "1.2.0"
-IQ_MCP_SCHEMA_VERSION = 1  # TODO: Bump version when schema changes before pushing to production
-
 Transport = Literal["stdio", "sse", "http"]
 
 TRANSPORT_ENUM: dict[str, Transport] = {
@@ -276,7 +275,7 @@ class SupabaseConfig:
         return bool(self.url and self.key)
 
 
-class Settings:
+class AppSettings:
     """Composition of core settings and optional integrations.
 
     This class combines IQSettings (core) with optional integration configs.
@@ -297,7 +296,7 @@ class Settings:
         self.supabase = supabase
 
     @classmethod
-    def load(cls) -> "Settings":
+    def load(cls) -> "AppSettings":
         """Load all settings: core + optional integrations."""
         # Always load core settings
         core = IQSettings.load()
@@ -366,7 +365,4 @@ class Settings:
         return self.supabase is not None and self.supabase.enabled
 
 
-# Module-level settings instance (loads on import)
-Settings = Settings.load()
-
-__all__ = ["Settings", "IQSettings", "SupabaseConfig"]
+__all__ = ["AppSettings", "IQSettings", "SupabaseConfig"]

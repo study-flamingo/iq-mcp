@@ -1,3 +1,7 @@
+---
+alwaysApply: true
+---
+
 ## IQ-MCP Knowledge Graph — Project Overview
 
 - **Purpose**: Provide a temporal knowledge-graph memory for MCP tools—entities (nodes), relations (edges), and timestamped observations with durability.
