@@ -226,11 +226,13 @@ uv pip install -e .
 }
 ```
 
-**Claude Desktop Config via GUI**
+**Claude Desktop Setup via GUI**
 
-1. Open `File > Settings...` ![settings](./assets/ss01.png)
-2. Enter a name for your implementation, as well as the URL to your host plus the API key: ![setup](./assets/ss02.png)
+1. Open `Settings > Connectors` ![settings > connectors](./assets/ss1b.png)
 
+2. Enter a name for your installation, and enter the url for your endpoint. Include your API key in the URL. ![enter your url](./assets/ss1a.png)
+
+3. Reload Claude Desktop. Optionally, open the Claude Desktop window menu and select `Developer > Reload MCP Configuration` to immediately connect.
 
 **Notes:**
 
