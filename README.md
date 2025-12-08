@@ -1,6 +1,7 @@
-# IQ-MCP Knowledge Graph Server 🔮 (Python)
+# IQ-MCP Knowledge Graph Server 🔮
+*v1.3.0, released Dec 7, 2025*
 
-A FastMCP 2.11 server that provides a temporal knowledge graph memory for LLMs. It enables persistent, searchable memory with timestamped observations, durability categories, alias-aware entity resolution, and ergonomic tools for creating, searching, maintaining, merging, and visualizing your memory graph.
+A FastMCP 2.13 server that provides a temporal knowledge graph memory for LLMs. It enables persistent, searchable memory with timestamped observations, durability categories, alias-aware entity resolution, and ergonomic tools for creating, searching, maintaining, merging, and visualizing your memory graph.
 
 This is a modern Python implementation using Pydantic models and FastMCP, designed for drop-in use with MCP clients (Claude Desktop, Cursor, Roo Code, etc.).
 
