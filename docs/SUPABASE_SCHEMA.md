@@ -2,6 +2,8 @@
 
 **Schema Version:** 2
 
+> ⚠️ **Important:** Table names use camelCase and must be quoted in SQL queries (e.g., `"kgObservations"` not `kgobservations`).
+
 The Supabase database for cloud memory storage should be constructed as follows:
 
 ```sql

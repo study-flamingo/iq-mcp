@@ -1,5 +1,5 @@
 # IQ-MCP Knowledge Graph Server 🔮
-*v1.3.0, released Dec 7, 2025*
+*v1.3.1, released Dec 19, 2025*
 
 A FastMCP 2.13 server that provides a temporal knowledge graph memory for LLMs. It enables persistent, searchable memory with timestamped observations, durability categories, alias-aware entity resolution, and ergonomic tools for creating, searching, maintaining, merging, and visualizing your memory graph.
 
@@ -349,29 +349,90 @@ Update your memory using appropriate durability:
 - "Currently debugging auth issue", "Traveling next week"
 ```
 
+## Production Deployment
+
+IQ-MCP can be deployed to a cloud VM using Docker and Google Artifact Registry.
+
+### Architecture
+
+```
+Client → https://your-domain.com/iq
+         ↓
+      nginx (SSL termination, /iq → /mcp rewrite)
+         ↓
+      iq-mcp container (FastMCP on port 8000)
+         ↓
+      Supabase (cloud sync) + local JSONL
+```
+
+### Deploy Scripts
+
+| Script | Description |
+|--------|-------------|
+| `deploy/push-and-deploy.sh` | One-command: build, push to registry, pull on VM, restart |
+| `deploy/push-image.sh` | Build and push Docker image to Artifact Registry |
+| `deploy/pull-and-deploy.sh` | Runs on VM to pull latest image and restart |
+| `deploy/deploy.sh` | Legacy: scp files and rebuild on VM |
+| `deploy/quick-deploy.sh` | Legacy: sync source only (no rebuild) |
+
+### Quick Deploy
+
+```bash
+# Build, push, and deploy in one command:
+./deploy/push-and-deploy.sh
+```
+
+### First-Time Setup
+
+**Local machine:**
+```bash
+gcloud auth login
+gcloud config set project YOUR_PROJECT_ID
+gcloud auth configure-docker us-central1-docker.pkg.dev
+gcloud artifacts repositories create iq-mcp \
+  --repository-format=docker \
+  --location=us-central1
+```
+
+**On VM:**
+```bash
+gcloud init
+gcloud auth configure-docker us-central1-docker.pkg.dev
+```
+
+Copy required files to VM:
+```bash
+scp docker-compose.prod.yml your-vm:/opt/iq-mcp/
+scp deploy/pull-and-deploy.sh your-vm:/opt/iq-mcp/
+```
+
+### Docker Compose Files
+
+- `docker-compose.yml` - Local development (builds from source)
+- `docker-compose.prod.yml` - Production (pulls from Artifact Registry)
+
 ## Development
 
-### Install dev dependencies
+See **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)** for comprehensive development guide including:
+- Development setup and installation
+- Running tests
+- Deployment workflow (Artifact Registry)
+- Project structure
+- Debugging tips
+- Contributing guidelines
+
+### Quick Start
 
 ```bash
+# Install dev dependencies
 pip install -e ".[dev]"
-uv sync
-```
 
-### Run tests
-
-```bash
+# Run tests
 pytest
-pytest --cov=mcp_knowledge_graph
-```
 
-### Visualize a graph
-
-```bash
+# Visualize graph
 python -m mcp_knowledge_graph.visualize --input memory.jsonl --output graph.html --title "Knowledge Graph"
 ```
-
-Open `graph.html` to explore nodes, aliases, observations, and relations with an interactive D3 view.
 
 ## Architecture
 
@@ -403,7 +464,14 @@ See `docs/` for detailed architecture documentation.
 
 See [CHANGELOG.md](CHANGELOG.md) for version history.
 
-### Recent (v1.3.0)
+### Recent (v1.3.1)
+
+- 🐛 Fixed `UpdateEntityRequest` model and `update_entity` function
+- 🐛 Fixed Supabase timestamp serialization
+- 🚀 Registry-based deployment workflow (Artifact Registry)
+- 📚 Updated deployment documentation
+
+### v1.3.0
 
 - ✨ Context-based architecture with no import-time side effects
 - ✨ Daily automatic backups

@@ -5,6 +5,35 @@ All notable changes to the IQ-MCP Knowledge Graph Server will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] - 2025-12-19
+
+### 🐛 Bug Fixes
+
+- **Fixed `UpdateEntityRequest` model**: Fields were incorrectly wrapped in tuples instead of being `Field` objects
+- **Fixed `update_entity` server function**: Now correctly extracts identifier from the `identifiers` list
+- **Fixed `CreateEntityResult` type error**: Duplicate entity errors now return the existing `Entity` instead of the request
+- **Fixed Supabase timestamp serialization**: Now uses `isoformat()` for PostgreSQL compatibility
+
+### 🚀 Deployment
+
+- **Registry-based deployment**: New workflow using Google Artifact Registry instead of scp + rebuild
+- **`deploy/push-image.sh`**: Build and push Docker image to Artifact Registry
+- **`deploy/pull-and-deploy.sh`**: Pull latest image and restart on VM
+- **`deploy/push-and-deploy.sh`**: One-command full deployment
+- **`docker-compose.prod.yml`**: Production compose file using registry images
+
+### 🧪 Testing
+
+- **Fixed test fixture**: Now uses `AppSettings` with proper logger initialization
+- **All 11 unit tests passing**
+
+### 📚 Documentation
+
+- Updated `AGENTS.md` with new deployment workflow
+- Updated `README.md` with production deployment section
+- Updated `docs/files.md` with deploy script descriptions
+- Added camelCase table name warning to `docs/SUPABASE_SCHEMA.md`
+
 ## [1.3.0] - 2025-12-07
 
 ### 🚀 Deployment & Authentication

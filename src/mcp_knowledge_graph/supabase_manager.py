@@ -216,8 +216,11 @@ class SupabaseManager:
                             aliases.append(a)
                 except Exception:
                     pass
-                ctime = str(getattr(e, "ctime", None))
-                mtime = str(getattr(e, "mtime", None))
+                # Use ISO format for PostgreSQL timestamp compatibility
+                ctime_raw = getattr(e, "ctime", None)
+                mtime_raw = getattr(e, "mtime", None)
+                ctime = ctime_raw.isoformat() if hasattr(ctime_raw, 'isoformat') else str(ctime_raw)
+                mtime = mtime_raw.isoformat() if hasattr(mtime_raw, 'isoformat') else str(mtime_raw)
 
                 entities_payload.append(
                     {
@@ -241,7 +244,8 @@ class SupabaseManager:
                         if not content or content in seen_contents:
                             continue
                         seen_contents.add(content)
-                        ts = str(o.timestamp)
+                        # Use ISO format for PostgreSQL timestamp compatibility
+                        ts = o.timestamp.isoformat() if hasattr(o.timestamp, 'isoformat') else str(o.timestamp)
                         durability = getattr(o, "durability", None)
                         durability_str = getattr(durability, "value", None) or str(durability)
                         observations_payload.append(

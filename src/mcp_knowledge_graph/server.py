@@ -1273,13 +1273,30 @@ async def update_entity(request: UpdateEntityRequest):
     Provide at least one of: `name`, `entity_type`, `aliases`, or `icon`.
     """
     try:
-        if all(
-            request.new_name is None
-            and request.new_type is None
-            and request.new_aliases is None
-            and request.new_icon is None
-        ):
+        if all([
+            request.new_name is None,
+            request.new_type is None,
+            request.new_aliases is None,
+            request.new_icon is None,
+        ]):
             raise ValidationError("No updates provided")
+
+        # Extract identifier and entity_id from identifiers list
+        identifier: str | None = None
+        entity_id: str | None = None
+        if request.identifiers:
+            for ident in request.identifiers:
+                # Check if it looks like an entity ID (8-char alphanumeric)
+                if isinstance(ident, str) and len(ident) == 8 and ident.isalnum():
+                    entity_id = ident
+                else:
+                    identifier = str(ident) if ident else None
+                # Use first valid one found
+                if entity_id or identifier:
+                    break
+
+        if not identifier and not entity_id:
+            raise ValidationError("No valid identifier or entity_id provided in identifiers")
 
         # Normalize aliases to a list[str] if provided as a string (e.g., stringified JSON array)
         aliases_normalized: list[str] | None
@@ -1301,8 +1318,8 @@ async def update_entity(request: UpdateEntityRequest):
             aliases_normalized = request.new_aliases
 
         updated = await manager.update_entity(
-            identifier=request.identifier,
-            entity_id=request.entity_id,
+            identifier=identifier,
+            entity_id=entity_id,
             name=request.new_name,
             entity_type=request.new_type,
             aliases=aliases_normalized,

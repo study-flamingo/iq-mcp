@@ -871,16 +871,17 @@ class KnowledgeGraphManager:
                 if existing_entity:
                     results.append(
                         CreateEntityResult(
-                            entity=new_entity,
+                            entity=existing_entity,
                             errors=[
                                 f'Entity "{new_entity.name}" already exists as "{existing_entity.name}" ({existing_entity.id}); skipped'
                             ],
                         )
                     )
                 else:
+                    # If we somehow can't find the conflicting entity, use dict representation
                     results.append(
                         CreateEntityResult(
-                            entity=new_entity,
+                            entity={"name": new_entity.name, "entity_type": new_entity.entity_type or "unknown"},
                             errors=[f'Entity "{new_entity.name}" already exists; skipped'],
                         )
                     )
