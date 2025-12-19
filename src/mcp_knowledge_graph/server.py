@@ -1048,6 +1048,10 @@ async def update_user_info(  # NOTE: feels weird, re-evaluate
         default=None,
         description="Provide the ID of the new user-linked entity to represent the user.",
     ),
+    observations: list[Observation] | None = Field(
+        default=None,
+        description="Optional list of observations to add to the user entity",
+    ),
 ):
     """
     Update the user's identifying information in the graph. This tool should be rarely called, and
@@ -1075,9 +1079,11 @@ async def update_user_info(  # NOTE: feels weird, re-evaluate
       - suffixes: The suffixes of the user
       - emails: The email addresses of the user
       - linked_entity_id: Provide to change the user-linked entity. This should almost NEVER be used, and only if the user specifically requests to do so AND it appears there is a problem with the link. It is always preferable to edit the user-linked entity instead.
+      - observations: Optional list of observations to add to the user entity. Each observation should have content and durability.
 
       * One of the following MUST be provided: preferred_name, first_name, last_name, or nickname
       * The `names` field will be computed automatically from the provided information. Ignored if provided upfront.
+      * If observations are provided, they will be added to the user-linked entity after updating user info.
 
     Returns:
         On success, the updated user info.
@@ -1124,8 +1130,52 @@ async def update_user_info(  # NOTE: feels weird, re-evaluate
 
     try:
         new_user_info = UserIdentifier.from_values(**new_user_info_dict)
-        result = await manager.update_user_info(new_user_info)
-        return str(result)
+        updated_user_info = await manager.update_user_info(new_user_info)
+
+        # If observations were provided, add them to the user entity
+        result_str = ""
+        if observations:
+            try:
+                # Get the user-linked entity ID
+                user_entity_id = updated_user_info.linked_entity_id
+                if not user_entity_id:
+                    raise ToolError("User info does not have a linked entity ID")
+
+                # Create observation requests for the user entity
+                observation_requests = [
+                    ObservationRequest(
+                        entity_id=user_entity_id,
+                        entity_name="user",  # Fallback name
+                        observations=observations,
+                    )
+                ]
+
+                # Add observations to the user entity
+                obs_results = await manager.apply_observations(observation_requests)
+
+                # Format the response
+                succeeded = [r for r in obs_results if not r.errors]
+                failed = [r for r in obs_results if r.errors]
+
+                if succeeded:
+                    result_str = (
+                        f"Updated user info and added {len(observations)} observation(s):\n"
+                    )
+                    for s in succeeded:
+                        if s.added_observations:
+                            result_str += await print_observations(s.added_observations)
+                else:
+                    result_str = "Updated user info, but failed to add observations:\n"
+                    for f in failed:
+                        if f.errors:
+                            result_str += f"  - {'; '.join(f.errors)}\n"
+            except Exception as e:
+                logger.error(f"Error adding observations to user entity: {e}")
+                result_str = f"Updated user info, but failed to add observations: {e}\n"
+        else:
+            result_str = str(updated_user_info)
+
+        return result_str
     except Exception as e:
         raise ToolError(f"Failed to update user info: {e}")
 
@@ -1235,33 +1285,26 @@ async def merge_entities(
     new_entity_name: str = Field(
         description="Name of the new merged entity (must not conflict with an existing name or alias unless part of the merge)"
     ),
-    entity_ids: list[EntityID | str] | EntityID | str = Field(
-        description="IDs of entities to merge into the new entity"
+    entity_identifiers: list[EntityID | str] | EntityID | str = Field(
+        description="Names, aliases, or IDs of entities to merge into the new entity"
     ),
 ):
     """Merge a list of entities into a new entity with the provided name.
 
     The manager will combine observations and update relations to point to the new entity.
+    Entities can be specified by name, alias, or ID.
     """
     try:
-        # Convert entity_ids to a list if it's a single value
-        if isinstance(entity_ids, (str, EntityID)):
-            entity_ids = [entity_ids]
+        # Convert entity_identifiers to a list if it's a single value
+        if isinstance(entity_identifiers, (str, EntityID)):
+            entity_identifiers = [entity_identifiers]
 
-        # Get entities by IDs to get their names
-        entities = await manager.open_nodes(ids=entity_ids)
-        if not entities:
-            raise ToolError("No entities found with the provided IDs")
-
-        # Extract entity names for the merge operation
-        entity_names = [entity.name for entity in entities]
-
-        # Merge entities using their names
-        merged = await manager.merge_entities(new_entity_name, entity_names)
+        # Merge entities using identifiers (names, aliases, or IDs)
+        merged = await manager.merge_entities(new_entity_name, entity_identifiers)
     except Exception as e:
         raise ToolError(f"Failed to merge entities: {e}")
 
-    return_str = f"Successfully merged {len(entities)} entities into a new entity:\n"
+    return_str = f"Successfully merged {len(entity_identifiers)} entities into a new entity:\n"
     return_str += await print_entities(entities=[merged])
     return return_str
 
@@ -1273,12 +1316,14 @@ async def update_entity(request: UpdateEntityRequest):
     Provide at least one of: `name`, `entity_type`, `aliases`, or `icon`.
     """
     try:
-        if all([
-            request.new_name is None,
-            request.new_type is None,
-            request.new_aliases is None,
-            request.new_icon is None,
-        ]):
+        if all(
+            [
+                request.new_name is None,
+                request.new_type is None,
+                request.new_aliases is None,
+                request.new_icon is None,
+            ]
+        ):
             raise ValidationError("No updates provided")
 
         # Extract identifier and entity_id from identifiers list
@@ -1511,6 +1556,7 @@ async def read_graph():
           - User info (and observations)
           - A list of entities
           - Relations involving the user
+          - Active projects count and most recently accessed project (if project management is enabled)
           - If Supabase is enabled and the user has any unreviewed email summaries, a single line notice
             indicating that new email summaries exist (but no summaries are fetched or printed).
     """
@@ -1548,6 +1594,33 @@ async def read_graph():
         lines.append(await print_relations(relations=user_relations))
     else:
         lines.append("(No relations found for user entity - this may be an error!)")
+
+    # Project awareness: Show active projects count and most recently accessed project
+    # Note: This is a placeholder for when project management is implemented
+    # For now, gracefully handle the absence of project functionality
+    try:
+        # Check if project management methods exist (will be available in v1.5.0)
+        if hasattr(manager, "get_projects"):
+            active_projects = await manager.get_projects(status=["active"])
+            if active_projects:
+                lines.append("")
+                lines.append(f"📊 You have {len(active_projects)} active project(s)")
+
+                # Find most recently accessed project (by mtime)
+                if active_projects:
+                    most_recent = max(
+                        active_projects, key=lambda p: p.mtime if p.mtime else p.ctime
+                    )
+                    lines.append(
+                        f"🎯 Most recently accessed: {most_recent.name} ({most_recent.id})"
+                    )
+    except (AttributeError, NotImplementedError):
+        # Project management not yet implemented - silently skip
+        pass
+    except Exception as e:
+        logger.debug(
+            f"Error checking projects (project management may not be implemented yet): {e}"
+        )
 
     # Supabase integration: Only check for presence of unreviewed summaries; do not fetch/print them
     if ctx.settings.supabase_enabled:

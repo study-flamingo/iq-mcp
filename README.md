@@ -1,5 +1,5 @@
 # IQ-MCP Knowledge Graph Server 🔮
-*v1.3.1, released Dec 19, 2025*
+*v1.4.0, released Dec 19, 2025*
 
 A FastMCP 2.13 server that provides a temporal knowledge graph memory for LLMs. It enables persistent, searchable memory with timestamped observations, durability categories, alias-aware entity resolution, and ergonomic tools for creating, searching, maintaining, merging, and visualizing your memory graph.
 
@@ -9,12 +9,14 @@ This is a modern Python implementation using Pydantic models and FastMCP, design
 
 - **Temporal observations** with durability categories and automatic timestamps
 - **Smart cleanup** that removes outdated observations by durability
+- **Flexible entity references**: All tools support entities by ID, name, or alias
 - **Alias-aware graph**: resolve entities by name or any alias
 - **Daily automatic backups** of your memory file
 - **Merge entities**: consolidate duplicates while preserving relations and aliases
 - **Enhanced search** across names, aliases, types, and observation content
 - **Optional Supabase integration** for cloud storage and email summaries
 - **Context-based architecture** with no import-time side effects
+- **Project awareness** (v1.5.0 coming soon): Track active projects and recent work
 
 ## Core Concepts
 
@@ -87,15 +89,15 @@ The knowledge graph supports a primary user with separate identity management:
 |------|-------------|
 | `create_entities` | Add new entities with observations |
 | `update_entity` | Modify entity properties (name, type, aliases, icon) |
-| `merge_entities` | Combine multiple entities into one |
+| `merge_entities` | Combine multiple entities into one (supports names, aliases, or IDs) |
 | `delete_entities` | Remove entities and their relations |
 
 ### Relation Operations
 
 | Tool | Description |
 |------|-------------|
-| `create_relations` | Add relations between entities |
-| `delete_relations` | Remove specific relations |
+| `create_relations` | Add relations between entities (supports names or IDs) |
+| `delete_relations` | Remove specific relations (supports names or IDs) |
 
 ### Observation Operations
 
@@ -116,7 +118,7 @@ The knowledge graph supports a primary user with separate identity management:
 
 | Tool | Description |
 |------|-------------|
-| `update_user_info` | Update user identifying information |
+| `update_user_info` | Update user identifying information (optionally add observations) |
 
 ### Supabase Integration (Optional)
 
