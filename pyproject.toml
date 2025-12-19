@@ -7,7 +7,7 @@ name = "iq-mcp"
 version = "1.3.1"
 description = "Enhanced version of the original knowledge graph memory MCP server."
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "Non-Commercial"}
 authors = [
     {name = "study-flamingo", email = "y9agf5y5@anonaddy.me"}
 ]
@@ -15,7 +15,7 @@ keywords = ["mcp", "memory", "knowledge-graph", "persistence", "observations", "
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: Other/Proprietary License",
     "Programming Language :: Python :: 3.13",
 ]
 requires-python = ">=3.13"

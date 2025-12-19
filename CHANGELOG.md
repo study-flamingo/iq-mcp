@@ -211,4 +211,4 @@ Contributions are welcome! Please feel free to submit issues and enhancement req
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+Non-Commercial License - see [LICENSE](LICENSE) file for details. Commercial use is prohibited.

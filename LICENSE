@@ -1,16 +1,33 @@
-# MIT License
+# Non-Commercial License
 
 Copyright (c) 2025 Shane Holloman
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+to use, copy, modify, merge, publish, and distribute copies of the Software,
+and to permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. The above copyright notice and this permission notice shall be included in
+   all copies or substantial portions of the Software.
+
+2. Attribution: Any use of this Software must include proper attribution to
+   the original author. This includes, but is not limited to:
+   - Including the copyright notice in any distribution
+   - Crediting the original author in any documentation or materials
+   - Maintaining attribution in any modified versions
+
+3. Non-Commercial Use Only: The Software may NOT be used for commercial
+   purposes, in whole or in part. Commercial use includes, but is not limited to:
+   - Selling the Software or any derivative works
+   - Using the Software in any product or service that is sold or generates revenue
+   - Using the Software in any commercial application, service, or product
+   - Incorporating the Software into any commercial offering
+   - Using the Software to provide commercial services to third parties
+
+4. No Sublicensing: You may not sublicense the Software or grant rights to
+   use the Software to others for commercial purposes.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -19,3 +36,5 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+For commercial licensing inquiries, please contact the copyright holder.

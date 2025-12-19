@@ -481,7 +481,13 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ## License
 
-This MCP server is licensed under the MIT License. This means you are free to use, modify, and distribute the software, subject to the terms and conditions of the MIT License.
+This MCP server is licensed under a **Non-Commercial License**. You are free to use, modify, and distribute the software for non-commercial purposes, subject to the following conditions:
+
+- ✅ **Free use** with proper attribution
+- ✅ **Modification and distribution** allowed
+- ❌ **Commercial use prohibited** (in whole or in part)
+
+See [LICENSE](LICENSE) for full terms. For commercial licensing inquiries, please contact the copyright holder.
 
 ## Credits
 

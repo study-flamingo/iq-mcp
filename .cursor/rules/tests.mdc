@@ -1,0 +1,8 @@
+---
+description: testing operations
+alwaysApply: false
+---
+## Testing
+When testing this project, first check the tests located in `tests/test_graph.py`.
+
+When testing, it is important to also test MCP tool use. Ensure that we are connected to the IQ-MCP server, and utilize the MCP server tools as required.
