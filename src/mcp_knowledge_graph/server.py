@@ -1563,8 +1563,12 @@ async def read_graph():
 
     graph = await manager.read_graph()
 
+    # Include current UTC time
+    current_time_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    lines: list[str] = [f"🕐 Current time (UTC): {current_time_utc}", ""]
+
     # Print user info
-    lines: list[str] = ["💭 You remember the following information about the user:"]
+    lines.append("💭 You remember the following information about the user:")
 
     try:
         ui_print = await print_user_info(graph=graph)

@@ -101,9 +101,9 @@
 
 ---
 
-### v1.7.0 - Export/Import & Enhanced Backup Options
+### v1.7.0 - Export/Import, Enhanced Backup Options & Flexible Tool Parameters
 
-**Goal**: Enable data portability and robust backup/restore across platforms and clients.
+**Goal**: Enable data portability, robust backup/restore, and token-efficient tool usage through flexible parameter passing.
 
 **Features**:
 - **Export Formats**
@@ -137,7 +137,16 @@
   - Schema upgrade tools
   - Data validation after import
 
-**Impact**: Users can move between clients/platforms without data loss, and maintain multiple backup strategies.
+- **Flexible/Dynamic Tool Parameters** (Token Efficiency)
+  - Optional context parameters (timezone, locale, etc.) for all relevant tools
+  - Direct parameter passing eliminates need for separate `update_user_info` calls
+  - Auto-save provided context to `UserIdentifier` for persistence
+  - Fallback to stored context when parameters not provided
+  - Estimated 15-20% token savings by reducing tool call overhead
+  - Tools affected: `add_observations`, `create_entities`, `read_graph`, etc.
+  - Hybrid approach: parameters when LLM has context, stored values for reuse
+
+**Impact**: Users can move between clients/platforms without data loss, maintain multiple backup strategies, and benefit from more token-efficient tool usage.
 
 ---
 
@@ -286,7 +295,7 @@
 These features are explicitly **not** planned, as they don't align with the core vision:
 
 - **Plugin Architecture/Ecosystem**: Instead, optional features ship with the product as modular components
-- **AI-Powered Insights**: Insights come from the MCP client LLM, not this server
+- **AI-Powered Insights**: Insights come from the MCP client LLM, not this server. However, *MCP elicitation/sampling* may be considered in a future release.
 - **Real-Time Collaboration**: Doesn't make sense for individual-focused use case
 - **Rich Client-Side Visualization**: Visualization is server-generated data that clients can render as they prefer
 
