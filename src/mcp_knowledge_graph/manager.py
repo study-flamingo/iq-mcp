@@ -112,6 +112,36 @@ class KnowledgeGraphManager:
         entity = self._get_entity_by_name_or_alias(graph, identifier)
         return entity.name if entity else identifier
 
+    def _resolve_entity_identifier(
+        self, graph: KnowledgeGraph, identifier: str | EntityID
+    ) -> Entity | None:
+        """
+        Resolve an entity identifier (ID or name/alias) to an Entity object.
+
+        Tries ID lookup first (if identifier is 8-char alphanumeric), then falls back to
+        name/alias lookup. Returns None if entity not found.
+
+        Args:
+            graph: The knowledge graph to search
+            identifier: Entity ID (8-char alphanumeric) or name/alias (string)
+
+        Returns:
+            Entity if found, None otherwise
+        """
+        if not identifier:
+            return None
+
+        identifier_str = str(identifier).strip()
+
+        # Try ID lookup first (8-char alphanumeric)
+        if len(identifier_str) == 8 and identifier_str.isalnum():
+            entity = self._get_entity_by_id(graph, identifier_str)
+            if entity:
+                return entity
+
+        # Fall back to name/alias lookup
+        return self._get_entity_by_name_or_alias(graph, identifier_str)
+
     def _format_observation_age(self, timestamp: str | datetime | None) -> str:
         """Return a human-friendly age string for a timestamp; fallback to 'unknown age'."""
         try:
@@ -871,16 +901,20 @@ class KnowledgeGraphManager:
                 if existing_entity:
                     results.append(
                         CreateEntityResult(
-                            entity=new_entity,
+                            entity=existing_entity,
                             errors=[
                                 f'Entity "{new_entity.name}" already exists as "{existing_entity.name}" ({existing_entity.id}); skipped'
                             ],
                         )
                     )
                 else:
+                    # If we somehow can't find the conflicting entity, use dict representation
                     results.append(
                         CreateEntityResult(
-                            entity=new_entity,
+                            entity={
+                                "name": new_entity.name,
+                                "entity_type": new_entity.entity_type or "unknown",
+                            },
                             errors=[f'Entity "{new_entity.name}" already exists; skipped'],
                         )
                     )
@@ -948,22 +982,30 @@ class KnowledgeGraphManager:
         valid_relations: list[Relation] = []
         for r in relations:
             errors: list[str] = []
-            try:
-                if not r.from_entity_id:
-                    from_entity = self._get_entity_by_name_or_alias(graph, r.from_entity_name)
-                else:
-                    from_entity = self._get_entity_by_id(graph, r.from_entity_id)
-            except Exception as e:
-                errors.append(f"Error matching 'from' entity to relation endpoint: {e}")
 
-            try:
-                if not r.to_entity_id:
-                    to_entity = self._get_entity_by_name_or_alias(graph, r.to_entity_name)
-                else:
-                    to_entity = self._get_entity_by_id(graph, r.to_entity_id)
+            # Resolve 'from' entity - try ID first, then name
+            from_entity: Entity | None = None
+            if r.from_entity_id:
+                from_entity = self._resolve_entity_identifier(graph, r.from_entity_id)
+            elif r.from_entity_name:
+                from_entity = self._resolve_entity_identifier(graph, r.from_entity_name)
 
-            except Exception as e:
-                errors.append(f"Error matching 'to' entity to relation endpoint: {e}")
+            if not from_entity:
+                errors.append(
+                    f"Could not find 'from' entity (ID: {r.from_entity_id}, name: {r.from_entity_name})"
+                )
+
+            # Resolve 'to' entity - try ID first, then name
+            to_entity: Entity | None = None
+            if r.to_entity_id:
+                to_entity = self._resolve_entity_identifier(graph, r.to_entity_id)
+            elif r.to_entity_name:
+                to_entity = self._resolve_entity_identifier(graph, r.to_entity_name)
+
+            if not to_entity:
+                errors.append(
+                    f"Could not find 'to' entity (ID: {r.to_entity_id}, name: {r.to_entity_name})"
+                )
 
             if errors:
                 logger.error(f"Error adding relation: {', '.join(errors)}. Skipping.")
@@ -1252,16 +1294,30 @@ class KnowledgeGraphManager:
         # Build a set of (from_id, to_id, relation) tuples to delete; resolve by names if needed
         to_delete: set[tuple[str, str, str]] = set()
         for rel in relations:
-            from_id = rel.from_id
-            to_id = rel.to_id
-            if not from_id and rel.from_entity:
-                ent = self._get_entity_by_name_or_alias(graph, rel.from_entity)
-                from_id = ent.id if ent else None
-            if not to_id and rel.to_entity:
-                ent = self._get_entity_by_name_or_alias(graph, rel.to_entity)
-                to_id = ent.id if ent else None
+            # Resolve from_id - try ID first, then deprecated from_entity name field
+            from_id: str | None = None
+            if rel.from_id:
+                from_entity = self._resolve_entity_identifier(graph, rel.from_id)
+                from_id = from_entity.id if from_entity else None
+            elif rel.from_entity:  # Support deprecated from_entity name field
+                from_entity = self._resolve_entity_identifier(graph, rel.from_entity)
+                from_id = from_entity.id if from_entity else None
+
+            # Resolve to_id - try ID first, then deprecated to_entity name field
+            to_id: str | None = None
+            if rel.to_id:
+                to_entity = self._resolve_entity_identifier(graph, rel.to_id)
+                to_id = to_entity.id if to_entity else None
+            elif rel.to_entity:  # Support deprecated to_entity name field
+                to_entity = self._resolve_entity_identifier(graph, rel.to_entity)
+                to_id = to_entity.id if to_entity else None
+
             if from_id and to_id and rel.relation:
                 to_delete.add((from_id, to_id, rel.relation))
+            else:
+                logger.warning(
+                    f"Could not resolve relation endpoints for deletion: from={rel.from_id or rel.from_entity}, to={rel.to_id or rel.to_entity}"
+                )
 
         graph.relations = [
             r for r in graph.relations if (r.from_id, r.to_id, r.relation) not in to_delete
@@ -1499,7 +1555,9 @@ class KnowledgeGraphManager:
 
         return result
 
-    async def merge_entities(self, new_entity_name: str, entity_names: list[str]) -> Entity:
+    async def merge_entities(
+        self, new_entity_name: str, entity_identifiers: list[str | EntityID]
+    ) -> Entity:
         """
         Merge multiple entities into a new entity with the provided name.
 
@@ -1510,7 +1568,7 @@ class KnowledgeGraphManager:
 
         Args:
             new_entity_name: The name of the resulting merged entity
-            entity_names: The list of entity names to merge
+            entity_identifiers: The list of entity names, aliases, or IDs to merge
 
         Returns:
             The newly created merged Entity
@@ -1520,20 +1578,23 @@ class KnowledgeGraphManager:
         """
         if not new_entity_name or not isinstance(new_entity_name, str):
             raise ValueError("new_entity_name must be a non-empty string")
-        if not entity_names or not isinstance(entity_names, list):
-            raise ValueError("entity_names must be a non-empty list")
-        if any(not isinstance(name, str) or not name for name in entity_names):
-            raise ValueError("All entity_names must be non-empty strings")
+        if not entity_identifiers or not isinstance(entity_identifiers, list):
+            raise ValueError("entity_identifiers must be a non-empty list")
+        if any(
+            not ident or (not isinstance(ident, str) and not isinstance(ident, EntityID))
+            for ident in entity_identifiers
+        ):
+            raise ValueError("All entity_identifiers must be non-empty strings or EntityIDs")
 
         graph = await self._load_graph()
 
-        # Canonicalize entity_names list using existing names/aliases
+        # Resolve entity identifiers (names, aliases, or IDs) to canonical names
         canonical_merge_names: list[str] = []
-        for ident in entity_names:
-            entity = self._get_entity_by_name_or_alias(graph, ident)
+        for ident in entity_identifiers:
+            entity = self._resolve_entity_identifier(graph, str(ident))
             if not entity:
                 # Collect missing for error after this loop
-                canonical_merge_names.append(ident)  # keep as-is; we'll validate below
+                canonical_merge_names.append(str(ident))  # keep as-is; we'll validate below
             else:
                 canonical_merge_names.append(entity.name)
 

@@ -1,0 +1,78 @@
+---
+alwaysApply: false
+description: discussing architecture, roadmap, or design decisions. keywords: architecture, roadmap, ADR, design decision, architectural, planning
+---
+
+## Architecture Decision Records (ADR)
+
+When discussing architecture, design decisions, or roadmap planning:
+
+### Reference the ADR Document
+
+Always reference `./docs/ARCHITECTURE.md` when:
+- Making or proposing architectural changes
+- Discussing design trade-offs
+- Planning new features that affect system architecture
+- Considering technology choices or framework decisions
+
+### ADR Process
+
+1. **For New Decisions**: If a significant architectural decision is being made, create a new ADR entry following the format in `docs/ARCHITECTURE.md`
+
+2. **ADR Format**:
+   - **Status**: Proposed | Accepted | Deprecated | Superseded
+   - **Date**: When the decision was made
+   - **Deciders**: Who made the decision
+   - **Context**: The issue motivating this decision
+   - **Decision**: What was decided
+   - **Consequences**: Positive, negative, and mitigations
+
+3. **When to Create an ADR**:
+   - Technology/framework choices (e.g., choosing a database, library, or protocol)
+   - Data model changes that affect storage format
+   - Deployment architecture decisions
+   - Breaking changes to APIs or interfaces
+   - Performance or scalability decisions
+   - Security-related architectural choices
+
+### Key Architectural Principles
+
+Refer to these when making decisions:
+
+1. **Client Agnosticism** (ADR-009): All features must work identically across all MCP-compliant clients
+2. **Single-User Focus** (ADR-008): Current focus is single-user; multi-user deferred to v3.0.0+
+3. **Optional Supabase** (ADR-004): Core must work without external services
+4. **JSONL Primary Storage** (ADR-001): JSONL is the primary format; Supabase is optional enhancement
+5. **Backward Compatibility**: Maintained for at least 2 major versions
+
+### Roadmap Integration
+
+When planning features in `docs/ROADMAP.md`:
+- Consider if the feature requires an ADR
+- Document architectural implications in the roadmap
+- Link roadmap items to relevant ADRs when appropriate
+
+### Example ADR Topics
+
+Current ADRs cover:
+- Storage format (JSONL)
+- Data validation (Pydantic)
+- MCP framework (FastMCP)
+- Deployment (Docker + Nginx)
+- Entity IDs, observations, versioning, etc.
+
+Future ADRs planned:
+- Flexible Tool Parameters (v1.7.0)
+- Project/Task Management Data Model (v1.5.0)
+- Semantic Search Implementation (v1.6.0)
+- Multi-Device Sync Strategy (v2.0.0)
+
+### Best Practices
+
+- **Document early**: Create ADRs when decisions are made, not retroactively
+- **Be specific**: Include concrete details about the decision and rationale
+- **Consider alternatives**: Document why other options were rejected
+- **Update status**: Change ADR status as decisions evolve (Proposed → Accepted → Deprecated)
+- **Link related ADRs**: Reference related decisions when relevant
+
+Architecture: `@./docs/ARCHITECTURE.md`

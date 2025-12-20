@@ -13,6 +13,7 @@ from pydantic import (
     Field,
     ConfigDict,
     field_validator,
+    model_validator,
     computed_field,
     AliasChoices,
 )
@@ -1005,8 +1006,8 @@ class DurabilityGroupedObservations(BaseModel):
 class ObservationRequest(BaseModel):
     """Request model for managing observations for an entity in the knowledge graph. Used for both addition and deletion."""
 
-    entity_name: str = Field(
-        ...,
+    entity_name: str | None = Field(
+        default=None,
         title="Entity name",
         description="The name of the entity to add observations to",
     )
@@ -1021,6 +1022,13 @@ class ObservationRequest(BaseModel):
         title="Observations",
         description="Observations to add - objects with durability metadata",
     )
+
+    @model_validator(mode="after")
+    def validate_entity_reference(self):
+        """Ensure at least one identifier is provided."""
+        if not self.entity_id and not self.entity_name:
+            raise ValueError("Either entity_id or entity_name must be provided")
+        return self
 
 
 class CreateEntityRequest(BaseModel):
@@ -1100,31 +1108,29 @@ class UpdateEntityRequest(BaseModel):
         validate_by_name=True,
         validate_by_alias=True,
     )
-    identifiers: list[str] | list[EntityID] = (
-        Field(
-            default=None,
-            description="Entity names, aliases, or IDs to identify the target entities to update",
-        ),
+    identifiers: list[str] | list[EntityID] | None = Field(
+        default=None,
+        description="Entity names, aliases, or IDs to identify the target entities to update",
     )
-    new_name: str = (Field(default=None, description="New canonical name for the updated entity"),)
-    new_type: str | None = (Field(default=None, description="New type for the updated entity"),)
-    new_aliases: str | list[str] | None = (
-        Field(
-            default=None,
-            description="Aliases to set for the merged entity (merged by default; set merge_aliases=false to replace)",
-        ),
+    new_name: str | None = Field(
+        default=None,
+        description="New canonical name for the updated entity",
     )
-    new_icon: str | None = (
-        Field(
-            default=None,
-            description="Emoji icon to set for the merged entity; use empty string to clear",
-        ),
+    new_type: str | None = Field(
+        default=None,
+        description="New type for the updated entity",
     )
-    merge_aliases: bool = (
-        Field(
-            default=True,
-            description="When true, merge provided aliases for the merged entity; when false, replace alias list",
-        ),
+    new_aliases: str | list[str] | None = Field(
+        default=None,
+        description="Aliases to set for the merged entity (merged by default; set merge_aliases=false to replace)",
+    )
+    new_icon: str | None = Field(
+        default=None,
+        description="Emoji icon to set for the merged entity; use empty string to clear",
+    )
+    merge_aliases: bool = Field(
+        default=True,
+        description="When true, merge provided aliases for the merged entity; when false, replace alias list",
     )
 
 
@@ -1157,11 +1163,13 @@ class CreateRelationRequest(BaseModel):
     )
 
     from_entity_id: EntityID | None = Field(
+        default=None,
         title="Originating entity ID",
         description="The ID of the entity to create a relation from",
         validation_alias=AliasChoices("from_entity_id", "from_id", "fromId"),
     )
     to_entity_id: EntityID | None = Field(
+        default=None,
         title="Destination entity ID",
         description="The ID of the entity to create a relation to",
         validation_alias=AliasChoices("to_entity_id", "to_id", "toId"),
@@ -1183,6 +1191,15 @@ class CreateRelationRequest(BaseModel):
         title="Relation content",
         description="Description of the relation. Should be in active voice and concise. Example: 'is the father of'",
     )
+
+    @model_validator(mode="after")
+    def validate_entity_references(self):
+        """Ensure at least one identifier is provided for each endpoint."""
+        if not self.from_entity_id and not self.from_entity_name:
+            raise ValueError("Either from_entity_id or from_entity_name must be provided")
+        if not self.to_entity_id and not self.to_entity_name:
+            raise ValueError("Either to_entity_id or to_entity_name must be provided")
+        return self
 
     # ID validation handled by constrained types above
 

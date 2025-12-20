@@ -1,8 +1,8 @@
 # Agent Scratchpad
 
-## Current State (Dec 7, 2025)
+## Current State (Dec 19, 2025)
 
-**IQ-MCP is deployed and live!**
+**IQ-MCP v1.4.1 is ready for deployment!**
 
 ### Production Deployment
 - **Endpoint:** `https://mcp.casimir.ai/iq`
@@ -33,15 +33,52 @@ Client → https://mcp.casimir.ai/iq
 - `nginx/ssl/` - Let's Encrypt certs (auto-renew via certbot)
 - `data/` - persistent memory storage
 
+### Deployment Workflow (Registry-based)
+Images are pushed to Google Artifact Registry and pulled on the VM:
+
+```bash
+# One-command deploy (build, push, pull, restart):
+./deploy/push-and-deploy.sh
+
+# Or step-by-step:
+./deploy/push-image.sh        # Build & push to registry
+ssh iq-mcp-vm 'cd /opt/iq-mcp && ./pull-and-deploy.sh'
+```
+
+**Registry:** `us-central1-docker.pkg.dev/dted-ai-agent/iq-mcp/iq-mcp`
+
 ### Local Development
 - SSH config: `iq-mcp-vm` → connects to VM
 - Deploy scripts in `deploy/`:
-  - `deploy.sh` - full rebuild
-  - `quick-deploy.sh` - source-only sync
+  - `push-and-deploy.sh` - full registry-based deploy (recommended)
+  - `push-image.sh` - build & push to Artifact Registry
+  - `pull-and-deploy.sh` - runs on VM to pull & restart
+  - `deploy.sh` - legacy: scp + rebuild
+  - `quick-deploy.sh` - legacy: source-only sync
   - `vm-logs.sh` - view container logs
   - `vm-ssh.sh` - SSH shortcut
 
-### Recent Changes
+### Recent Changes (Dec 19, 2025) - v1.4.1
+- **CLI Version Flag**: Added `--version` / `-v` flag to print version
+- **Version Consistency**: Fixed version mismatch across all files (version.py, pyproject.toml, README.md, CHANGELOG.md)
+
+### Previous Changes (v1.4.0)
+- **Enhanced Entity References**: All CRUD tools now support ID or name/alias
+- **Enhanced `update_user_info`**: Added optional `observations` parameter
+- **Enhanced `read_graph`**: Added project awareness placeholder (ready for v1.5.0)
+- Added `_resolve_entity_identifier()` helper for consistent entity resolution
+- Added model validators to ensure proper identifier usage
+- Added 10 new tests, all 21 tests passing
+
+### Previous Changes (v1.3.1)
+- Fixed `UpdateEntityRequest` model (fields were tuples)
+- Fixed `update_entity` server function (identifier extraction)
+- Fixed test fixture (AppSettings + logger)
+- Fixed Supabase observations upsert (added missing UNIQUE constraint)
+- Added registry-based deployment workflow (Artifact Registry)
+- Improved timestamp serialization for Supabase (isoformat)
+
+### Previous Changes
 - Upgraded FastMCP to 2.13.3 for auth support
 - Added `StaticTokenVerifier` auth (`src/mcp_knowledge_graph/auth.py`)
 - Moved `supabase` to main dependencies in `pyproject.toml`
@@ -61,6 +98,12 @@ Client → https://mcp.casimir.ai/iq
   }
 }
 ```
+
+### Documentation
+- `docs/DEVELOPMENT.md` - Complete development guide with deployment workflow
+- `docs/PROJECT_OVERVIEW.md` - Architecture and module responsibilities
+- `docs/WORKFLOWS.md` - Tool workflows and data flow
+- `docs/SUPABASE_SCHEMA.md` - Supabase table schema
 
 ### Next Steps / Ideas
 - Set up CI/CD for automatic deploys

@@ -1,7 +1,7 @@
 """Centralized application/version constants for IQ-MCP."""
 
 # Bump when application version changes
-IQ_MCP_VERSION: str = "1.3.0"
+IQ_MCP_VERSION: str = "1.4.1"
 
 # Bump when the persisted memory schema changes
 IQ_MCP_SCHEMA_VERSION: int = 1

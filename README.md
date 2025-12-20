@@ -1,6 +1,7 @@
-# IQ-MCP Knowledge Graph Server 🔮 (Python)
+# IQ-MCP Knowledge Graph Server 🔮
+*v1.4.1, released Dec 19, 2025*
 
-A FastMCP 2.11 server that provides a temporal knowledge graph memory for LLMs. It enables persistent, searchable memory with timestamped observations, durability categories, alias-aware entity resolution, and ergonomic tools for creating, searching, maintaining, merging, and visualizing your memory graph.
+A FastMCP 2.13 server that provides a temporal knowledge graph memory for LLMs. It enables persistent, searchable memory with timestamped observations, durability categories, alias-aware entity resolution, and ergonomic tools for creating, searching, maintaining, merging, and visualizing your memory graph.
 
 This is a modern Python implementation using Pydantic models and FastMCP, designed for drop-in use with MCP clients (Claude Desktop, Cursor, Roo Code, etc.).
 
@@ -8,12 +9,14 @@ This is a modern Python implementation using Pydantic models and FastMCP, design
 
 - **Temporal observations** with durability categories and automatic timestamps
 - **Smart cleanup** that removes outdated observations by durability
+- **Flexible entity references**: All tools support entities by ID, name, or alias
 - **Alias-aware graph**: resolve entities by name or any alias
 - **Daily automatic backups** of your memory file
 - **Merge entities**: consolidate duplicates while preserving relations and aliases
 - **Enhanced search** across names, aliases, types, and observation content
 - **Optional Supabase integration** for cloud storage and email summaries
 - **Context-based architecture** with no import-time side effects
+- **Project awareness** (v1.5.0 coming soon): Track active projects and recent work
 
 ## Core Concepts
 
@@ -86,15 +89,15 @@ The knowledge graph supports a primary user with separate identity management:
 |------|-------------|
 | `create_entities` | Add new entities with observations |
 | `update_entity` | Modify entity properties (name, type, aliases, icon) |
-| `merge_entities` | Combine multiple entities into one |
+| `merge_entities` | Combine multiple entities into one (supports names, aliases, or IDs) |
 | `delete_entities` | Remove entities and their relations |
 
 ### Relation Operations
 
 | Tool | Description |
 |------|-------------|
-| `create_relations` | Add relations between entities |
-| `delete_relations` | Remove specific relations |
+| `create_relations` | Add relations between entities (supports names or IDs) |
+| `delete_relations` | Remove specific relations (supports names or IDs) |
 
 ### Observation Operations
 
@@ -115,7 +118,7 @@ The knowledge graph supports a primary user with separate identity management:
 
 | Tool | Description |
 |------|-------------|
-| `update_user_info` | Update user identifying information |
+| `update_user_info` | Update user identifying information (optionally add observations) |
 
 ### Supabase Integration (Optional)
 
@@ -225,11 +228,13 @@ uv pip install -e .
 }
 ```
 
-**Claude Desktop Config via GUI**
+**Claude Desktop Setup via GUI**
 
-1. Open `File > Settings...` ![settings](./assets/ss01.png)
-2. Enter a name for your implementation, as well as the URL to your host plus the API key: ![setup](./assets/ss02.png)
+1. Open `Settings > Connectors` ![settings > connectors](./assets/ss1b.png)
 
+2. Enter a name for your installation, and enter the url for your endpoint. Include your API key in the URL. ![enter your url](./assets/ss1a.png)
+
+3. Reload Claude Desktop. Optionally, open the Claude Desktop window menu and select `Developer > Reload MCP Configuration` to immediately connect.
 
 **Notes:**
 
@@ -346,29 +351,90 @@ Update your memory using appropriate durability:
 - "Currently debugging auth issue", "Traveling next week"
 ```
 
+## Production Deployment
+
+IQ-MCP can be deployed to a cloud VM using Docker and Google Artifact Registry.
+
+### Architecture
+
+```
+Client → https://your-domain.com/iq
+         ↓
+      nginx (SSL termination, /iq → /mcp rewrite)
+         ↓
+      iq-mcp container (FastMCP on port 8000)
+         ↓
+      Supabase (cloud sync) + local JSONL
+```
+
+### Deploy Scripts
+
+| Script | Description |
+|--------|-------------|
+| `deploy/push-and-deploy.sh` | One-command: build, push to registry, pull on VM, restart |
+| `deploy/push-image.sh` | Build and push Docker image to Artifact Registry |
+| `deploy/pull-and-deploy.sh` | Runs on VM to pull latest image and restart |
+| `deploy/deploy.sh` | Legacy: scp files and rebuild on VM |
+| `deploy/quick-deploy.sh` | Legacy: sync source only (no rebuild) |
+
+### Quick Deploy
+
+```bash
+# Build, push, and deploy in one command:
+./deploy/push-and-deploy.sh
+```
+
+### First-Time Setup
+
+**Local machine:**
+```bash
+gcloud auth login
+gcloud config set project YOUR_PROJECT_ID
+gcloud auth configure-docker us-central1-docker.pkg.dev
+gcloud artifacts repositories create iq-mcp \
+  --repository-format=docker \
+  --location=us-central1
+```
+
+**On VM:**
+```bash
+gcloud init
+gcloud auth configure-docker us-central1-docker.pkg.dev
+```
+
+Copy required files to VM:
+```bash
+scp docker-compose.prod.yml your-vm:/opt/iq-mcp/
+scp deploy/pull-and-deploy.sh your-vm:/opt/iq-mcp/
+```
+
+### Docker Compose Files
+
+- `docker-compose.yml` - Local development (builds from source)
+- `docker-compose.prod.yml` - Production (pulls from Artifact Registry)
+
 ## Development
 
-### Install dev dependencies
+See **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)** for comprehensive development guide including:
+- Development setup and installation
+- Running tests
+- Deployment workflow (Artifact Registry)
+- Project structure
+- Debugging tips
+- Contributing guidelines
+
+### Quick Start
 
 ```bash
+# Install dev dependencies
 pip install -e ".[dev]"
-uv sync
-```
 
-### Run tests
-
-```bash
+# Run tests
 pytest
-pytest --cov=mcp_knowledge_graph
-```
 
-### Visualize a graph
-
-```bash
+# Visualize graph
 python -m mcp_knowledge_graph.visualize --input memory.jsonl --output graph.html --title "Knowledge Graph"
 ```
-
-Open `graph.html` to explore nodes, aliases, observations, and relations with an interactive D3 view.
 
 ## Architecture
 
@@ -400,7 +466,14 @@ See `docs/` for detailed architecture documentation.
 
 See [CHANGELOG.md](CHANGELOG.md) for version history.
 
-### Recent (v1.3.0)
+### Recent (v1.3.1)
+
+- 🐛 Fixed `UpdateEntityRequest` model and `update_entity` function
+- 🐛 Fixed Supabase timestamp serialization
+- 🚀 Registry-based deployment workflow (Artifact Registry)
+- 📚 Updated deployment documentation
+
+### v1.3.0
 
 - ✨ Context-based architecture with no import-time side effects
 - ✨ Daily automatic backups
@@ -410,7 +483,13 @@ See [CHANGELOG.md](CHANGELOG.md) for version history.
 
 ## License
 
-This MCP server is licensed under the MIT License. This means you are free to use, modify, and distribute the software, subject to the terms and conditions of the MIT License.
+This MCP server is licensed under a **Non-Commercial License**. You are free to use, modify, and distribute the software for non-commercial purposes, subject to the following conditions:
+
+- ✅ **Free use** with proper attribution
+- ✅ **Modification and distribution** allowed
+- ❌ **Commercial use prohibited** (in whole or in part)
+
+See [LICENSE](LICENSE) for full terms. For commercial licensing inquiries, please contact the copyright holder.
 
 ## Credits
 

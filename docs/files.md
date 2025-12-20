@@ -1,6 +1,36 @@
 # File Index
 
 - `example.env` — Environment variable descriptions and defaults
+- `docker-compose.yml` — Local development Docker Compose
+- `docker-compose.prod.yml` — Production Docker Compose (uses Artifact Registry)
+- `Dockerfile` — Docker image definition
+
+## Documentation Files
+
+| File | Description |
+|------|-------------|
+| `DEVELOPMENT.md` | Complete development guide: setup, testing, deployment workflow |
+| `PROJECT_OVERVIEW.md` | Architecture overview and module responsibilities |
+| `WORKFLOWS.md` | Tool workflows and data flow |
+| `SUPABASE_SCHEMA.md` | Supabase database schema and constraints |
+| `SETTINGS_FLOW.md` | Configuration and settings management |
+| `LLM_COLLAB.md` | Guidelines for LLM-assisted development |
+| `engineering-notes.md` | Technical notes and decisions |
+
+## deploy/ — Deployment Scripts
+
+| File | Description |
+|------|-------------|
+| `push-and-deploy.sh` | One-command deploy: build, push to registry, pull on VM, restart |
+| `push-image.sh` | Build Docker image and push to Google Artifact Registry |
+| `pull-and-deploy.sh` | Runs on VM: pull latest image and restart containers |
+| `deploy.sh` | Legacy: scp files to VM and rebuild |
+| `quick-deploy.sh` | Legacy: sync source only, no rebuild |
+| `vm-logs.sh` | View container logs on VM |
+| `vm-ssh.sh` | SSH shortcut to VM |
+| `setup-vm.sh` | Initial VM setup script |
+| `setup-ssl.sh` | SSL certificate setup with certbot |
+| `env.production.template` | Template for production .env file |
 
 ## src/mcp_knowledge_graph — Main Package
 

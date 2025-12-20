@@ -1,0 +1,44 @@
+# IQ-MCP Production Docker Compose (uses pre-built image from registry)
+# Deploy with: docker compose -f docker-compose.prod.yml up -d
+
+services:
+  iq-mcp:
+    image: us-central1-docker.pkg.dev/dted-ai-agent/iq-mcp/iq-mcp:latest
+    container_name: iq-mcp
+    restart: unless-stopped
+    volumes:
+      # Persistent data storage
+      - ./data:/data
+    env_file:
+      - .env
+    environment:
+      - IQ_TRANSPORT=http
+      - IQ_STREAMABLE_HTTP_HOST=0.0.0.0
+      - IQ_STREAMABLE_HTTP_PORT=8000
+      - IQ_STREAMABLE_HTTP_PATH=/mcp
+      - FASTMCP_STATELESS_HTTP=true
+    expose:
+      - "8000"
+    networks:
+      - mcp-net
+
+  nginx:
+    image: nginx:alpine
+    container_name: iq-mcp-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - ./nginx/certbot:/var/www/certbot:ro
+    depends_on:
+      - iq-mcp
+    networks:
+      - mcp-net
+
+networks:
+  mcp-net:
+    driver: bridge
+

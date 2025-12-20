@@ -5,6 +5,87 @@ All notable changes to the IQ-MCP Knowledge Graph Server will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2025-12-19
+
+### ✨ Enhanced Features
+
+- **CLI Version Flag**: Added `--version` / `-v` flag to print the current version
+  - Run `iq-mcp --version` to display version information
+  - Useful for debugging and verifying installed version
+
+### 🔧 Improvements
+
+- **Version Consistency**: Ensured all version references are synchronized across the codebase
+  - `version.py`, `pyproject.toml`, `README.md`, and `CHANGELOG.md` now all report v1.4.1
+
+## [1.4.0] - 2025-12-19
+
+### ✨ Enhanced Features
+
+- **Flexible Entity References**: All CRUD tools now support referencing entities by either ID or name/alias
+  - `create_relations`: Accepts entity names or IDs for both `from` and `to` endpoints
+  - `delete_relations`: Supports name/ID resolution for relation endpoints
+  - `merge_entities`: Accepts names, aliases, or IDs for entities to merge
+  - Added `_resolve_entity_identifier()` helper method for consistent entity resolution
+
+- **Enhanced `update_user_info` Tool**: Now supports adding observations in the same call
+  - New optional `observations` parameter
+  - Automatically adds observations to user-linked entity after updating user info
+  - Returns summary of both operations
+
+- **Enhanced `read_graph` Tool**: Added project awareness (placeholder for v1.5.0)
+  - Shows active projects count
+  - Displays most recently accessed project
+  - Gracefully handles absence of project management (no errors if not implemented)
+
+### 🔧 Improvements
+
+- **Model Validation**: Added `model_validator` to ensure at least one identifier is provided
+  - `CreateRelationRequest`: Requires either `from_entity_id` or `from_entity_name` (and same for `to`)
+  - `ObservationRequest`: Requires either `entity_id` or `entity_name`
+- **Better Error Messages**: Clearer errors when entities cannot be resolved
+- **Consistent API**: All entity reference operations now work the same way
+
+### 🧪 Testing
+
+- Added 10 new tests for v1.4.0 features
+- All 21 tests passing
+- Maintained 100% backward compatibility
+
+### 📚 Documentation
+
+- Updated tool docstrings to reflect new capabilities
+- Added validation requirements to model documentation
+
+## [1.3.1] - 2025-12-19
+
+### 🐛 Bug Fixes
+
+- **Fixed `UpdateEntityRequest` model**: Fields were incorrectly wrapped in tuples instead of being `Field` objects
+- **Fixed `update_entity` server function**: Now correctly extracts identifier from the `identifiers` list
+- **Fixed `CreateEntityResult` type error**: Duplicate entity errors now return the existing `Entity` instead of the request
+- **Fixed Supabase timestamp serialization**: Now uses `isoformat()` for PostgreSQL compatibility
+
+### 🚀 Deployment
+
+- **Registry-based deployment**: New workflow using Google Artifact Registry instead of scp + rebuild
+- **`deploy/push-image.sh`**: Build and push Docker image to Artifact Registry
+- **`deploy/pull-and-deploy.sh`**: Pull latest image and restart on VM
+- **`deploy/push-and-deploy.sh`**: One-command full deployment
+- **`docker-compose.prod.yml`**: Production compose file using registry images
+
+### 🧪 Testing
+
+- **Fixed test fixture**: Now uses `AppSettings` with proper logger initialization
+- **All 11 unit tests passing**
+
+### 📚 Documentation
+
+- Updated `AGENTS.md` with new deployment workflow
+- Updated `README.md` with production deployment section
+- Updated `docs/files.md` with deploy script descriptions
+- Added camelCase table name warning to `docs/SUPABASE_SCHEMA.md`
+
 ## [1.3.0] - 2025-12-07
 
 ### 🚀 Deployment & Authentication
@@ -131,6 +212,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Migration Guide
 
+### From v1.3.1 to v1.4.0
+
+**No action required!** The upgrade is fully backward compatible:
+
+1. **Existing memory files**: Work without modification
+2. **Existing tools**: Continue to work exactly as before
+3. **New capabilities**: You can now use entity names or IDs interchangeably in all CRUD operations
+
+**New features you can use**:
+
+```python
+# Create relations using names instead of IDs
+create_relations([{
+  "from_entity_name": "Alice",
+  "to_entity_name": "Acme Corp",
+  "relation": "works_at"
+}])
+
+# Merge entities using IDs
+merge_entities(
+  new_entity_name="John Smith",
+  entity_identifiers=["a1b2c3d4", "e5f6g7h8"]  # IDs or names
+)
+
+# Update user info and add observations in one call
+update_user_info(
+  preferred_name="John",
+  observations=[{
+    "content": "prefers email communication",
+    "durability": "long-term"
+  }]
+)
+```
+
 ### From v1.2.0 to v1.3.0
 
 **No action required!** The upgrade is fully backward compatible:
@@ -182,4 +297,4 @@ Contributions are welcome! Please feel free to submit issues and enhancement req
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+Non-Commercial License - see [LICENSE](LICENSE) file for details. Commercial use is prohibited.
