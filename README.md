@@ -1,5 +1,5 @@
 # IQ-MCP Knowledge Graph Server 🔮
-*v1.4.0, released Dec 19, 2025*
+*v1.4.1, released Dec 19, 2025*
 
 A FastMCP 2.13 server that provides a temporal knowledge graph memory for LLMs. It enables persistent, searchable memory with timestamped observations, durability categories, alias-aware entity resolution, and ergonomic tools for creating, searching, maintaining, merging, and visualizing your memory graph.
 

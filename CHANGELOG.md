@@ -5,6 +5,19 @@ All notable changes to the IQ-MCP Knowledge Graph Server will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2025-12-19
+
+### ✨ Enhanced Features
+
+- **CLI Version Flag**: Added `--version` / `-v` flag to print the current version
+  - Run `iq-mcp --version` to display version information
+  - Useful for debugging and verifying installed version
+
+### 🔧 Improvements
+
+- **Version Consistency**: Ensured all version references are synchronized across the codebase
+  - `version.py`, `pyproject.toml`, `README.md`, and `CHANGELOG.md` now all report v1.4.1
+
 ## [1.4.0] - 2025-12-19
 
 ### ✨ Enhanced Features

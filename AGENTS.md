@@ -2,7 +2,7 @@
 
 ## Current State (Dec 19, 2025)
 
-**IQ-MCP v1.4.0 is ready for deployment!**
+**IQ-MCP v1.4.1 is ready for deployment!**
 
 ### Production Deployment
 - **Endpoint:** `https://mcp.casimir.ai/iq`
@@ -58,7 +58,11 @@ ssh iq-mcp-vm 'cd /opt/iq-mcp && ./pull-and-deploy.sh'
   - `vm-logs.sh` - view container logs
   - `vm-ssh.sh` - SSH shortcut
 
-### Recent Changes (Dec 19, 2025) - v1.4.0
+### Recent Changes (Dec 19, 2025) - v1.4.1
+- **CLI Version Flag**: Added `--version` / `-v` flag to print version
+- **Version Consistency**: Fixed version mismatch across all files (version.py, pyproject.toml, README.md, CHANGELOG.md)
+
+### Previous Changes (v1.4.0)
 - **Enhanced Entity References**: All CRUD tools now support ID or name/alias
 - **Enhanced `update_user_info`**: Added optional `observations` parameter
 - **Enhanced `read_graph`**: Added project awareness placeholder (ready for v1.5.0)
