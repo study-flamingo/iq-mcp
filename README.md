@@ -7,6 +7,7 @@ This is a modern Python implementation using Pydantic models and FastMCP, design
 
 ## ✨ Highlights
 
+- **Interactive Graph Visualizer** 🆕 - Web-based UI for exploring and editing your knowledge graph (see [VISUALIZER.md](VISUALIZER.md))
 - **Temporal observations** with durability categories and automatic timestamps
 - **Smart cleanup** that removes outdated observations by durability
 - **Flexible entity references**: All tools support entities by ID, name, or alias
@@ -432,8 +433,13 @@ pip install -e ".[dev]"
 # Run tests
 pytest
 
-# Visualize graph
+# Generate static graph visualization
 python -m mcp_knowledge_graph.visualize --input memory.jsonl --output graph.html --title "Knowledge Graph"
+
+# Or use the interactive web visualizer (requires HTTP transport)
+IQ_TRANSPORT=http python -m mcp_knowledge_graph
+# Then visit: http://localhost:8000/graph?token=YOUR_API_KEY
+# See VISUALIZER.md for full setup instructions
 ```
 
 ## Architecture

@@ -1,0 +1,139 @@
+.inspector-panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-tertiary);
+}
+
+.panel-header h2 {
+  font-size: 1.1em;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.close-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  font-size: 1.5em;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+
+.close-btn:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.panel-content {
+  flex: 1;
+  padding: 20px;
+  overflow-y: auto;
+}
+
+.panel-empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 40px 20px;
+}
+
+.panel-empty h3 {
+  color: var(--text-secondary);
+}
+
+/* Info Sections */
+.info-section {
+  margin-bottom: 20px;
+}
+
+.info-section label {
+  display: block;
+  font-size: 0.85em;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.entity-id {
+  font-size: 0.85em;
+  color: var(--accent-blue);
+}
+
+.aliases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Observations */
+.observations-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.observation-item {
+  background: var(--bg-tertiary);
+  padding: 12px;
+  border-radius: 8px;
+  border-left: 3px solid var(--accent-blue);
+}
+
+.obs-content {
+  margin-bottom: 8px;
+  color: var(--text-primary);
+  line-height: 1.5;
+}
+
+.obs-meta {
+  display: flex;
+  gap: 10px;
+  font-size: 0.8em;
+}
+
+.timestamp {
+  color: var(--text-muted);
+}
+
+.relation-label {
+  padding: 4px 10px;
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  font-weight: 500;
+  color: var(--accent-blue);
+}
+
+/* Actions */
+.panel-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.panel-actions .btn {
+  flex: 1;
+}
