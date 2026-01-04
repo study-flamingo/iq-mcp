@@ -2,8 +2,10 @@ import { useEffect, useRef } from 'react';
 import cytoscape from 'cytoscape';
 import cola from 'cytoscape-cola';
 
-// Register cola layout
-cytoscape.use(cola);
+// Register cola layout (check first to avoid hot-reload errors)
+if (typeof cytoscape('core', 'cola') !== 'function') {
+  cytoscape.use(cola);
+}
 
 const GraphCanvas = ({ graphData, onNodeClick, onEdgeClick, layout = 'cola', filters }) => {
   const containerRef = useRef(null);
