@@ -1703,7 +1703,42 @@ async def start_server():
     else:
         logger.warning("⛔ Supabase integration is disabled, no Supabase tools will be available")
 
-    await mcp.run_async(transport=validated_transport, **transport_kwargs)
+    # If HTTP transport, mount web UI alongside MCP endpoints
+    if validated_transport == "http":
+        logger.info("🌐 HTTP transport enabled - mounting web visualizer")
+        from starlette.applications import Starlette
+        from starlette.routing import Mount
+        from .web import create_web_app
+
+        # Create web app with graph visualizer
+        web_app = create_web_app(manager)
+
+        # Get MCP HTTP app
+        mcp_app = mcp.http_app(
+            path=settings.streamable_http_path or "/mcp",
+            transport="streamable-http"
+        )
+
+        # Create combined Starlette app
+        combined_app = Starlette(
+            routes=[
+                Mount("/", app=web_app),  # Web UI at root
+                Mount("/mcp", app=mcp_app),  # MCP at /mcp
+            ],
+            lifespan=mcp_app.lifespan,
+        )
+
+        # Run combined app with uvicorn
+        import uvicorn
+        uvicorn.run(
+            combined_app,
+            host=settings.streamable_http_host or "0.0.0.0",
+            port=settings.port or 8000,
+            log_level="debug" if settings.debug else "info",
+        )
+    else:
+        # Non-HTTP transports (stdio, sse) - run normally
+        await mcp.run_async(transport=validated_transport, **transport_kwargs)
 
 
 def run_sync():
