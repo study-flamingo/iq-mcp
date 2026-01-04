@@ -180,9 +180,12 @@ Edit `src/mcp_knowledge_graph/web/frontend/src/components/GraphCanvas.jsx` to cu
 
 ### "Frontend Not Built" Error
 
+**Problem**: Browser shows "Frontend Not Built" message
+
 **Solution**: Run the build command:
 ```bash
 cd src/mcp_knowledge_graph/web/frontend
+npm install
 npm run build
 ```
 
@@ -213,6 +216,15 @@ npm run build
 1. Check that `IQ_DRY_RUN` is not set to `true`
 2. Verify file permissions on `memory.jsonl`
 3. Check server logs for save errors
+
+### Cytoscape Extension Errors (Development)
+
+**Problem**: "Can not register cola for core since cola already exists in the prototype" during hot reload
+
+**Solution**: This is already fixed in the code! The visualizer checks if extensions are registered before calling `cytoscape.use()`. If you see this error:
+1. Make sure you're using the latest version of the code
+2. Clear your browser cache and restart the dev server
+3. Check that `GraphCanvas.jsx` has the conditional registration check
 
 ### CORS Errors (Development)
 

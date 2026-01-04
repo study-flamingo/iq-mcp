@@ -133,6 +133,27 @@ Available layouts in Cytoscape:
 - `breadthfirst` - Hierarchical layout
 - `concentric` - Concentric circles
 
+### Adding Custom Extensions
+
+If you want to add more Cytoscape extensions (e.g., `cytoscape-dagre` for different layouts):
+
+```bash
+npm install cytoscape-dagre
+```
+
+Then in `GraphCanvas.jsx`:
+
+```javascript
+import dagre from 'cytoscape-dagre';
+
+// Always check before registering to avoid hot-reload errors
+if (typeof cytoscape('core', 'dagre') !== 'function') {
+  cytoscape.use(dagre);
+}
+```
+
+**Important**: Always use the conditional check pattern to prevent "already exists in the prototype" errors during development with hot module replacement.
+
 ## Deployment
 
 ### Production Build
@@ -175,6 +196,27 @@ Run `npm run build` in the frontend directory before starting the server.
 ### CORS Issues
 
 If developing locally, the Vite dev server proxies API requests to `localhost:8000`. Update `vite.config.js` if your backend runs on a different port.
+
+### Cytoscape Extension Registration Errors
+
+**Error**: `Can not register [extension] for core since [extension] already exists in the prototype`
+
+**Cause**: This occurs when Cytoscape extensions are registered multiple times during hot module replacement (HMR) in development.
+
+**Solution**: Already implemented! The code checks if extensions are registered before calling `cytoscape.use()`:
+
+```javascript
+// In GraphCanvas.jsx
+if (typeof cytoscape('core', 'cola') !== 'function') {
+  cytoscape.use(cola);
+}
+```
+
+If you add new extensions, always use this pattern to avoid duplicate registration errors.
+
+**References**:
+- [Cytoscape.js Issue #2887](https://github.com/cytoscape/cytoscape.js/issues/2887)
+- [Extension Registration Issue #1585](https://github.com/cytoscape/cytoscape.js/issues/1585)
 
 ## License
 
