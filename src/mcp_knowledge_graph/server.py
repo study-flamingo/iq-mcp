@@ -1728,14 +1728,16 @@ async def start_server():
             lifespan=mcp_app.lifespan,
         )
 
-        # Run combined app with uvicorn
+        # Run combined app with uvicorn (async)
         import uvicorn
-        uvicorn.run(
+        config = uvicorn.Config(
             combined_app,
             host=settings.streamable_http_host or "0.0.0.0",
             port=settings.port or 8000,
             log_level="debug" if settings.debug else "info",
         )
+        server = uvicorn.Server(config)
+        await server.serve()
     else:
         # Non-HTTP transports (stdio, sse) - run normally
         await mcp.run_async(transport=validated_transport, **transport_kwargs)
