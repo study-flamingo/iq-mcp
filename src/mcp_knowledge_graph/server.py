@@ -1713,25 +1713,21 @@ async def start_server():
         # Create web app with graph visualizer
         web_app = create_web_app(manager)
 
-        # Get MCP HTTP app
-        # Use path="/" internally since Starlette Mount strips the prefix
+        # Get MCP HTTP app with path configured directly
+        # FastMCP will handle routing at this path (e.g., /iq)
+        mcp_path = settings.streamable_http_path or "/mcp"
         mcp_app = mcp.http_app(
-            path="/",
+            path=mcp_path,
             transport="streamable-http"
         )
+        logger.info(f"📍 MCP endpoint configured at: {mcp_path}")
 
-        # Mount path from settings (e.g., "/iq" or "/mcp")
-        mcp_mount_path = settings.streamable_http_path or "/mcp"
-        logger.info(f"📍 MCP endpoint mounted at: {mcp_mount_path}")
+        # mcp_app is a Starlette app - we can add routes to it
+        # Add web_app routes by mounting it (routes are matched in order added)
+        mcp_app.routes.append(Mount("/", app=web_app))
 
-        # Create combined Starlette app
-        combined_app = Starlette(
-            routes=[
-                Mount(mcp_mount_path, app=mcp_app),  # MCP at configured path
-                Mount("/", app=web_app),  # Web UI at root (must be last)
-            ],
-            lifespan=mcp_app.lifespan,
-        )
+        # Use mcp_app directly as the combined app
+        combined_app = mcp_app
 
         # Run combined app with uvicorn (async)
         import uvicorn
