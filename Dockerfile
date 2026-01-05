@@ -35,7 +35,7 @@ RUN mkdir -p /data /data/backups && \
 # Note: PORT is injected by Railway/Heroku and takes precedence
 ENV IQ_TRANSPORT=http \
     IQ_STREAMABLE_HTTP_HOST=0.0.0.0 \
-    IQ_STREAMABLE_HTTP_PATH=/mcp \
+    IQ_STREAMABLE_HTTP_PATH=/iq \
     IQ_MEMORY_PATH=/data/memory.jsonl \
     IQ_ENABLE_SUPABASE=false \
     PYTHONUNBUFFERED=1

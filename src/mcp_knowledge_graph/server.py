@@ -1714,16 +1714,21 @@ async def start_server():
         web_app = create_web_app(manager)
 
         # Get MCP HTTP app
+        # Use path="/" internally since Starlette Mount strips the prefix
         mcp_app = mcp.http_app(
-            path=settings.streamable_http_path or "/mcp",
+            path="/",
             transport="streamable-http"
         )
+
+        # Mount path from settings (e.g., "/iq" or "/mcp")
+        mcp_mount_path = settings.streamable_http_path or "/mcp"
+        logger.info(f"📍 MCP endpoint mounted at: {mcp_mount_path}")
 
         # Create combined Starlette app
         combined_app = Starlette(
             routes=[
-                Mount("/", app=web_app),  # Web UI at root
-                Mount("/mcp", app=mcp_app),  # MCP at /mcp
+                Mount(mcp_mount_path, app=mcp_app),  # MCP at configured path
+                Mount("/", app=web_app),  # Web UI at root (must be last)
             ],
             lifespan=mcp_app.lifespan,
         )
