@@ -111,7 +111,7 @@ class IQSettings:
         parser.add_argument("--memory-path", type=str)
         parser.add_argument("--debug", action="store_true", default=None)
         parser.add_argument("--transport", type=str)
-        parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+        parser.add_argument("--port", type=int, default=None)
         parser.add_argument("--http-host", type=str)
         parser.add_argument("--http-path", type=str)
         parser.add_argument("--no-emojis", action="store_true", default=None)
