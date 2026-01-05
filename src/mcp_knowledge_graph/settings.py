@@ -151,7 +151,10 @@ class IQSettings:
         transport: Transport = TRANSPORT_ENUM[transport_raw]
 
         # Port/Host/Path for HTTP
-        http_port = args.port or int(os.getenv("IQ_STREAMABLE_HTTP_PORT", DEFAULT_PORT))
+        # Check PORT (Railway/Heroku standard), then IQ_STREAMABLE_HTTP_PORT, then default
+        http_port = args.port or int(
+            os.getenv("PORT") or os.getenv("IQ_STREAMABLE_HTTP_PORT") or DEFAULT_PORT
+        )
         http_host = args.http_host or os.getenv("IQ_STREAMABLE_HTTP_HOST")
         http_path = args.http_path or os.getenv("IQ_STREAMABLE_HTTP_PATH")
 

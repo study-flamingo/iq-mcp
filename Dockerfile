@@ -32,15 +32,13 @@ RUN mkdir -p /data /data/backups && \
     chmod 755 /data
 
 # Environment defaults (override via docker-compose or .env)
+# Note: PORT is injected by Railway/Heroku and takes precedence
 ENV IQ_TRANSPORT=http \
     IQ_STREAMABLE_HTTP_HOST=0.0.0.0 \
-    IQ_STREAMABLE_HTTP_PORT=8000 \
     IQ_STREAMABLE_HTTP_PATH=/mcp \
     IQ_MEMORY_PATH=/data/memory.jsonl \
-    IQ_ENABLE_SUPABASE=true \
+    IQ_ENABLE_SUPABASE=false \
     PYTHONUNBUFFERED=1
-
-EXPOSE 8000
 
 # Run the server
 CMD ["python", "-m", "mcp_knowledge_graph"]
