@@ -3,17 +3,24 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
-# Install runtime dependencies
+# Install runtime dependencies including Node.js for frontend build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     gcc \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy dependency files first (for better caching)
 COPY pyproject.toml ./
 COPY src/ ./src/
 
-# Install the package (supabase is now in main deps)
+# Build frontend (outputs to src/mcp_knowledge_graph/web/static/)
+WORKDIR /app/src/mcp_knowledge_graph/web/frontend
+RUN npm install && npm run build
+
+# Return to app root and install the package (supabase is now in main deps)
+WORKDIR /app
 RUN pip install --no-cache-dir -e .
 
 # Create data directory for persistent storage
