@@ -1,0 +1,23 @@
+# Railway ignore file
+.git
+.gitignore
+.venv
+.vscode
+.cursor
+.claude
+__pycache__
+*.pyc
+*.egg-info
+.pytest_cache
+node_modules
+data/
+deploy/env.production
+nginx/ssl/
+*.log
+*.jsonl
+.env
+.env.*
+docs/.*
+README.md
+CLAUDE.md
+*.md

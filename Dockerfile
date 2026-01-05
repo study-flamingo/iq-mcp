@@ -11,6 +11,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
+# Install uv and add to PATH
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:$PATH"
+
 # Copy dependency files first (for better caching)
 COPY pyproject.toml ./
 COPY src/ ./src/
@@ -19,9 +23,9 @@ COPY src/ ./src/
 WORKDIR /app/src/mcp_knowledge_graph/web/frontend
 RUN npm install && npm run build
 
-# Return to app root and install the package (supabase is now in main deps)
+# Return to app root and install the package with uv
 WORKDIR /app
-RUN pip install --no-cache-dir -e .
+RUN uv pip install --system -e .
 
 # Create data directory for persistent storage
 RUN mkdir -p /data /data/backups && \

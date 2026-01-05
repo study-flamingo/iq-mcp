@@ -126,3 +126,6 @@ data/
 
 # Cursor local MCP config (may contain secrets)
 .cursor/mcp.json
+
+# Claude Code local settings
+.claude/
