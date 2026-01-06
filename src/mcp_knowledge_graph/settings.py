@@ -61,6 +61,7 @@ class IQSettings:
         `project_root`: Resolved project root path
         `no_emojis`: Disable emojis in the output
         `dry_run`: Enable dry-run mode (doesn't save anything)
+        `url_auth`: Enable URL query param auth (?token=xxx)
         `enable_supabase`: Enable Supabase integration
     This class contains only the core settings required for the MCP server to function.
     Optional integrations are handled separately via integration-specific config classes.
@@ -78,6 +79,7 @@ class IQSettings:
         project_root: Path,
         no_emojis: bool,
         dry_run: bool,
+        url_auth: bool,
     ) -> None:
         self.debug = bool(debug)
         self.transport = transport
@@ -88,6 +90,7 @@ class IQSettings:
         self.project_root = project_root
         self.no_emojis = no_emojis
         self.dry_run = dry_run
+        self.url_auth = url_auth
 
     # ---------- Construction ----------
     @classmethod
@@ -116,6 +119,7 @@ class IQSettings:
         parser.add_argument("--http-path", type=str)
         parser.add_argument("--no-emojis", action="store_true", default=None)
         parser.add_argument("--dry-run", action="store_true", default=False)
+        parser.add_argument("--url-auth", action="store_true", default=None)
         # Supabase args are parsed separately in SupabaseConfig.load()
         parser.add_argument("--enable-supabase", action="store_true", default=None)
         parser.add_argument("--supabase-url", type=str, default=None)
@@ -174,6 +178,12 @@ class IQSettings:
             logger.warning(
                 "🚧 Dry run mode enabled! No changes will be made to the memory file or Supabase."
             )
+
+        # URL Auth - allows ?token= query param for authentication (off by default)
+        url_auth = args.url_auth or os.getenv("IQ_URL_AUTH", "false").lower() == "true"
+        if url_auth:
+            logger.info("🔗 URL auth enabled: ?token= query param will be accepted")
+
         return cls(
             debug=debug,
             transport=transport,
@@ -184,6 +194,7 @@ class IQSettings:
             project_root=project_root,
             no_emojis=no_emojis,
             dry_run=dry_run,
+            url_auth=url_auth,
         )
 
 
@@ -361,6 +372,10 @@ class AppSettings:
     @property
     def dry_run(self) -> bool:
         return self.core.dry_run
+
+    @property
+    def url_auth(self) -> bool:
+        return self.core.url_auth
 
     @property
     def supabase_enabled(self) -> bool:
