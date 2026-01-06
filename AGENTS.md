@@ -105,6 +105,53 @@ ssh iq-mcp-vm 'cd /opt/iq-mcp && ./pull-and-deploy.sh'
 - `docs/WORKFLOWS.md` - Tool workflows and data flow
 - `docs/SUPABASE_SCHEMA.md` - Supabase table schema
 
+### Testing with MCP Inspector CLI
+
+**Primary testing method:** Use `npx @modelcontextprotocol/inspector --cli` for all MCP server testing.
+
+**List available tools:**
+```bash
+npx @modelcontextprotocol/inspector --cli https://iq-mcp-production.up.railway.app/iq \
+  --transport http \
+  --header "Authorization: Bearer YOUR_API_KEY" \
+  --method tools/list
+```
+
+**Call a specific tool:**
+```bash
+npx @modelcontextprotocol/inspector --cli https://iq-mcp-production.up.railway.app/iq \
+  --transport http \
+  --header "Authorization: Bearer YOUR_API_KEY" \
+  --method tools/call \
+  --tool-name read_graph
+```
+
+**Call a tool with arguments:**
+```bash
+npx @modelcontextprotocol/inspector --cli https://iq-mcp-production.up.railway.app/iq \
+  --transport http \
+  --header "Authorization: Bearer YOUR_API_KEY" \
+  --method tools/call \
+  --tool-name search_nodes \
+  --tool-arg query="test"
+```
+
+**Pass JSON arguments:**
+```bash
+npx @modelcontextprotocol/inspector --cli https://iq-mcp-production.up.railway.app/iq \
+  --transport http \
+  --header "Authorization: Bearer YOUR_API_KEY" \
+  --method tools/call \
+  --tool-name create_entities \
+  --tool-arg 'new_entities=[{"name": "Test", "entity_type": "test"}]'
+```
+
+**Other useful methods:**
+- `--method resources/list` - List available resources
+- `--method prompts/list` - List available prompts
+
+See: https://github.com/modelcontextprotocol/inspector
+
 ### Next Steps / Ideas
 - Set up CI/CD for automatic deploys
 - Add monitoring/alerting
