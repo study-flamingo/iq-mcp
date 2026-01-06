@@ -48,15 +48,8 @@ ssh iq-mcp-vm 'cd /opt/iq-mcp && ./pull-and-deploy.sh'
 **Registry:** `us-central1-docker.pkg.dev/dted-ai-agent/iq-mcp/iq-mcp`
 
 ### Local Development
-- SSH config: `iq-mcp-vm` → connects to VM
-- Deploy scripts in `deploy/`:
-  - `push-and-deploy.sh` - full registry-based deploy (recommended)
-  - `push-image.sh` - build & push to Artifact Registry
-  - `pull-and-deploy.sh` - runs on VM to pull & restart
-  - `deploy.sh` - legacy: scp + rebuild
-  - `quick-deploy.sh` - legacy: source-only sync
-  - `vm-logs.sh` - view container logs
-  - `vm-ssh.sh` - SSH shortcut
+In `scripts/`:
+- `rotate-service-key.sh/ps1` - Generate a new service API key, and push to Railway (Railway CLI required)
 
 ### Recent Changes (Dec 19, 2025) - v1.4.1
 - **CLI Version Flag**: Added `--version` / `-v` flag to print version
