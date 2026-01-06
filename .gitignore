@@ -113,6 +113,7 @@ __pycache__/
 *.egg-info/
 *.pyc
 .pytest_cache/
+.ruff_cache/
 [!example]*.jsonl
 
 # private docs
