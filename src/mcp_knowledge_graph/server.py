@@ -1729,6 +1729,12 @@ async def start_server():
         # Use mcp_app directly as the combined app
         combined_app = mcp_app
 
+        # Optionally wrap with URL auth middleware
+        if settings.url_auth:
+            from .middleware import TokenQueryParamMiddleware
+            combined_app = TokenQueryParamMiddleware(combined_app)
+            logger.info("🔗 URL auth middleware enabled: ?token= query param supported")
+
         # Run combined app with uvicorn (async)
         import uvicorn
         config = uvicorn.Config(

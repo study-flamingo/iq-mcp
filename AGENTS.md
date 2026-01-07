@@ -48,15 +48,8 @@ ssh iq-mcp-vm 'cd /opt/iq-mcp && ./pull-and-deploy.sh'
 **Registry:** `us-central1-docker.pkg.dev/dted-ai-agent/iq-mcp/iq-mcp`
 
 ### Local Development
-- SSH config: `iq-mcp-vm` → connects to VM
-- Deploy scripts in `deploy/`:
-  - `push-and-deploy.sh` - full registry-based deploy (recommended)
-  - `push-image.sh` - build & push to Artifact Registry
-  - `pull-and-deploy.sh` - runs on VM to pull & restart
-  - `deploy.sh` - legacy: scp + rebuild
-  - `quick-deploy.sh` - legacy: source-only sync
-  - `vm-logs.sh` - view container logs
-  - `vm-ssh.sh` - SSH shortcut
+In `scripts/`:
+- `rotate-service-key.sh/ps1` - Generate a new service API key, and push to Railway (Railway CLI required)
 
 ### Recent Changes (Dec 19, 2025) - v1.4.1
 - **CLI Version Flag**: Added `--version` / `-v` flag to print version
@@ -104,6 +97,53 @@ ssh iq-mcp-vm 'cd /opt/iq-mcp && ./pull-and-deploy.sh'
 - `docs/PROJECT_OVERVIEW.md` - Architecture and module responsibilities
 - `docs/WORKFLOWS.md` - Tool workflows and data flow
 - `docs/SUPABASE_SCHEMA.md` - Supabase table schema
+
+### Testing with MCP Inspector CLI
+
+**Primary testing method:** Use `npx @modelcontextprotocol/inspector --cli` for all MCP server testing.
+
+**List available tools:**
+```bash
+npx @modelcontextprotocol/inspector --cli https://iq-mcp-production.up.railway.app/iq \
+  --transport http \
+  --header "Authorization: Bearer YOUR_API_KEY" \
+  --method tools/list
+```
+
+**Call a specific tool:**
+```bash
+npx @modelcontextprotocol/inspector --cli https://iq-mcp-production.up.railway.app/iq \
+  --transport http \
+  --header "Authorization: Bearer YOUR_API_KEY" \
+  --method tools/call \
+  --tool-name read_graph
+```
+
+**Call a tool with arguments:**
+```bash
+npx @modelcontextprotocol/inspector --cli https://iq-mcp-production.up.railway.app/iq \
+  --transport http \
+  --header "Authorization: Bearer YOUR_API_KEY" \
+  --method tools/call \
+  --tool-name search_nodes \
+  --tool-arg query="test"
+```
+
+**Pass JSON arguments:**
+```bash
+npx @modelcontextprotocol/inspector --cli https://iq-mcp-production.up.railway.app/iq \
+  --transport http \
+  --header "Authorization: Bearer YOUR_API_KEY" \
+  --method tools/call \
+  --tool-name create_entities \
+  --tool-arg 'new_entities=[{"name": "Test", "entity_type": "test"}]'
+```
+
+**Other useful methods:**
+- `--method resources/list` - List available resources
+- `--method prompts/list` - List available prompts
+
+See: https://github.com/modelcontextprotocol/inspector
 
 ### Next Steps / Ideas
 - Set up CI/CD for automatic deploys
