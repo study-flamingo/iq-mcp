@@ -1716,9 +1716,14 @@ async def start_server():
         # Get MCP HTTP app with path configured directly
         # FastMCP will handle routing at this path (e.g., /iq)
         mcp_path = settings.streamable_http_path or "/mcp"
+
+        # Use stateless HTTP mode for Cursor compatibility if enabled
+        mcp_transport = "http" if settings.stateless_http else "streamable-http"
+        logger.info(f"🔌 MCP transport mode: {mcp_transport} (stateless={settings.stateless_http})")
+
         mcp_app = mcp.http_app(
             path=mcp_path,
-            transport="streamable-http"
+            transport=mcp_transport
         )
         logger.info(f"📍 MCP endpoint configured at: {mcp_path}")
 

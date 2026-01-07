@@ -78,6 +78,7 @@ class IQSettings:
         project_root: Path,
         no_emojis: bool,
         dry_run: bool,
+        stateless_http: bool,
     ) -> None:
         self.debug = bool(debug)
         self.transport = transport
@@ -88,6 +89,7 @@ class IQSettings:
         self.project_root = project_root
         self.no_emojis = no_emojis
         self.dry_run = dry_run
+        self.stateless_http = stateless_http
 
     # ---------- Construction ----------
     @classmethod
@@ -174,6 +176,10 @@ class IQSettings:
             logger.warning(
                 "🚧 Dry run mode enabled! No changes will be made to the memory file or Supabase."
             )
+
+        # Stateless HTTP mode - for Cursor compatibility
+        stateless_http = os.getenv("FASTMCP_STATELESS_HTTP", "false").lower() == "true"
+
         return cls(
             debug=debug,
             transport=transport,
@@ -184,6 +190,7 @@ class IQSettings:
             project_root=project_root,
             no_emojis=no_emojis,
             dry_run=dry_run,
+            stateless_http=stateless_http,
         )
 
 
@@ -366,6 +373,11 @@ class AppSettings:
     def supabase_enabled(self) -> bool:
         """Check if Supabase integration is enabled."""
         return self.supabase is not None and self.supabase.enabled
+
+    @property
+    def stateless_http(self) -> bool:
+        """Check if stateless HTTP mode is enabled (for Cursor compatibility)."""
+        return self.core.stateless_http
 
 
 __all__ = ["AppSettings", "IQSettings", "SupabaseConfig"]
