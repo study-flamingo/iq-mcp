@@ -6,10 +6,10 @@
 
 ### Production Deployment
 - **Endpoint:** `https://mcp.casimir.ai/iq`
-- **API Key:** `iqmcp-sk-qwA9sdZrWdunSPpvUBu9IYju9hbGXRcDOaSRQ0xT7MU`
-- **VM:** `dted-ai-agent-vm` (GCP, `us-central1-c`, IP: `35.193.225.215`)
+- **API Key:** `[See .env file or deployment secrets - NEVER commit this!]`
+- **VM:** `dted-ai-agent-vm` (GCP, `us-central1-c`)
 - **Auth:** `StaticTokenVerifier` (FastMCP 2.13.3)
-- **Supabase:** Enabled (`xxx.supabase.co`)
+- **Supabase:** Enabled
 
 ### Architecture
 ```
@@ -85,12 +85,14 @@ In `scripts/`:
       "type": "http",
       "url": "https://mcp.casimir.ai/iq",
       "headers": {
-        "Authorization": "Bearer iqmcp-sk-qwA9sdZrWdunSPpvUBu9IYju9hbGXRcDOaSRQ0xT7MU"
+        "Authorization": "Bearer YOUR_API_KEY_HERE"
       }
     }
   }
 }
 ```
+
+**Note:** Replace `YOUR_API_KEY_HERE` with your actual API key from the production `.env` file.
 
 ### Documentation
 - `docs/DEVELOPMENT.md` - Complete development guide with deployment workflow

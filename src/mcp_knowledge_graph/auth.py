@@ -16,16 +16,25 @@ if TYPE_CHECKING:
     from fastmcp.server.auth import AuthProvider
 
 
-def get_auth_provider() -> "AuthProvider | None":
+def get_auth_provider(require_auth: bool = False) -> "AuthProvider | None":
     """
     Create auth provider based on environment configuration.
+
+    Args:
+        require_auth: If True, raises an error when IQ_API_KEY is not set.
+                     Use this for production deployments to prevent accidental
+                     deployment without authentication.
 
     Returns:
         AuthProvider instance if IQ_API_KEY is set, None otherwise.
 
+    Raises:
+        ValueError: If require_auth=True and IQ_API_KEY is not set.
+
     Environment Variables:
         IQ_API_KEY: The API key required for authentication.
         IQ_CLIENT_ID: Client identifier for the token (default: "iq-mcp-user").
+        IQ_REQUIRE_AUTH: Set to "true" to enforce authentication (same as require_auth=True).
 
     Usage:
         Set IQ_API_KEY in your environment or .env file:
@@ -36,10 +45,18 @@ def get_auth_provider() -> "AuthProvider | None":
     """
     api_key = os.getenv("IQ_API_KEY")
 
+    # Check if auth is required via env var or parameter
+    require_auth = require_auth or os.getenv("IQ_REQUIRE_AUTH", "false").lower() == "true"
+
     if not api_key:
+        if require_auth:
+            raise ValueError(
+                "❌ SECURITY: IQ_API_KEY not set but authentication is required! "
+                "Set IQ_API_KEY or set IQ_REQUIRE_AUTH=false to allow unauthenticated access (NOT recommended for production)."
+            )
         logger.warning(
             "⚠️  IQ_API_KEY not set - server will run WITHOUT authentication! "
-            "Set IQ_API_KEY for production deployments."
+            "Set IQ_API_KEY for production deployments or IQ_REQUIRE_AUTH=true to enforce."
         )
         return None
 
