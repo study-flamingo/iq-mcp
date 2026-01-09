@@ -86,10 +86,9 @@ Tools available from the manager:
 """
 
 
-# Create FastMCP server instance with optional authentication
-# Auth is configured via IQ_API_KEY environment variable
-_auth_provider = get_auth_provider()
-mcp = FastMCP(name="iq-mcp", version=IQ_MCP_VERSION, auth=_auth_provider)
+# Create FastMCP server instance
+# Auth is initialized later in start_server() after ctx.init()
+mcp = FastMCP(name="iq-mcp", version=IQ_MCP_VERSION, auth=None)
 
 
 @dataclass
@@ -1676,6 +1675,14 @@ async def start_server():
 
     # Initialize the manager now that context is ready
     _init_manager()
+
+    # Initialize authentication (requires ctx.settings)
+    auth_provider = get_auth_provider(require_auth=False)
+    if auth_provider:
+        mcp.auth = auth_provider
+        logger.info("🔐 Authentication provider configured")
+    else:
+        logger.warning("⚠️  Server running without authentication")
 
     validated_transport = settings.transport
     logger.info(f"🚌 Transport selected: {validated_transport}")

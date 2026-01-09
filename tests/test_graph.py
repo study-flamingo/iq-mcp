@@ -44,6 +44,7 @@ def mock_context(temp_memory_dir):
         project_root=Path(temp_memory_dir),
         no_emojis=False,
         dry_run=False,
+        stateless_http=False,
     )
 
     # Create AppSettings with core settings and no Supabase

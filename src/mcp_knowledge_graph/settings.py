@@ -287,6 +287,68 @@ class SupabaseConfig:
         return bool(self.url and self.key)
 
 
+class SupabaseAuthConfig:
+    """Optional Supabase OAuth authentication configuration.
+
+    This class handles loading Supabase Auth-specific settings for OAuth 2.1 support.
+    Separate from SupabaseConfig (data integration) to allow independent configuration.
+    """
+
+    def __init__(
+        self,
+        *,
+        enabled: bool,
+        project_url: str | None,
+        algorithm: Literal["HS256", "RS256", "ES256"],
+        jwt_secret: str | None = None,
+        required_scopes: list[str] | None = None,
+    ) -> None:
+        self.enabled = bool(enabled)
+        self.project_url = project_url
+        self.algorithm = algorithm
+        self.jwt_secret = jwt_secret
+        self.required_scopes = required_scopes or []
+
+    @classmethod
+    def load(cls) -> "SupabaseAuthConfig | None":
+        """Load Supabase OAuth configuration from environment variables.
+
+        Returns:
+            SupabaseAuthConfig instance if enabled, None otherwise
+        """
+        enabled = os.getenv("IQ_ENABLE_SUPABASE_AUTH", "false").lower() == "true"
+
+        if not enabled:
+            return None
+
+        project_url = os.getenv("IQ_SUPABASE_AUTH_PROJECT_URL")
+        algorithm = os.getenv("IQ_SUPABASE_AUTH_ALGORITHM", "ES256")
+        jwt_secret = os.getenv("IQ_SUPABASE_JWT_SECRET")
+
+        # Validate algorithm
+        if algorithm not in ["HS256", "RS256", "ES256"]:
+            logger.warning(f"Invalid algorithm '{algorithm}', defaulting to ES256")
+            algorithm = "ES256"
+
+        # HS256 requires JWT secret
+        if algorithm == "HS256" and not jwt_secret:
+            logger.error("HS256 algorithm requires IQ_SUPABASE_JWT_SECRET. Disabling Supabase auth.")
+            return None
+
+        return cls(
+            enabled=enabled,
+            project_url=project_url,
+            algorithm=algorithm,
+            jwt_secret=jwt_secret,
+        )
+
+    def is_valid(self) -> bool:
+        """Check if Supabase auth config is valid (enabled and has required values)."""
+        if not self.enabled:
+            return False
+        return bool(self.project_url)
+
+
 class AppSettings:
     """Composition of core settings and optional integrations.
 
@@ -296,6 +358,7 @@ class AppSettings:
     Attributes:
         core: Core IQ-MCP application settings (always loaded)
         supabase: Supabase integration config (loaded if enabled)
+        supabase_auth: Supabase OAuth authentication config (loaded if enabled)
     """
 
     def __init__(
@@ -303,9 +366,11 @@ class AppSettings:
         *,
         core: IQSettings,
         supabase: SupabaseConfig | None = None,
+        supabase_auth: SupabaseAuthConfig | None = None,
     ) -> None:
         self.core = core
         self.supabase = supabase
+        self.supabase_auth = supabase_auth
 
     @classmethod
     def load(cls) -> "AppSettings":
@@ -316,22 +381,27 @@ class AppSettings:
         # Load Supabase config (checks enable flag internally)
         supabase_config = SupabaseConfig.load(dry_run=core.dry_run)
 
-        if not supabase_config:
-            return cls(
-                core=core,
-                supabase=None,
-            )
+        # Load Supabase OAuth config (checks enable flag internally)
+        supabase_auth_config = SupabaseAuthConfig.load()
 
         # Only include if enabled and valid
-        supabase = supabase_config if supabase_config.is_valid() else None
+        supabase = supabase_config if supabase_config and supabase_config.is_valid() else None
+        supabase_auth = supabase_auth_config if supabase_auth_config and supabase_auth_config.is_valid() else None
+
         if supabase:
             logger.debug(f"Supabase config loaded: {supabase}")
         else:
             logger.debug("Supabase config not loaded!")
 
+        if supabase_auth:
+            logger.debug(f"Supabase OAuth config loaded")
+        else:
+            logger.debug("Supabase OAuth config not loaded!")
+
         return cls(
             core=core,
             supabase=supabase,
+            supabase_auth=supabase_auth,
         )
 
     # Convenience properties for backward compatibility
@@ -381,9 +451,14 @@ class AppSettings:
         return self.supabase is not None and self.supabase.enabled
 
     @property
+    def supabase_auth_enabled(self) -> bool:
+        """Check if Supabase OAuth authentication is enabled."""
+        return self.supabase_auth is not None and self.supabase_auth.enabled
+
+    @property
     def stateless_http(self) -> bool:
         """Check if stateless HTTP mode is enabled (for Cursor compatibility)."""
         return self.core.stateless_http
 
 
-__all__ = ["AppSettings", "IQSettings", "SupabaseConfig"]
+__all__ = ["AppSettings", "IQSettings", "SupabaseConfig", "SupabaseAuthConfig"]

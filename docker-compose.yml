@@ -19,6 +19,8 @@ services:
       - IQ_STREAMABLE_HTTP_PORT=8000
       - IQ_STREAMABLE_HTTP_PATH=/mcp
       - FASTMCP_STATELESS_HTTP=true
+      - IQ_BASE_URL=${IQ_BASE_URL:-https://mcp.casimir.ai}
+      - IQ_ENABLE_SUPABASE_AUTH=${IQ_ENABLE_SUPABASE_AUTH:-false}
     expose:
       - "8000"
     networks:
