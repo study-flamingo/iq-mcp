@@ -1,14 +1,14 @@
 # Agent Scratchpad
 
-## Current State (Dec 19, 2025)
+## Current State (Jan 9, 2026)
 
-**IQ-MCP v1.4.1 is ready for deployment!**
+**IQ-MCP v1.5.0 is ready for deployment!**
 
 ### Production Deployment
 - **Endpoint:** `https://mcp.casimir.ai/iq`
 - **API Key:** `[See .env file or deployment secrets - NEVER commit this!]`
 - **VM:** `dted-ai-agent-vm` (GCP, `us-central1-c`)
-- **Auth:** `StaticTokenVerifier` (FastMCP 2.13.3)
+- **Auth:** Dual auth - OAuth 2.1 (Supabase) + API keys (FastMCP 2.13.3+)
 - **Supabase:** Enabled
 
 ### Architecture
@@ -49,9 +49,20 @@ ssh iq-mcp-vm 'cd /opt/iq-mcp && ./pull-and-deploy.sh'
 
 ### Local Development
 In `scripts/`:
-- `rotate-service-key.sh/ps1` - Generate a new service API key, and push to Railway (Railway CLI required)
+- `rotate-service-key.sh/ps1` - Generate a new service API key, and push to Railway with environment targeting (--prod/--dev/--all)
 
-### Recent Changes (Dec 19, 2025) - v1.4.1
+### Recent Changes (Jan 9, 2026) - v1.5.0
+- **OAuth 2.1 Support**: Added Supabase Auth integration with JWT validation
+- **Dual Authentication**: Supports both OAuth 2.1 and API key authentication simultaneously
+- **Enhanced Security**: New security module with CORS configuration and rate limiting
+- **Enhanced Key Rotation**: Scripts now support --prod/--dev/--all flags for environment targeting
+- **Improved Key Display**: Redacted output shows first 12 and last 4 characters
+- **Security Documentation**: Comprehensive security guide in docs/SECURITY.md (401 lines)
+- **URL Auth Middleware**: Optional --url-auth flag for query parameter authentication
+- **Railway Deployment Fixes**: Fixed url_auth AttributeError and stateless HTTP compatibility
+- **Extended Testing**: Added 153 lines of auth tests, all passing
+
+### Previous Changes (Dec 19, 2025) - v1.4.1
 - **CLI Version Flag**: Added `--version` / `-v` flag to print version
 - **Version Consistency**: Fixed version mismatch across all files (version.py, pyproject.toml, README.md, CHANGELOG.md)
 
@@ -99,6 +110,7 @@ In `scripts/`:
 - `docs/PROJECT_OVERVIEW.md` - Architecture and module responsibilities
 - `docs/WORKFLOWS.md` - Tool workflows and data flow
 - `docs/SUPABASE_SCHEMA.md` - Supabase table schema
+- `docs/SECURITY.md` - Authentication, authorization, and security best practices
 
 ### Testing with MCP Inspector CLI
 

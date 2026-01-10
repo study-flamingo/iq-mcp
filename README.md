@@ -1,5 +1,5 @@
 # IQ-MCP Knowledge Graph Server 🔮
-*v1.4.1, released Dec 19, 2025*
+*v1.5.0, released Jan 9, 2026*
 
 A FastMCP 2.13 server that provides a temporal knowledge graph memory for LLMs. It enables persistent, searchable memory with timestamped observations, durability categories, alias-aware entity resolution, and ergonomic tools for creating, searching, maintaining, merging, and visualizing your memory graph.
 
@@ -7,7 +7,9 @@ This is a modern Python implementation using Pydantic models and FastMCP, design
 
 ## ✨ Highlights
 
-- **Interactive Graph Visualizer** 🆕 - Web-based UI for exploring and editing your knowledge graph (see [VISUALIZER.md](VISUALIZER.md))
+- **OAuth 2.1 & Dual Authentication** 🆕 - Supabase Auth integration with JWT validation, plus API key support
+- **Enhanced Security** 🆕 - Comprehensive security module with CORS, rate limiting, and best practices
+- **Interactive Graph Visualizer** - Web-based UI for exploring and editing your knowledge graph (see [VISUALIZER.md](VISUALIZER.md))
 - **Temporal observations** with durability categories and automatic timestamps
 - **Smart cleanup** that removes outdated observations by durability
 - **Flexible entity references**: All tools support entities by ID, name, or alias
@@ -17,7 +19,7 @@ This is a modern Python implementation using Pydantic models and FastMCP, design
 - **Enhanced search** across names, aliases, types, and observation content
 - **Optional Supabase integration** for cloud storage and email summaries
 - **Context-based architecture** with no import-time side effects
-- **Project awareness** (v1.5.0 coming soon): Track active projects and recent work
+- **Project awareness** (v1.6.0 planned): Track active projects and recent work
 
 ## Core Concepts
 
@@ -470,22 +472,17 @@ See `docs/` for detailed architecture documentation.
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for version history.
+See [CHANGELOG.md](docs/CHANGELOG.md) for version history.
 
-### Recent (v1.3.1)
+### Recent (v1.5.0)
 
-- 🐛 Fixed `UpdateEntityRequest` model and `update_entity` function
-- 🐛 Fixed Supabase timestamp serialization
-- 🚀 Registry-based deployment workflow (Artifact Registry)
-- 📚 Updated deployment documentation
-
-### v1.3.0
-
-- ✨ Context-based architecture with no import-time side effects
-- ✨ Daily automatic backups
-- ✨ Centralized version constants
-- ✨ Lazy logger that works before/after initialization
-- 🔄 Decoupled models from settings
+- 🔐 OAuth 2.1 support with Supabase Auth integration
+- 🔐 Dual authentication system (OAuth + API keys)
+- 🔐 Enhanced security module with CORS and rate limiting
+- 🛠️ Improved key rotation scripts with environment targeting
+- 📚 Comprehensive security documentation
+- 🐛 Fixed Railway deployment and URL auth issues
+- 🧪 Added comprehensive auth test suite
 
 ## License
 

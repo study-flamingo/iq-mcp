@@ -5,6 +5,77 @@ All notable changes to the IQ-MCP Knowledge Graph Server will be documented in t
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-01-09
+
+### 🔐 Security & Authentication
+
+- **OAuth 2.1 Support**: Added Supabase Auth integration with JWT token validation
+  - New `OAuth2Verifier` class for validating Supabase-issued JWTs (auth.py:188)
+  - Supports standard OAuth 2.1 Authorization header flow
+  - Automatic token verification against Supabase Auth service
+
+- **Dual Authentication System**: Supports both OAuth 2.1 and API key authentication
+  - New `DualAuthVerifier` combines OAuth and API key auth (auth.py)
+  - Clients can authenticate with either method seamlessly
+  - Backward compatible with existing API key workflows
+
+- **Enhanced Security Module**: Comprehensive security utilities (security.py:141)
+  - JWT validation with configurable issuer and audience
+  - CORS configuration with allowlist support
+  - Rate limiting middleware (ready for production use)
+  - Security headers and best practices
+
+- **URL Authentication Middleware**: Optional query parameter auth (middleware.py:58)
+  - Enable with `--url-auth` flag
+  - Supports `?token=` query parameter for browser access
+  - Useful for web-based clients and testing
+
+- **Bug Fixes**: Fixed deprecated `url_auth` AttributeError in FastMCP integration
+
+### 🛠️ Developer Experience
+
+- **Enhanced Key Rotation Scripts**: Improved `rotate-service-key.sh/ps1`
+  - New `--prod`/`--dev`/`--all` flags for environment targeting
+  - Update specific Railway environments or all at once
+  - Better key redaction (shows first 12 and last 4 characters)
+  - Improved error handling and usage documentation
+
+### 📚 Documentation
+
+- **Security Guide**: Comprehensive security documentation (docs/SECURITY.md:401)
+  - Authentication methods and configuration
+  - Authorization patterns and best practices
+  - Deployment security checklist
+  - OAuth 2.1 integration guide
+
+- **Updated Configuration**: New environment variables in `.env.example`
+  - `IQ_AUTH_TYPE`: Select authentication method (oauth, api_key, dual)
+  - `IQ_SUPABASE_JWT_SECRET`: JWT verification secret
+  - OAuth-related Supabase configuration
+
+### 🚀 Deployment
+
+- **Railway Deployment**: Fixed stateless HTTP mode compatibility
+  - Resolved FastMCP URL auth integration issues
+  - Confirmed working with `FASTMCP_STATELESS_HTTP=true`
+
+### 🧪 Testing
+
+- **Auth Test Suite**: Added comprehensive authentication tests (tests/test_auth.py:153)
+  - OAuth 2.1 token validation tests
+  - API key authentication tests
+  - Dual auth mode tests
+  - All 21 tests passing
+
+### 🔄 Changed
+
+- **FastMCP Dependency**: Requires FastMCP >=2.13.0 for auth support
+- **docker-compose.yml**: Added new environment variables for OAuth support
+
+### ⚠️ Breaking Changes
+
+None - all changes are backward compatible. Existing API key authentication continues to work.
+
 ## [1.4.1] - 2025-12-19
 
 ### ✨ Enhanced Features
