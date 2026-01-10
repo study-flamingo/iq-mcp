@@ -111,6 +111,7 @@ In `scripts/`:
 - `docs/WORKFLOWS.md` - Tool workflows and data flow
 - `docs/SUPABASE_SCHEMA.md` - Supabase table schema
 - `docs/SECURITY.md` - Authentication, authorization, and security best practices
+- `.my_deployment.md` - Deployment URLs and testing info (git-ignored, create your own copy)
 
 ### Testing with MCP Inspector CLI
 

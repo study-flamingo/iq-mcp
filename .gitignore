@@ -118,6 +118,7 @@ __pycache__/
 
 # private docs
 docs/.*
+.my_deployment.md
 
 # Deployment secrets (keep templates, ignore actual configs)
 deploy/env.production
