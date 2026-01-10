@@ -61,7 +61,7 @@ class IQSettings:
         `project_root`: Resolved project root path
         `no_emojis`: Disable emojis in the output
         `dry_run`: Enable dry-run mode (doesn't save anything)
-        `url_auth`: Enable URL query param auth (?token=xxx)
+        `stateless_http`: Enable stateless HTTP mode for Cursor compatibility
         `enable_supabase`: Enable Supabase integration
     This class contains only the core settings required for the MCP server to function.
     Optional integrations are handled separately via integration-specific config classes.
@@ -119,7 +119,6 @@ class IQSettings:
         parser.add_argument("--http-path", type=str)
         parser.add_argument("--no-emojis", action="store_true", default=None)
         parser.add_argument("--dry-run", action="store_true", default=False)
-        parser.add_argument("--url-auth", action="store_true", default=None)
         # Supabase args are parsed separately in SupabaseConfig.load()
         parser.add_argument("--enable-supabase", action="store_true", default=None)
         parser.add_argument("--supabase-url", type=str, default=None)
@@ -440,10 +439,6 @@ class AppSettings:
     @property
     def dry_run(self) -> bool:
         return self.core.dry_run
-
-    @property
-    def url_auth(self) -> bool:
-        return self.core.url_auth
 
     @property
     def supabase_enabled(self) -> bool:
