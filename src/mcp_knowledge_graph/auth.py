@@ -75,6 +75,16 @@ class ChainedAuthProvider:
             return self.providers[0].get_middleware()
         return []
 
+    def _get_resource_url(self, path: str | None = None) -> str:
+        """Get OAuth resource URL from first provider that supports it."""
+        for provider in self.providers:
+            if hasattr(provider, "_get_resource_url"):
+                return provider._get_resource_url(path)
+        # Fallback to base_url + path
+        if path:
+            return f"{self.base_url.rstrip('/')}{path}"
+        return self.base_url
+
 
 def get_auth_provider(require_auth: bool = False) -> "AuthProvider | None":
     """
