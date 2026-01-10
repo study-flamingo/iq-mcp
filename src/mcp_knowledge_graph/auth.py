@@ -144,14 +144,14 @@ def get_auth_provider(require_auth: bool = False) -> "AuthProvider | None":
             if not base_url:
                 logger.error("❌ IQ_BASE_URL required for OAuth. Skipping Supabase auth.")
             else:
+                # SupabaseProvider only accepts project_url and base_url
+                # It automatically fetches JWKS and determines algorithm
                 supabase_provider = SupabaseProvider(
                     project_url=supabase_auth.project_url,
                     base_url=base_url,
-                    algorithm=supabase_auth.algorithm,
-                    required_scopes=supabase_auth.required_scopes,
                 )
                 providers.append(supabase_provider)
-                logger.info(f"🔐 Supabase OAuth enabled (algorithm: {supabase_auth.algorithm})")
+                logger.info(f"🔐 Supabase OAuth enabled (project: {supabase_auth.project_url})")
         except ImportError:
             logger.error("❌ SupabaseProvider not available. Upgrade fastmcp >=2.13.0")
         except Exception as e:
