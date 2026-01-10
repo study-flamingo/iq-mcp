@@ -13,6 +13,8 @@ from typing import List, Optional, Any
 from pathlib import Path
 import json
 
+import os
+
 from ..iq_logging import logger
 from ..context import ctx
 from ..manager import KnowledgeGraphManager
@@ -92,6 +94,426 @@ def create_web_app(manager: KnowledgeGraphManager) -> FastAPI:
     async def health_check():
         """Health check endpoint."""
         return {"status": "ok", "service": "iq-mcp-web"}
+
+
+    @app.get("/oauth/consent", response_class=HTMLResponse)
+    async def oauth_consent_page(authorization_id: str = None):
+        """
+        OAuth consent page for Claude Desktop/Mobile authorization.
+
+        This page is displayed to users when an OAuth client (like Claude)
+        requests authorization. Users can approve or deny the request.
+
+        Query params:
+            authorization_id: The Supabase authorization request ID
+        """
+        # Get Supabase project URL and anon key from environment
+        supabase_url = os.getenv("IQ_SUPABASE_AUTH_PROJECT_URL", "")
+        supabase_anon_key = os.getenv("IQ_SUPABASE_ANON_KEY", "")
+
+        if not supabase_url or not supabase_anon_key:
+            missing = []
+            if not supabase_url:
+                missing.append("IQ_SUPABASE_AUTH_PROJECT_URL")
+            if not supabase_anon_key:
+                missing.append("IQ_SUPABASE_ANON_KEY")
+            return HTMLResponse(
+                content=f"""
+                <!DOCTYPE html>
+                <html>
+                <head><title>OAuth Error</title></head>
+                <body style="font-family: system-ui, sans-serif; padding: 40px; max-width: 500px; margin: 0 auto; text-align: center;">
+                    <h1>OAuth Not Configured</h1>
+                    <p>Supabase OAuth is not configured on this server.</p>
+                    <p>Missing: {', '.join(missing)}</p>
+                    <p>Please contact the administrator.</p>
+                </body>
+                </html>
+                """,
+                status_code=500
+            )
+
+        # Serve the consent page HTML with Supabase JS SDK
+        consent_html = f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Authorize Application - IQ-MCP</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        * {{
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }}
+        body {{
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }}
+        .consent-card {{
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            padding: 40px;
+            max-width: 450px;
+            width: 100%;
+        }}
+        .logo {{
+            font-size: 48px;
+            text-align: center;
+            margin-bottom: 24px;
+        }}
+        h1 {{
+            font-size: 24px;
+            font-weight: 600;
+            color: #1a1a2e;
+            text-align: center;
+            margin-bottom: 8px;
+        }}
+        .subtitle {{
+            color: #666;
+            text-align: center;
+            margin-bottom: 32px;
+        }}
+        .client-info {{
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 24px;
+        }}
+        .client-name {{
+            font-weight: 600;
+            font-size: 18px;
+            color: #1a1a2e;
+            margin-bottom: 8px;
+        }}
+        .client-id {{
+            font-size: 12px;
+            color: #888;
+            font-family: monospace;
+            word-break: break-all;
+        }}
+        .scopes-section {{
+            margin-bottom: 24px;
+        }}
+        .scopes-title {{
+            font-weight: 600;
+            color: #1a1a2e;
+            margin-bottom: 12px;
+        }}
+        .scope-item {{
+            display: flex;
+            align-items: center;
+            padding: 12px;
+            background: #f0f4f8;
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }}
+        .scope-icon {{
+            margin-right: 12px;
+            font-size: 20px;
+        }}
+        .scope-text {{
+            color: #333;
+        }}
+        .buttons {{
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+        }}
+        button {{
+            flex: 1;
+            padding: 14px 24px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+        }}
+        .approve-btn {{
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }}
+        .approve-btn:hover {{
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }}
+        .deny-btn {{
+            background: #e9ecef;
+            color: #495057;
+        }}
+        .deny-btn:hover {{
+            background: #dee2e6;
+        }}
+        button:disabled {{
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none !important;
+        }}
+        .loading {{
+            text-align: center;
+            padding: 60px 20px;
+        }}
+        .spinner {{
+            width: 40px;
+            height: 40px;
+            border: 3px solid #e9ecef;
+            border-top-color: #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }}
+        @keyframes spin {{
+            to {{ transform: rotate(360deg); }}
+        }}
+        .error {{
+            background: #fee2e2;
+            color: #dc2626;
+            padding: 16px;
+            border-radius: 8px;
+            text-align: center;
+        }}
+        .success {{
+            background: #d1fae5;
+            color: #059669;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }}
+        .login-prompt {{
+            text-align: center;
+            padding: 20px;
+        }}
+        .login-btn {{
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            width: 100%;
+        }}
+    </style>
+</head>
+<body>
+    <div class="consent-card">
+        <div id="content">
+            <div class="loading">
+                <div class="spinner"></div>
+                <p>Loading authorization request...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const SUPABASE_URL = '{supabase_url}';
+        const SUPABASE_ANON_KEY = '{supabase_anon_key}';
+
+        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const authorizationId = urlParams.get('authorization_id');
+
+        const contentDiv = document.getElementById('content');
+
+        function showError(message) {{
+            contentDiv.innerHTML = `
+                <div class="logo">⚠️</div>
+                <h1>Authorization Error</h1>
+                <div class="error" style="margin-top: 20px;">${{message}}</div>
+            `;
+        }}
+
+        function showSuccess(message) {{
+            contentDiv.innerHTML = `
+                <div class="logo">✅</div>
+                <h1>Success</h1>
+                <div class="success" style="margin-top: 20px;">${{message}}</div>
+                <p style="text-align: center; margin-top: 16px; color: #666;">You can close this window.</p>
+            `;
+        }}
+
+        function showLoginPrompt() {{
+            contentDiv.innerHTML = `
+                <div class="logo">🔐</div>
+                <h1>Sign In Required</h1>
+                <p class="subtitle">Please sign in to authorize this application.</p>
+                <div class="login-prompt">
+                    <button class="login-btn" onclick="signIn()">Sign In with Supabase</button>
+                </div>
+            `;
+        }}
+
+        async function signIn() {{
+            const {{ error }} = await supabase.auth.signInWithOAuth({{
+                provider: 'github',
+                options: {{
+                    redirectTo: window.location.href
+                }}
+            }});
+            if (error) {{
+                showError(error.message);
+            }}
+        }}
+
+        function showConsentForm(authDetails) {{
+            const clientName = authDetails.client?.name || authDetails.client_name || 'Unknown Application';
+            const clientId = authDetails.client?.client_id || authDetails.client_id || '';
+            const scopes = authDetails.scopes || authDetails.scope?.split(' ') || ['read', 'write'];
+
+            const scopeIcons = {{
+                'read': '📖',
+                'write': '✏️',
+                'admin': '👑',
+                'openid': '🔑',
+                'profile': '👤',
+                'email': '📧',
+                'offline_access': '🔄'
+            }};
+
+            const scopeDescriptions = {{
+                'read': 'Read your knowledge graph data',
+                'write': 'Create and modify knowledge graph entries',
+                'admin': 'Full administrative access',
+                'openid': 'Verify your identity',
+                'profile': 'Access your profile information',
+                'email': 'Access your email address',
+                'offline_access': 'Stay connected when you\\'re not using the app'
+            }};
+
+            const scopesHtml = scopes.map(scope => `
+                <div class="scope-item">
+                    <span class="scope-icon">${{scopeIcons[scope] || '📋'}}</span>
+                    <span class="scope-text">${{scopeDescriptions[scope] || scope}}</span>
+                </div>
+            `).join('');
+
+            contentDiv.innerHTML = `
+                <div class="logo">🧠</div>
+                <h1>Authorize Application</h1>
+                <p class="subtitle">An application wants to access your IQ-MCP account</p>
+
+                <div class="client-info">
+                    <div class="client-name">${{clientName}}</div>
+                    <div class="client-id">${{clientId}}</div>
+                </div>
+
+                <div class="scopes-section">
+                    <div class="scopes-title">This application will be able to:</div>
+                    ${{scopesHtml}}
+                </div>
+
+                <div class="buttons">
+                    <button class="deny-btn" id="denyBtn" onclick="denyAuth()">Deny</button>
+                    <button class="approve-btn" id="approveBtn" onclick="approveAuth()">Approve</button>
+                </div>
+            `;
+        }}
+
+        async function approveAuth() {{
+            const approveBtn = document.getElementById('approveBtn');
+            const denyBtn = document.getElementById('denyBtn');
+            approveBtn.disabled = true;
+            denyBtn.disabled = true;
+            approveBtn.textContent = 'Approving...';
+
+            try {{
+                // Call Supabase to approve the authorization
+                const {{ data, error }} = await supabase.functions.invoke('oauth-authorize', {{
+                    body: {{
+                        authorization_id: authorizationId,
+                        action: 'approve'
+                    }}
+                }});
+
+                if (error) throw error;
+
+                // If there's a redirect URL, redirect the user
+                if (data?.redirect_uri) {{
+                    window.location.href = data.redirect_uri;
+                }} else {{
+                    showSuccess('Authorization approved! The application can now access your account.');
+                }}
+            }} catch (error) {{
+                console.error('Approve error:', error);
+                showError('Failed to approve authorization: ' + error.message);
+            }}
+        }}
+
+        async function denyAuth() {{
+            const approveBtn = document.getElementById('approveBtn');
+            const denyBtn = document.getElementById('denyBtn');
+            approveBtn.disabled = true;
+            denyBtn.disabled = true;
+            denyBtn.textContent = 'Denying...';
+
+            try {{
+                const {{ data, error }} = await supabase.functions.invoke('oauth-authorize', {{
+                    body: {{
+                        authorization_id: authorizationId,
+                        action: 'deny'
+                    }}
+                }});
+
+                if (error) throw error;
+
+                if (data?.redirect_uri) {{
+                    window.location.href = data.redirect_uri;
+                }} else {{
+                    showSuccess('Authorization denied. The application will not be able to access your account.');
+                }}
+            }} catch (error) {{
+                console.error('Deny error:', error);
+                showError('Failed to deny authorization: ' + error.message);
+            }}
+        }}
+
+        async function init() {{
+            if (!authorizationId) {{
+                showError('Missing authorization_id parameter');
+                return;
+            }}
+
+            try {{
+                // Check if user is logged in
+                const {{ data: {{ user }} }} = await supabase.auth.getUser();
+
+                if (!user) {{
+                    showLoginPrompt();
+                    return;
+                }}
+
+                // Get authorization details from Supabase
+                const {{ data, error }} = await supabase.functions.invoke('oauth-get-authorization', {{
+                    body: {{ authorization_id: authorizationId }}
+                }});
+
+                if (error) throw error;
+
+                showConsentForm(data);
+
+            }} catch (error) {{
+                console.error('Init error:', error);
+                // Fallback: show a generic consent form
+                showConsentForm({{
+                    client_name: 'Claude',
+                    client_id: authorizationId,
+                    scopes: ['read', 'write']
+                }});
+            }}
+        }}
+
+        init();
+    </script>
+</body>
+</html>
+        """
+
+        return HTMLResponse(content=consent_html)
 
 
     # ==================== PROTECTED ROUTES ====================
