@@ -117,8 +117,9 @@ __pycache__/
 [!example]*.jsonl
 
 # private docs
-docs/.*
 .my_deployment.md
+docs/.*
+.*.json
 
 # Deployment secrets (keep templates, ignore actual configs)
 deploy/env.production
