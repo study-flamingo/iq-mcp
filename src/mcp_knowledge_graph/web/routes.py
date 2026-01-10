@@ -361,9 +361,11 @@ def create_web_app(manager: KnowledgeGraphManager) -> FastAPI:
         }}
 
         function showConsentForm(authDetails) {{
+            // Handle both SDK response format and fallback format
             const clientName = authDetails.client?.name || authDetails.client_name || 'Unknown Application';
             const clientId = authDetails.client?.client_id || authDetails.client_id || '';
-            const scopes = authDetails.scopes || authDetails.scope?.split(' ') || ['read', 'write'];
+            const redirectUri = authDetails.redirect_uri || '';
+            const scopes = authDetails.scopes || authDetails.scope?.split(' ') || ['openid', 'email'];
 
             const scopeIcons = {{
                 'read': '📖',
@@ -392,6 +394,8 @@ def create_web_app(manager: KnowledgeGraphManager) -> FastAPI:
                 </div>
             `).join('');
 
+            const redirectInfo = redirectUri ? `<p class="client-redirect" style="font-size: 11px; color: #999; margin-top: 8px;">Redirects to: ${{redirectUri}}</p>` : '';
+
             contentDiv.innerHTML = `
                 <div class="logo">🧠</div>
                 <h1>Authorize Application</h1>
@@ -400,6 +404,7 @@ def create_web_app(manager: KnowledgeGraphManager) -> FastAPI:
                 <div class="client-info">
                     <div class="client-name">${{clientName}}</div>
                     <div class="client-id">${{clientId}}</div>
+                    ${{redirectInfo}}
                 </div>
 
                 <div class="scopes-section">
@@ -422,25 +427,20 @@ def create_web_app(manager: KnowledgeGraphManager) -> FastAPI:
             approveBtn.textContent = 'Approving...';
 
             try {{
-                // Call Supabase to approve the authorization
-                const {{ data, error }} = await supabase.functions.invoke('oauth-authorize', {{
-                    body: {{
-                        authorization_id: authorizationId,
-                        action: 'approve'
-                    }}
-                }});
+                // Call Supabase OAuth SDK to approve the authorization
+                const {{ data, error }} = await supabase.auth.oauth.approveAuthorization(authorizationId);
 
                 if (error) throw error;
 
-                // If there's a redirect URL, redirect the user
-                if (data?.redirect_uri) {{
-                    window.location.href = data.redirect_uri;
+                // Redirect back to the client with authorization code
+                if (data?.redirect_to) {{
+                    window.location.href = data.redirect_to;
                 }} else {{
                     showSuccess('Authorization approved! The application can now access your account.');
                 }}
             }} catch (error) {{
                 console.error('Approve error:', error);
-                showError('Failed to approve authorization: ' + error.message);
+                showError('Failed to approve authorization: ' + (error.message || error));
             }}
         }}
 
@@ -452,23 +452,20 @@ def create_web_app(manager: KnowledgeGraphManager) -> FastAPI:
             denyBtn.textContent = 'Denying...';
 
             try {{
-                const {{ data, error }} = await supabase.functions.invoke('oauth-authorize', {{
-                    body: {{
-                        authorization_id: authorizationId,
-                        action: 'deny'
-                    }}
-                }});
+                // Call Supabase OAuth SDK to deny the authorization
+                const {{ data, error }} = await supabase.auth.oauth.denyAuthorization(authorizationId);
 
                 if (error) throw error;
 
-                if (data?.redirect_uri) {{
-                    window.location.href = data.redirect_uri;
+                // Redirect back to the client with error
+                if (data?.redirect_to) {{
+                    window.location.href = data.redirect_to;
                 }} else {{
                     showSuccess('Authorization denied. The application will not be able to access your account.');
                 }}
             }} catch (error) {{
                 console.error('Deny error:', error);
-                showError('Failed to deny authorization: ' + error.message);
+                showError('Failed to deny authorization: ' + (error.message || error));
             }}
         }}
 
@@ -487,10 +484,8 @@ def create_web_app(manager: KnowledgeGraphManager) -> FastAPI:
                     return;
                 }}
 
-                // Get authorization details from Supabase
-                const {{ data, error }} = await supabase.functions.invoke('oauth-get-authorization', {{
-                    body: {{ authorization_id: authorizationId }}
-                }});
+                // Get authorization details using Supabase OAuth SDK
+                const {{ data, error }} = await supabase.auth.oauth.getAuthorizationDetails(authorizationId);
 
                 if (error) throw error;
 
@@ -498,10 +493,9 @@ def create_web_app(manager: KnowledgeGraphManager) -> FastAPI:
 
             }} catch (error) {{
                 console.error('Init error:', error);
-                // Fallback: show a generic consent form
+                // Fallback: show a generic consent form for Claude
                 showConsentForm({{
-                    client_name: 'Claude',
-                    client_id: authorizationId,
+                    client: {{ name: 'Claude', client_id: authorizationId }},
                     scopes: ['read', 'write']
                 }});
             }}
