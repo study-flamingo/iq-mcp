@@ -10,10 +10,78 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
+import httpx
+from starlette.responses import JSONResponse
+from starlette.routing import Route
+
 from .iq_logging import logger
 
 if TYPE_CHECKING:
     from fastmcp.server.auth import AuthProvider, AccessToken
+
+
+class SupabaseRemoteAuthProvider:
+    """
+    Extended RemoteAuthProvider that forwards Supabase's authorization server metadata.
+
+    This adds the /.well-known/oauth-authorization-server endpoint that Claude Desktop
+    needs to discover OAuth endpoints (authorize, token, register).
+    """
+
+    def __init__(self, base_provider, project_url: str):
+        self._base = base_provider
+        self._project_url = project_url.rstrip("/")
+        self._auth_server_url = f"{self._project_url}/auth/v1"
+
+        # Proxy attributes from base provider
+        self.base_url = base_provider.base_url
+        self.required_scopes = getattr(base_provider, 'required_scopes', [])
+
+    async def verify_token(self, token: str):
+        """Delegate to base provider."""
+        return await self._base.verify_token(token)
+
+    def get_routes(self, mcp_path: str | None = None) -> list:
+        """Get routes including authorization server metadata forwarding."""
+        # Get base routes
+        routes = list(self._base.get_routes(mcp_path) if hasattr(self._base, 'get_routes') else [])
+
+        # Add authorization server metadata forwarding
+        async def authorization_server_metadata(request):
+            async with httpx.AsyncClient() as client:
+                try:
+                    response = await client.get(
+                        f"{self._auth_server_url}/.well-known/oauth-authorization-server",
+                        timeout=10.0
+                    )
+                    response.raise_for_status()
+                    return JSONResponse(response.json())
+                except Exception as e:
+                    logger.error(f"Failed to fetch authorization server metadata: {e}")
+                    return JSONResponse(
+                        {"error": "Failed to fetch authorization server metadata"},
+                        status_code=502
+                    )
+
+        routes.append(
+            Route("/.well-known/oauth-authorization-server", authorization_server_metadata)
+        )
+
+        return routes
+
+    def get_middleware(self) -> list:
+        """Delegate to base provider."""
+        if hasattr(self._base, 'get_middleware'):
+            return self._base.get_middleware()
+        return []
+
+    def _get_resource_url(self, path: str | None = None) -> str:
+        """Delegate to base provider."""
+        if hasattr(self._base, '_get_resource_url'):
+            return self._base._get_resource_url(path)
+        if path:
+            return f"{self.base_url.rstrip('/')}{path}"
+        return self.base_url
 
 
 class ChainedAuthProvider:
@@ -168,13 +236,19 @@ def get_auth_provider(require_auth: bool = False) -> "AuthProvider | None":
                 )
 
                 # RemoteAuthProvider points clients to Supabase for OAuth
-                supabase_provider = RemoteAuthProvider(
+                base_remote_provider = RemoteAuthProvider(
                     token_verifier=token_verifier,
                     authorization_servers=[AnyHttpUrl(f"{project_url}/auth/v1")],
                     base_url=base_url,
                 )
+
+                # Wrap with our extended provider that forwards auth server metadata
+                supabase_provider = SupabaseRemoteAuthProvider(
+                    base_provider=base_remote_provider,
+                    project_url=project_url,
+                )
                 providers.append(supabase_provider)
-                logger.info(f"🔐 Supabase OAuth enabled via RemoteAuthProvider (project: {project_url})")
+                logger.info(f"🔐 Supabase OAuth enabled via SupabaseRemoteAuthProvider (project: {project_url})")
         except ImportError as e:
             logger.error(f"❌ RemoteAuthProvider not available. Upgrade fastmcp >=2.13.0: {e}")
         except Exception as e:

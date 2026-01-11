@@ -1,5 +1,7 @@
 **Whenever working in this project, run `source .venv/scripts/activate`** to activate the correct environment!
 
+After pushing to `dev` or `main` branches on github, the dev deployment server will restart automatically. It takes about 120 seconds to restart. Rate-limit accordingly.
+
 ## Current State (Jan 9, 2026)
 
 **IQ-MCP v1.5.0 is ready for deployment!**
