@@ -143,26 +143,42 @@ def get_auth_provider(require_auth: bool = False) -> "AuthProvider | None":
         except ImportError:
             logger.error("❌ StaticTokenVerifier not available. Upgrade fastmcp >=2.13.0")
 
-    # 2. Supabase OAuth Provider (using FastMCP's built-in SupabaseProvider)
+    # 2. Supabase OAuth Provider (using FastMCP's built-in OAuthProxy)
     if ctx.is_initialized and ctx.settings.supabase_auth_enabled:
         try:
-            from fastmcp.server.auth.providers.supabase import SupabaseProvider
+            from fastmcp.server.auth import OAuthProxy
+            from fastmcp.server.auth.providers.jwt import JWTVerifier
 
             supabase_auth = ctx.settings.supabase_auth
             base_url = os.getenv("IQ_BASE_URL")
+            oauth_client_id = os.getenv("IQ_SUPABASE_OAUTH_CLIENT_ID")
+            oauth_client_secret = os.getenv("IQ_SUPABASE_OAUTH_CLIENT_SECRET")
 
             if not base_url:
                 logger.error("❌ IQ_BASE_URL required for OAuth. Skipping Supabase auth.")
+            elif not oauth_client_id or not oauth_client_secret:
+                logger.error("❌ IQ_SUPABASE_OAUTH_CLIENT_ID and IQ_SUPABASE_OAUTH_CLIENT_SECRET required. Skipping Supabase auth.")
             else:
-                supabase_provider = SupabaseProvider(
-                    project_url=supabase_auth.project_url,
-                    base_url=base_url,
+                project_url = supabase_auth.project_url.rstrip("/")
+
+                token_verifier = JWTVerifier(
+                    jwks_uri=f"{project_url}/auth/v1/.well-known/jwks.json",
+                    issuer=f"{project_url}/auth/v1",
                     algorithm=supabase_auth.algorithm,
                 )
-                providers.append(supabase_provider)
-                logger.info(f"🔐 Supabase OAuth enabled via SupabaseProvider (project: {supabase_auth.project_url})")
+
+                oauth_provider = OAuthProxy(
+                    upstream_authorization_endpoint=f"{project_url}/auth/v1/oauth/authorize",
+                    upstream_token_endpoint=f"{project_url}/auth/v1/oauth/token",
+                    upstream_client_id=oauth_client_id,
+                    upstream_client_secret=oauth_client_secret,
+                    token_verifier=token_verifier,
+                    base_url=base_url,
+                )
+                providers.append(oauth_provider)
+                logger.info(f"🔐 Supabase OAuth enabled via OAuthProxy (project: {project_url})")
         except ImportError as e:
-            logger.error(f"❌ SupabaseProvider not available. Upgrade fastmcp >=2.13.0: {e}")
+            logger.error(f"❌ OAuthProxy not available. Upgrade fastmcp >=2.13.0: {e}")
         except Exception as e:
             logger.error(f"❌ Failed to initialize Supabase auth: {e}")
 

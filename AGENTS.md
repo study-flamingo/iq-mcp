@@ -2,6 +2,32 @@
 
 After pushing to `dev` or `main` branches on github, the dev deployment server will restart automatically. It takes about 120 seconds to restart. Rate-limit accordingly.
 
+## CRITICAL: Use Library Features, Do NOT Rewrite
+
+**DO NOT create custom implementations when the library already provides the functionality.**
+
+### FastMCP Authentication Providers
+This project uses FastMCP for MCP server functionality. FastMCP provides built-in auth providers - USE THEM:
+
+| Provider | Use Case | Docs |
+|----------|----------|------|
+| `OAuthProxy` | OAuth with providers lacking DCR (or to work around client bugs) | https://gofastmcp.com/servers/auth/oauth-proxy |
+| `SupabaseProvider` | Supabase Auth with DCR | https://gofastmcp.com/python-sdk/fastmcp-server-auth-providers-supabase |
+| `RemoteAuthProvider` | Generic DCR-enabled IdPs | https://gofastmcp.com/servers/auth/remote-oauth |
+| `GitHubProvider` | GitHub OAuth | https://gofastmcp.com/servers/auth/authentication |
+| `StaticTokenVerifier` | API key auth | Built-in |
+
+**Before writing ANY custom auth code:**
+1. Check FastMCP docs: https://gofastmcp.com/servers/auth/authentication
+2. Search for existing providers: `from fastmcp.server.auth.providers import ...`
+3. Use Context7 MCP tool to query FastMCP documentation
+4. If a built-in provider exists, USE IT
+
+**Current OAuth Setup:**
+- Uses `OAuthProxy` from FastMCP (proxies OAuth to Supabase)
+- Requires env vars: `IQ_SUPABASE_OAUTH_CLIENT_ID`, `IQ_SUPABASE_OAUTH_CLIENT_SECRET`
+- See `src/mcp_knowledge_graph/auth.py`
+
 ## Current State (Jan 9, 2026)
 
 **IQ-MCP v1.5.0 is ready for deployment!**
