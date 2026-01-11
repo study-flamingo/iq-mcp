@@ -2,12 +2,50 @@
 
 After pushing to `dev` or `main` branches on github, the dev deployment server will restart automatically. It takes about 120 seconds to restart. Rate-limit accordingly.
 
-## CRITICAL: Use Library Features, Do NOT Rewrite
+---
 
-**DO NOT create custom implementations when the library already provides the functionality.**
+## MANDATORY: Pre-Implementation Checklist
 
-### FastMCP Authentication Providers
-This project uses FastMCP for MCP server functionality. FastMCP provides built-in auth providers - USE THEM:
+**BEFORE writing or modifying ANY code involving a library/dependency, you MUST:**
+
+- [ ] **STOP** - Do not write code yet
+- [ ] **RESEARCH** - Check library docs using Context7, WebFetch, or WebSearch
+- [ ] **SEARCH** - Look for existing classes/functions: `from library.submodule import ...`
+- [ ] **VERIFY** - Confirm no built-in solution exists
+- [ ] **ASK** - If uncertain, ask the user: "Does [library] provide X?"
+
+**Only after completing this checklist may you write custom code.**
+
+---
+
+## ANTI-PATTERNS: What NOT To Do
+
+These are real mistakes that wasted time. DO NOT REPEAT THEM:
+
+### Example: OAuth Provider Mistake (Jan 2026)
+
+**What happened:**
+1. User needed Supabase OAuth integration
+2. User said "use library features, don't rewrite"
+3. User provided link to FastMCP SupabaseProvider docs
+4. Agent STILL created custom `SupabaseRemoteAuthProvider` wrapper class
+5. Agent manually configured `RemoteAuthProvider` + `JWTVerifier`
+6. After multiple iterations, finally used built-in `SupabaseProvider`
+7. Then switched to `OAuthProxy` when that was the right solution
+
+**What should have happened:**
+1. Check FastMCP docs immediately
+2. Find `SupabaseProvider` or `OAuthProxy`
+3. Use it directly
+4. Done in one step
+
+**The rule:** If the library has a class for your use case, USE IT. Do not wrap it, extend it, or reimplement it unless absolutely necessary.
+
+---
+
+## FastMCP Authentication Providers
+
+This project uses FastMCP. It provides built-in auth providers - **USE THEM**:
 
 | Provider | Use Case | Docs |
 |----------|----------|------|
@@ -17,16 +55,12 @@ This project uses FastMCP for MCP server functionality. FastMCP provides built-i
 | `GitHubProvider` | GitHub OAuth | https://gofastmcp.com/servers/auth/authentication |
 | `StaticTokenVerifier` | API key auth | Built-in |
 
-**Before writing ANY custom auth code:**
-1. Check FastMCP docs: https://gofastmcp.com/servers/auth/authentication
-2. Search for existing providers: `from fastmcp.server.auth.providers import ...`
-3. Use Context7 MCP tool to query FastMCP documentation
-4. If a built-in provider exists, USE IT
-
 **Current OAuth Setup:**
 - Uses `OAuthProxy` from FastMCP (proxies OAuth to Supabase)
 - Requires env vars: `IQ_SUPABASE_OAUTH_CLIENT_ID`, `IQ_SUPABASE_OAUTH_CLIENT_SECRET`
 - See `src/mcp_knowledge_graph/auth.py`
+
+---
 
 ## Current State (Jan 9, 2026)
 
