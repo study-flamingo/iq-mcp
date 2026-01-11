@@ -173,7 +173,7 @@ def get_auth_provider(require_auth: bool = False) -> "AuthProvider | None":
                 supabase_provider = RemoteAuthProvider(
                     token_verifier=token_verifier,
                     authorization_servers=[AnyHttpUrl(f"{project_url}/auth/v1")],
-                    resource_server_url=base_url,
+                    base_url=base_url,
                 )
                 providers.append(supabase_provider)
                 logger.info(f"🔐 Supabase OAuth enabled via RemoteAuthProvider (project: {project_url})")
