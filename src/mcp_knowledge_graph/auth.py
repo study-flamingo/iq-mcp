@@ -143,12 +143,10 @@ def get_auth_provider(require_auth: bool = False) -> "AuthProvider | None":
         except ImportError:
             logger.error("❌ StaticTokenVerifier not available. Upgrade fastmcp >=2.13.0")
 
-    # 2. Supabase OAuth Provider (using RemoteAuthProvider for full OAuth flow)
+    # 2. Supabase OAuth Provider (using FastMCP's built-in SupabaseProvider)
     if ctx.is_initialized and ctx.settings.supabase_auth_enabled:
         try:
-            from fastmcp.server.auth import RemoteAuthProvider
-            from fastmcp.server.auth.providers.jwt import JWTVerifier
-            from pydantic import AnyHttpUrl
+            from fastmcp.server.auth.providers.supabase import SupabaseProvider
 
             supabase_auth = ctx.settings.supabase_auth
             base_url = os.getenv("IQ_BASE_URL")
@@ -156,29 +154,15 @@ def get_auth_provider(require_auth: bool = False) -> "AuthProvider | None":
             if not base_url:
                 logger.error("❌ IQ_BASE_URL required for OAuth. Skipping Supabase auth.")
             else:
-                # Use RemoteAuthProvider for full OAuth flow with DCR support
-                # This tells clients where to authenticate (Supabase) and validates their tokens
-                project_url = supabase_auth.project_url.rstrip("/")
-
-                # JWTVerifier validates tokens using Supabase's JWKS
-                token_verifier = JWTVerifier(
-                    jwks_uri=f"{project_url}/auth/v1/.well-known/jwks.json",
-                    issuer=f"{project_url}/auth/v1",
-                    audience="authenticated",  # Supabase default audience
-                )
-
-                # RemoteAuthProvider points clients to Supabase for OAuth
-                # Clients will discover Supabase via /.well-known/oauth-protected-resource
-                # and then fetch /.well-known/oauth-authorization-server directly from Supabase
-                supabase_provider = RemoteAuthProvider(
-                    token_verifier=token_verifier,
-                    authorization_servers=[AnyHttpUrl(f"{project_url}/auth/v1")],
+                supabase_provider = SupabaseProvider(
+                    project_url=supabase_auth.project_url,
                     base_url=base_url,
+                    algorithm=supabase_auth.algorithm,
                 )
                 providers.append(supabase_provider)
-                logger.info(f"🔐 Supabase OAuth enabled via RemoteAuthProvider (project: {project_url})")
+                logger.info(f"🔐 Supabase OAuth enabled via SupabaseProvider (project: {supabase_auth.project_url})")
         except ImportError as e:
-            logger.error(f"❌ RemoteAuthProvider not available. Upgrade fastmcp >=2.13.0: {e}")
+            logger.error(f"❌ SupabaseProvider not available. Upgrade fastmcp >=2.13.0: {e}")
         except Exception as e:
             logger.error(f"❌ Failed to initialize Supabase auth: {e}")
 
