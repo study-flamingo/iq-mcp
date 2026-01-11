@@ -1,4 +1,4 @@
-# Agent Scratchpad
+**Whenever working in this project, run `source .venv/scripts/activate`** to activate the correct environment!
 
 ## Current State (Jan 9, 2026)
 
