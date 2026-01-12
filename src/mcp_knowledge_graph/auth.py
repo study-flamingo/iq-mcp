@@ -143,42 +143,35 @@ def get_auth_provider(require_auth: bool = False) -> "AuthProvider | None":
         except ImportError:
             logger.error("❌ StaticTokenVerifier not available. Upgrade fastmcp >=2.13.0")
 
-    # 2. Supabase OAuth Provider (using FastMCP's built-in OAuthProxy)
+    # 2. Supabase OAuth Provider (using FastMCP's built-in SupabaseProvider)
     if ctx.is_initialized and ctx.settings.supabase_auth_enabled:
         try:
-            from fastmcp.server.auth import OAuthProxy
-            from fastmcp.server.auth.providers.jwt import JWTVerifier
+            from fastmcp.server.auth.providers.supabase import SupabaseProvider
 
             supabase_auth = ctx.settings.supabase_auth
             base_url = os.getenv("IQ_BASE_URL")
-            oauth_client_id = os.getenv("IQ_SUPABASE_OAUTH_CLIENT_ID")
-            oauth_client_secret = os.getenv("IQ_SUPABASE_OAUTH_CLIENT_SECRET")
 
             if not base_url:
-                logger.error("❌ IQ_BASE_URL required for OAuth. Skipping Supabase auth.")
-            elif not oauth_client_id or not oauth_client_secret:
-                logger.error("❌ IQ_SUPABASE_OAUTH_CLIENT_ID and IQ_SUPABASE_OAUTH_CLIENT_SECRET required. Skipping Supabase auth.")
+                logger.error("❌ IQ_BASE_URL required for Supabase OAuth. Skipping Supabase auth.")
             else:
                 project_url = supabase_auth.project_url.rstrip("/")
 
-                token_verifier = JWTVerifier(
-                    jwks_uri=f"{project_url}/auth/v1/.well-known/jwks.json",
-                    issuer=f"{project_url}/auth/v1",
+                # Use SupabaseProvider - handles JWT validation via JWKS automatically
+                # No client credentials needed - Supabase handles OAuth directly
+                supabase_provider = SupabaseProvider(
+                    project_url=project_url,
+                    base_url=base_url,
                     algorithm=supabase_auth.algorithm,
+                    required_scopes=supabase_auth.required_scopes or None,
                 )
 
-                oauth_provider = OAuthProxy(
-                    upstream_authorization_endpoint=f"{project_url}/auth/v1/oauth/authorize",
-                    upstream_token_endpoint=f"{project_url}/auth/v1/oauth/token",
-                    upstream_client_id=oauth_client_id,
-                    upstream_client_secret=oauth_client_secret,
-                    token_verifier=token_verifier,
-                    base_url=base_url,
-                )
-                providers.append(oauth_provider)
-                logger.info(f"🔐 Supabase OAuth enabled via OAuthProxy (project: {project_url})")
+                providers.append(supabase_provider)
+                logger.info(f"🔐 Supabase OAuth enabled via SupabaseProvider (project: {project_url})")
+                logger.info(f"   JWT algorithm: {supabase_auth.algorithm}")
+                logger.info(f"   Users authenticate directly with Supabase - no client secrets needed!")
+
         except ImportError as e:
-            logger.error(f"❌ OAuthProxy not available. Upgrade fastmcp >=2.13.0: {e}")
+            logger.error(f"❌ SupabaseProvider not available. Upgrade fastmcp >=2.13.3: {e}")
         except Exception as e:
             logger.error(f"❌ Failed to initialize Supabase auth: {e}")
 

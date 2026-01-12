@@ -35,11 +35,18 @@ These are real mistakes that wasted time. DO NOT REPEAT THEM:
 
 **What should have happened:**
 1. Check FastMCP docs immediately
-2. Find `SupabaseProvider` or `OAuthProxy`
-3. Use it directly
+2. Find `SupabaseProvider` - it's built for Supabase Auth!
+3. Use it directly - no client credentials needed
 4. Done in one step
 
 **The rule:** If the library has a class for your use case, USE IT. Do not wrap it, extend it, or reimplement it unless absolutely necessary.
+
+**Important Update (Jan 11, 2026):**
+The correct implementation uses `SupabaseProvider`, NOT `OAuthProxy`. The `SupabaseProvider`:
+- Handles JWT validation via JWKS automatically
+- Does NOT require client ID/secret on the MCP server
+- Users authenticate directly with Supabase
+- Provides DCR-like behavior without manual client registration
 
 ---
 
@@ -55,9 +62,10 @@ This project uses FastMCP. It provides built-in auth providers - **USE THEM**:
 | `GitHubProvider` | GitHub OAuth | https://gofastmcp.com/servers/auth/authentication |
 | `StaticTokenVerifier` | API key auth | Built-in |
 
-**Current OAuth Setup:**
-- Uses `OAuthProxy` from FastMCP (proxies OAuth to Supabase)
-- Requires env vars: `IQ_SUPABASE_OAUTH_CLIENT_ID`, `IQ_SUPABASE_OAUTH_CLIENT_SECRET`
+**Current OAuth Setup (Updated):**
+- Uses `SupabaseProvider` from FastMCP (direct JWT validation via JWKS)
+- No client ID/secret needed - users authenticate directly with Supabase
+- Supports OAuth 2.1 with automatic token validation
 - See `src/mcp_knowledge_graph/auth.py`
 
 ---
