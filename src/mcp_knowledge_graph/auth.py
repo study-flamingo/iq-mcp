@@ -143,10 +143,12 @@ def get_auth_provider(require_auth: bool = False) -> "AuthProvider | None":
         except ImportError:
             logger.error("❌ StaticTokenVerifier not available. Upgrade fastmcp >=2.13.0")
 
-    # 2. Supabase OAuth Provider (using FastMCP's built-in SupabaseProvider)
+    # 2. Supabase OAuth Provider with DCR (using RemoteAuthProvider)
     if ctx.is_initialized and ctx.settings.supabase_auth_enabled:
         try:
-            from fastmcp.server.auth.providers.supabase import SupabaseProvider
+            from fastmcp.server.auth import RemoteAuthProvider
+            from fastmcp.server.auth.providers.jwt import JWTVerifier
+            from pydantic import AnyHttpUrl
 
             supabase_auth = ctx.settings.supabase_auth
             base_url = os.getenv("IQ_BASE_URL")
@@ -156,24 +158,37 @@ def get_auth_provider(require_auth: bool = False) -> "AuthProvider | None":
             else:
                 project_url = supabase_auth.project_url.rstrip("/")
 
-                # Use SupabaseProvider - handles JWT validation via JWKS automatically
-                # No client credentials needed - Supabase handles OAuth directly
-                supabase_provider = SupabaseProvider(
-                    project_url=project_url,
-                    base_url=base_url,
-                    algorithm=supabase_auth.algorithm,
+                # JWT verifier for token validation
+                # Same logic as SupabaseProvider internally, but allows DCR via RemoteAuthProvider
+                token_verifier = JWTVerifier(
+                    jwks_uri=f"{project_url}/auth/v1/.well-known/jwks.json",
+                    issuer=f"{project_url}/auth/v1",
+                    audience=base_url,
                     required_scopes=supabase_auth.required_scopes or None,
                 )
 
-                providers.append(supabase_provider)
-                logger.info(f"🔐 Supabase OAuth enabled via SupabaseProvider (project: {project_url})")
+                # RemoteAuthProvider enables Dynamic Client Registration (DCR)
+                # This allows MCP clients like Claude Desktop to auto-discover and self-register
+                remote_auth = RemoteAuthProvider(
+                    token_verifier=token_verifier,
+                    authorization_servers=[
+                        AnyHttpUrl(server) for server in supabase_auth.authorization_servers
+                    ],
+                    base_url=base_url,
+                    allowed_client_redirect_uris=supabase_auth.allowed_client_redirect_uris,
+                )
+
+                providers.append(remote_auth)
+                logger.info("🔐 RemoteAuthProvider enabled - OAuth 2.1 with DCR")
+                logger.info(f"   Authorization servers: {supabase_auth.authorization_servers}")
                 logger.info(f"   JWT algorithm: {supabase_auth.algorithm}")
-                logger.info(f"   Users authenticate directly with Supabase - no client secrets needed!")
+                logger.info(f"   Discovery endpoint: {base_url}/.well-known/oauth-protected-resource")
+                logger.info("   ✨ MCP clients can now self-register via DCR!")
 
         except ImportError as e:
-            logger.error(f"❌ SupabaseProvider not available. Upgrade fastmcp >=2.13.3: {e}")
+            logger.error(f"❌ RemoteAuthProvider not available. Upgrade fastmcp >=2.13.0: {e}")
         except Exception as e:
-            logger.error(f"❌ Failed to initialize Supabase auth: {e}")
+            logger.error(f"❌ Failed to initialize Supabase OAuth with DCR: {e}")
 
     # 3. Return appropriate provider(s)
     if not providers:

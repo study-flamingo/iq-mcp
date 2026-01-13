@@ -287,10 +287,14 @@ class SupabaseConfig:
 
 
 class SupabaseAuthConfig:
-    """Optional Supabase OAuth authentication configuration.
+    """Optional Supabase OAuth 2.1 authentication configuration with DCR support.
 
-    This class handles loading Supabase Auth-specific settings for OAuth 2.1 support.
-    Separate from SupabaseConfig (data integration) to allow independent configuration.
+    This class handles loading Supabase Auth-specific settings for OAuth 2.1 support
+    with Dynamic Client Registration (DCR). Separate from SupabaseConfig (data integration)
+    to allow independent configuration.
+
+    DCR enables MCP clients like Claude Desktop to automatically discover OAuth configuration
+    and register themselves without manual client ID/secret setup.
     """
 
     def __init__(
@@ -301,12 +305,24 @@ class SupabaseAuthConfig:
         algorithm: Literal["HS256", "RS256", "ES256"],
         jwt_secret: str | None = None,
         required_scopes: list[str] | None = None,
+        # New fields for RemoteAuthProvider (DCR)
+        authorization_servers: list[str] | None = None,
+        allowed_client_redirect_uris: list[str] | None = None,
     ) -> None:
         self.enabled = bool(enabled)
         self.project_url = project_url
         self.algorithm = algorithm
         self.jwt_secret = jwt_secret
         self.required_scopes = required_scopes or []
+
+        # Default authorization_servers to Supabase auth endpoint
+        if authorization_servers is None and project_url:
+            self.authorization_servers = [f"{project_url.rstrip('/')}/auth/v1"]
+        else:
+            self.authorization_servers = authorization_servers or []
+
+        # Optional redirect URI restrictions (defaults to localhost + https)
+        self.allowed_client_redirect_uris = allowed_client_redirect_uris
 
     @classmethod
     def load(cls) -> "SupabaseAuthConfig | None":
@@ -324,10 +340,22 @@ class SupabaseAuthConfig:
         algorithm = os.getenv("IQ_SUPABASE_AUTH_ALGORITHM", "ES256")
         jwt_secret = os.getenv("IQ_SUPABASE_JWT_SECRET")
 
+        # Load DCR-related variables
+        auth_servers = os.getenv("IQ_OAUTH_AUTHORIZATION_SERVERS")
+        allowed_uris = os.getenv("IQ_ALLOWED_CLIENT_REDIRECT_URIS")
+
+        # Parse comma-separated lists
+        authorization_servers = [s.strip() for s in auth_servers.split(",")] if auth_servers else None
+        allowed_redirect_uris = [u.strip() for u in allowed_uris.split(",")] if allowed_uris else None
+
         # Validate algorithm
         if algorithm not in ["HS256", "RS256", "ES256"]:
             logger.warning(f"Invalid algorithm '{algorithm}', defaulting to ES256")
             algorithm = "ES256"
+
+        # Warn if using HS256 with DCR (not recommended)
+        if algorithm == "HS256" and authorization_servers:
+            logger.warning("⚠️  HS256 with DCR is not recommended. Use ES256 or RS256 for better security.")
 
         # HS256 requires JWT secret
         if algorithm == "HS256" and not jwt_secret:
@@ -339,6 +367,8 @@ class SupabaseAuthConfig:
             project_url=project_url,
             algorithm=algorithm,
             jwt_secret=jwt_secret,
+            authorization_servers=authorization_servers,
+            allowed_client_redirect_uris=allowed_redirect_uris,
         )
 
     def is_valid(self) -> bool:
