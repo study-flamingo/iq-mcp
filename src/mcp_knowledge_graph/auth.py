@@ -175,7 +175,6 @@ def get_auth_provider(require_auth: bool = False) -> "AuthProvider | None":
                         AnyHttpUrl(server) for server in supabase_auth.authorization_servers
                     ],
                     base_url=base_url,
-                    allowed_client_redirect_uris=supabase_auth.allowed_client_redirect_uris,
                 )
 
                 providers.append(remote_auth)

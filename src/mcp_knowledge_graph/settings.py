@@ -307,7 +307,6 @@ class SupabaseAuthConfig:
         required_scopes: list[str] | None = None,
         # New fields for RemoteAuthProvider (DCR)
         authorization_servers: list[str] | None = None,
-        allowed_client_redirect_uris: list[str] | None = None,
     ) -> None:
         self.enabled = bool(enabled)
         self.project_url = project_url
@@ -320,9 +319,6 @@ class SupabaseAuthConfig:
             self.authorization_servers = [f"{project_url.rstrip('/')}/auth/v1"]
         else:
             self.authorization_servers = authorization_servers or []
-
-        # Optional redirect URI restrictions (defaults to localhost + https)
-        self.allowed_client_redirect_uris = allowed_client_redirect_uris
 
     @classmethod
     def load(cls) -> "SupabaseAuthConfig | None":
@@ -342,11 +338,9 @@ class SupabaseAuthConfig:
 
         # Load DCR-related variables
         auth_servers = os.getenv("IQ_OAUTH_AUTHORIZATION_SERVERS")
-        allowed_uris = os.getenv("IQ_ALLOWED_CLIENT_REDIRECT_URIS")
 
-        # Parse comma-separated lists
+        # Parse comma-separated list
         authorization_servers = [s.strip() for s in auth_servers.split(",")] if auth_servers else None
-        allowed_redirect_uris = [u.strip() for u in allowed_uris.split(",")] if allowed_uris else None
 
         # Validate algorithm
         if algorithm not in ["HS256", "RS256", "ES256"]:
@@ -368,7 +362,6 @@ class SupabaseAuthConfig:
             algorithm=algorithm,
             jwt_secret=jwt_secret,
             authorization_servers=authorization_servers,
-            allowed_client_redirect_uris=allowed_redirect_uris,
         )
 
     def is_valid(self) -> bool:
