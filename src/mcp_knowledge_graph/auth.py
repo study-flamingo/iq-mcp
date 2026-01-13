@@ -144,6 +144,8 @@ def get_auth_provider(require_auth: bool = False) -> "AuthProvider | None":
             logger.error("❌ StaticTokenVerifier not available. Upgrade fastmcp >=2.13.0")
 
     # 2. Supabase OAuth Provider with DCR (using RemoteAuthProvider)
+    logger.info(f"🔍 Checking Supabase auth: ctx.is_initialized={ctx.is_initialized if ctx else 'no ctx'}, enabled={ctx.settings.supabase_auth_enabled if ctx and hasattr(ctx, 'settings') else 'unknown'}")
+
     if ctx.is_initialized and ctx.settings.supabase_auth_enabled:
         try:
             from fastmcp.server.auth import RemoteAuthProvider
@@ -152,6 +154,8 @@ def get_auth_provider(require_auth: bool = False) -> "AuthProvider | None":
 
             supabase_auth = ctx.settings.supabase_auth
             base_url = os.getenv("IQ_BASE_URL")
+
+            logger.info(f"🔐 Initializing RemoteAuthProvider with base_url={base_url}")
 
             if not base_url:
                 logger.error("❌ IQ_BASE_URL required for Supabase OAuth. Skipping Supabase auth.")
