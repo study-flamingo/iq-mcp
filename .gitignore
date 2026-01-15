@@ -132,3 +132,4 @@ data/
 
 # Claude Code local settings
 .claude/
+tmpclaude-*
