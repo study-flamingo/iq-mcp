@@ -1,14 +1,8 @@
 """
-Authentication configuration for IQ-MCP server with Claude Desktop compatibility.
+Authentication configuration for IQ-MCP server using RemoteAuthProvider.
 
-Claude Desktop requires full OAuth server endpoints, not just DCR discovery.
-We use OAuthProxy to bridge Claude Desktop ↔ Supabase Auth.
-
-REQUIREMENT: You must create OAuth client credentials in Supabase:
-1. Go to Supabase Dashboard → Authentication → OAuth Apps
-2. Create a new OAuth app for IQ-MCP
-3. Get client_id and client_secret
-4. Set IQ_OAUTH_CLIENT_ID and IQ_OAUTH_CLIENT_SECRET in Railway
+RemoteAuthProvider enables Dynamic Client Registration (DCR) with Supabase Auth,
+allowing MCP clients to automatically register without manual OAuth app setup.
 """
 
 from __future__ import annotations
@@ -24,21 +18,24 @@ if TYPE_CHECKING:
 
 def get_auth_provider(require_auth: bool = False) -> "AuthProvider | None":
     """
-    Create OAuth 2.1 provider using OAuthProxy for Claude Desktop compatibility.
+    Create RemoteAuthProvider for DCR with Supabase Auth.
 
-    Requires OAuth client credentials:
-    - IQ_OAUTH_CLIENT_ID (from Supabase OAuth app)
-    - IQ_OAUTH_CLIENT_SECRET (from Supabase OAuth app)
+    Uses Supabase's OAuth 2.1 server with Dynamic Client Registration,
+    allowing MCP clients to self-register without manual client credentials.
 
-    OAuthProxy provides full OAuth endpoints:
-    - /.well-known/oauth-protected-resource (discovery)
-    - /oauth/authorize (authorization)
-    - /oauth/callback (callback handler)
-    - /oauth/consent (consent page)
+    Required environment variables:
+    - IQ_ENABLE_SUPABASE_AUTH=true
+    - IQ_SUPABASE_AUTH_PROJECT_URL=https://xxx.supabase.co
+    - IQ_SUPABASE_AUTH_ALGORITHM=ES256
+    - IQ_BASE_URL=https://iq-mcp-dev.up.railway.app
+
+    NOT required:
+    - IQ_OAUTH_CLIENT_ID (DCR handles this)
+    - IQ_OAUTH_CLIENT_SECRET (DCR handles this)
     """
     from .context import ctx
 
-    logger.info("🔐 Configuring OAuthProxy for Claude Desktop")
+    logger.info("🔐 Configuring RemoteAuthProvider for DCR")
 
     if not ctx.is_initialized:
         raise RuntimeError("Context not initialized")
@@ -50,33 +47,24 @@ def get_auth_provider(require_auth: bool = False) -> "AuthProvider | None":
         return None
 
     try:
-        from fastmcp.server.auth.providers.oauth_proxy import OAuthProxy
+        from fastmcp.server.auth import RemoteAuthProvider
         from fastmcp.server.auth.providers.jwt import JWTVerifier
+        from pydantic import AnyHttpUrl
 
         supabase_auth = ctx.settings.supabase_auth
         base_url = os.getenv("IQ_BASE_URL")
-        client_id = os.getenv("IQ_OAUTH_CLIENT_ID")
-        client_secret = os.getenv("IQ_OAUTH_CLIENT_SECRET")
 
-        # Validate required credentials
+        # Validate required configuration
         if not base_url:
-            raise ValueError("IQ_BASE_URL is required")
-
-        if not client_id or not client_secret:
-            logger.error("❌ Missing OAuth client credentials")
-            logger.error("   Required: IQ_OAUTH_CLIENT_ID, IQ_OAUTH_CLIENT_SECRET")
-            logger.error("   Create at: Supabase Dashboard → Authentication → OAuth Apps")
-            if require_auth:
-                raise ValueError("OAuth client credentials required")
-            return None
+            raise ValueError("IQ_BASE_URL is required for RemoteAuthProvider")
 
         project_url = supabase_auth.project_url.rstrip("/")
         auth_base_url = base_url.rstrip("/")
 
-        logger.info("✅ OAuthProxy configured with client credentials")
+        logger.info("✅ RemoteAuthProvider configuration:")
         logger.info(f"   Project: {project_url}")
         logger.info(f"   Base URL: {auth_base_url}")
-        logger.info(f"   Client ID: {client_id[:10]}...")  # Partial for security
+        logger.info(f"   Algorithm: {supabase_auth.algorithm}")
 
         # JWT verifier for token validation
         token_verifier = JWTVerifier(
@@ -86,33 +74,27 @@ def get_auth_provider(require_auth: bool = False) -> "AuthProvider | None":
             required_scopes=supabase_auth.required_scopes or None,
         )
 
-        # OAuthProxy for full OAuth endpoints
-        oauth_proxy = OAuthProxy(
-            upstream_authorization_endpoint=f"{project_url}/auth/v1/oauth/authorize",
-            upstream_token_endpoint=f"{project_url}/auth/v1/oauth/token",
-            upstream_client_id=client_id,
-            upstream_client_secret=client_secret,
+        # RemoteAuthProvider for DCR
+        auth = RemoteAuthProvider(
             token_verifier=token_verifier,
+            authorization_servers=[AnyHttpUrl(f"{project_url}/auth/v1")],
             base_url=auth_base_url,
-            redirect_path="/oauth/callback",
-            issuer_url=auth_base_url,
         )
 
-        logger.info("🔐 OAuthProxy ready for Claude Desktop")
+        logger.info("🔐 RemoteAuthProvider ready for DCR")
         logger.info(f"   🌐 Discovery: {auth_base_url}/.well-known/oauth-protected-resource")
-        logger.info(f"   🌐 Authorization: {auth_base_url}/oauth/authorize")
-        logger.info(f"   🌐 Callback: {auth_base_url}/oauth/callback")
-        logger.info("   ✨ Claude Desktop can now use full OAuth flow")
+        logger.info(f"   🌐 Authorization server: {project_url}/auth/v1")
+        logger.info("   ✨ MCP clients can now self-register via DCR!")
 
-        return oauth_proxy
+        return auth
 
     except ImportError as e:
-        logger.error(f"❌ OAuthProxy not available: {e}")
-        logger.error("   This FastMCP version may not include OAuthProxy")
-        raise RuntimeError("OAuthProxy provider not available")
+        logger.error(f"❌ RemoteAuthProvider not available: {e}")
+        logger.error("   Ensure FastMCP 2.13.3+ is installed")
+        raise RuntimeError("RemoteAuthProvider not available")
 
     except Exception as e:
-        logger.error(f"❌ Failed to configure OAuthProxy: {e}")
+        logger.error(f"❌ Failed to configure RemoteAuthProvider: {e}")
         raise
 
 

@@ -56,7 +56,6 @@ class IQSettings:
         `transport`: Validated transport value ("stdio" | "sse" | "http")
         `port`: Server port (used when transport is http)
         `streamable_http_host`: Optional HTTP host
-        `streamable_http_path`: Optional HTTP path
         `memory_path`: Absolute path to memory JSONL file
         `project_root`: Resolved project root path
         `no_emojis`: Disable emojis in the output
@@ -75,7 +74,6 @@ class IQSettings:
         port: int,
         memory_path: str,
         streamable_http_host: str | None,
-        streamable_http_path: str | None,
         project_root: Path,
         no_emojis: bool,
         dry_run: bool,
@@ -86,7 +84,6 @@ class IQSettings:
         self.memory_path = memory_path
         self.port = int(port)
         self.streamable_http_host = streamable_http_host
-        self.streamable_http_path = streamable_http_path
         self.project_root = project_root
         self.no_emojis = no_emojis
         self.dry_run = dry_run
@@ -103,7 +100,6 @@ class IQSettings:
             transport (Transport enum): Validated transport value ("stdio" | "sse" | "http")
             port (int): Server port (used when transport is http)
             streamable_http_host (str): Optional HTTP host
-            streamable_http_path (str): Optional HTTP path
             memory_path (Path): Absolute path to memory JSONL file
             project_root (Path): Resolved project root path
             no_emojis (bool): Disable emojis in the output
@@ -116,7 +112,6 @@ class IQSettings:
         parser.add_argument("--transport", type=str)
         parser.add_argument("--port", type=int, default=None)
         parser.add_argument("--http-host", type=str)
-        parser.add_argument("--http-path", type=str)
         parser.add_argument("--no-emojis", action="store_true", default=None)
         parser.add_argument("--dry-run", action="store_true", default=False)
         # Supabase args are parsed separately in SupabaseConfig.load()
@@ -159,7 +154,6 @@ class IQSettings:
             os.getenv("PORT") or os.getenv("IQ_STREAMABLE_HTTP_PORT") or DEFAULT_PORT
         )
         http_host = args.http_host or os.getenv("IQ_STREAMABLE_HTTP_HOST")
-        http_path = args.http_path or os.getenv("IQ_STREAMABLE_HTTP_PATH")
 
         # Memory path precedence: CLI > env > default(project_root/memory.jsonl) > example.jsonl
 
@@ -186,7 +180,6 @@ class IQSettings:
             transport=transport,
             port=http_port,
             streamable_http_host=http_host,
-            streamable_http_path=http_path,
             memory_path=memory_path,
             project_root=project_root,
             no_emojis=no_emojis,
@@ -446,10 +439,6 @@ class AppSettings:
     @property
     def streamable_http_host(self) -> str | None:
         return self.core.streamable_http_host
-
-    @property
-    def streamable_http_path(self) -> str | None:
-        return self.core.streamable_http_path
 
     @property
     def project_root(self) -> Path:

@@ -1,153 +1,96 @@
-"""Tests for authentication providers."""
+"""Tests for authentication providers using RemoteAuthProvider."""
 
 import sys
 from pathlib import Path
 
 import pytest
-from unittest.mock import Mock, AsyncMock
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str((Path(__file__).parents[1] / "src").resolve()))
 
-from mcp_knowledge_graph.auth import ChainedAuthProvider
+
+def test_get_auth_provider_returns_none_when_disabled():
+    """Auth provider returns None when Supabase auth is disabled."""
+    with patch("mcp_knowledge_graph.context.ctx") as mock_ctx:
+        mock_ctx.is_initialized = True
+        mock_ctx.settings.supabase_auth_enabled = False
+
+        from mcp_knowledge_graph.auth import get_auth_provider
+        result = get_auth_provider(require_auth=False)
+
+        assert result is None
 
 
-@pytest.mark.asyncio
-async def test_chained_auth_first_succeeds():
-    """First provider succeeds, second not called."""
-    # Mock access token
-    mock_token = Mock()
-    mock_token.client_id = "test"
+def test_get_auth_provider_raises_when_required_but_disabled():
+    """Auth provider raises ValueError when required but Supabase auth is disabled."""
+    with patch("mcp_knowledge_graph.context.ctx") as mock_ctx:
+        mock_ctx.is_initialized = True
+        mock_ctx.settings.supabase_auth_enabled = False
 
-    # First provider succeeds
-    provider1 = Mock()
-    provider1.verify_token = AsyncMock(return_value=mock_token)
-    provider1.base_url = "http://test"
-    provider1.required_scopes = ["read"]
+        from mcp_knowledge_graph.auth import get_auth_provider
 
-    # Second provider (should not be called)
-    provider2 = Mock()
-    provider2.verify_token = AsyncMock(return_value=None)
-
-    chained = ChainedAuthProvider([provider1, provider2])
-    result = await chained.verify_token("test-token")
-
-    assert result.client_id == "test"
-    provider1.verify_token.assert_called_once()
-    provider2.verify_token.assert_not_called()
+        with pytest.raises(ValueError, match="IQ_ENABLE_SUPABASE_AUTH must be true"):
+            get_auth_provider(require_auth=True)
 
 
-@pytest.mark.asyncio
-async def test_chained_auth_fallback():
-    """First fails, second succeeds."""
-    mock_token = Mock()
-    mock_token.client_id = "oauth"
+def test_get_auth_provider_raises_when_context_not_initialized():
+    """Auth provider raises RuntimeError when context not initialized."""
+    with patch("mcp_knowledge_graph.context.ctx") as mock_ctx:
+        mock_ctx.is_initialized = False
 
-    provider1 = Mock()
-    provider1.verify_token = AsyncMock(return_value=None)
-    provider1.base_url = "http://test"
-    provider1.required_scopes = ["read"]
+        from mcp_knowledge_graph.auth import get_auth_provider
 
-    provider2 = Mock()
-    provider2.verify_token = AsyncMock(return_value=mock_token)
-
-    chained = ChainedAuthProvider([provider1, provider2])
-    result = await chained.verify_token("oauth-token")
-
-    assert result.client_id == "oauth"
-    provider1.verify_token.assert_called_once()
-    provider2.verify_token.assert_called_once()
+        with pytest.raises(RuntimeError, match="Context not initialized"):
+            get_auth_provider()
 
 
-@pytest.mark.asyncio
-async def test_chained_auth_all_fail():
-    """All providers fail."""
-    provider1 = Mock()
-    provider1.verify_token = AsyncMock(return_value=None)
-    provider1.base_url = "http://test"
-    provider1.required_scopes = ["read"]
+def test_get_auth_provider_raises_when_base_url_missing():
+    """Auth provider raises ValueError when IQ_BASE_URL is not set."""
+    with patch("mcp_knowledge_graph.context.ctx") as mock_ctx, \
+         patch.dict("os.environ", {}, clear=True):
+        mock_ctx.is_initialized = True
+        mock_ctx.settings.supabase_auth_enabled = True
 
-    provider2 = Mock()
-    provider2.verify_token = AsyncMock(return_value=None)
+        # Create mock supabase_auth
+        mock_supabase_auth = Mock()
+        mock_supabase_auth.project_url = "https://test.supabase.co"
+        mock_supabase_auth.algorithm = "ES256"
+        mock_supabase_auth.required_scopes = []
+        mock_ctx.settings.supabase_auth = mock_supabase_auth
 
-    chained = ChainedAuthProvider([provider1, provider2])
-    result = await chained.verify_token("invalid")
+        from mcp_knowledge_graph.auth import get_auth_provider
 
-    assert result is None
-    provider1.verify_token.assert_called_once()
-    provider2.verify_token.assert_called_once()
-
-
-def test_chained_auth_requires_providers():
-    """Empty provider list raises ValueError."""
-    with pytest.raises(ValueError, match="At least one provider required"):
-        ChainedAuthProvider([])
+        with pytest.raises(ValueError, match="IQ_BASE_URL is required"):
+            get_auth_provider()
 
 
-@pytest.mark.asyncio
-async def test_chained_auth_exception_handling():
-    """Provider exceptions are caught and next provider is tried."""
-    mock_token = Mock()
-    mock_token.client_id = "fallback"
+def test_get_auth_provider_creates_remote_auth_provider():
+    """Auth provider creates RemoteAuthProvider with correct configuration."""
+    with patch("mcp_knowledge_graph.context.ctx") as mock_ctx, \
+         patch.dict("os.environ", {"IQ_BASE_URL": "https://test.railway.app"}, clear=False):
+        mock_ctx.is_initialized = True
+        mock_ctx.settings.supabase_auth_enabled = True
 
-    provider1 = Mock()
-    provider1.verify_token = AsyncMock(side_effect=Exception("Provider 1 failed"))
-    provider1.base_url = "http://test"
-    provider1.required_scopes = ["read"]
+        # Create mock supabase_auth
+        mock_supabase_auth = Mock()
+        mock_supabase_auth.project_url = "https://test.supabase.co"
+        mock_supabase_auth.algorithm = "ES256"
+        mock_supabase_auth.required_scopes = []
+        mock_ctx.settings.supabase_auth = mock_supabase_auth
 
-    provider2 = Mock()
-    provider2.verify_token = AsyncMock(return_value=mock_token)
+        from mcp_knowledge_graph.auth import get_auth_provider
+        result = get_auth_provider()
 
-    chained = ChainedAuthProvider([provider1, provider2])
-    result = await chained.verify_token("test-token")
-
-    assert result.client_id == "fallback"
-    provider1.verify_token.assert_called_once()
-    provider2.verify_token.assert_called_once()
-
-
-def test_chained_auth_get_routes():
-    """Routes are aggregated from all providers and deduplicated."""
-    route1 = Mock()
-    route1.path = "/auth"
-
-    route2 = Mock()
-    route2.path = "/token"
-
-    route3_duplicate = Mock()
-    route3_duplicate.path = "/auth"  # Duplicate of route1
-
-    provider1 = Mock()
-    provider1.get_routes = Mock(return_value=[route1, route2])
-    provider1.base_url = "http://test"
-    provider1.required_scopes = ["read"]
-
-    provider2 = Mock()
-    provider2.get_routes = Mock(return_value=[route3_duplicate])
-
-    chained = ChainedAuthProvider([provider1, provider2])
-    routes = chained.get_routes("/mcp")
-
-    # Should have 2 routes (route1 and route2), not 3 (duplicate removed)
-    assert len(routes) == 2
-    assert route1 in routes
-    assert route2 in routes
+        # Verify RemoteAuthProvider was created
+        assert result is not None
+        # The result should be a RemoteAuthProvider instance
+        assert hasattr(result, "verify_token")
 
 
-def test_chained_auth_get_middleware():
-    """Middleware is taken from first provider."""
-    middleware = [Mock()]
+def test_remote_auth_provider_import():
+    """Verify RemoteAuthProvider can be imported from fastmcp."""
+    from fastmcp.server.auth import RemoteAuthProvider
+    from fastmcp.server.auth.providers.jwt import JWTVerifier
 
-    provider1 = Mock()
-    provider1.get_middleware = Mock(return_value=middleware)
-    provider1.base_url = "http://test"
-    provider1.required_scopes = ["read"]
-
-    provider2 = Mock()
-    provider2.get_middleware = Mock(return_value=[Mock()])
-
-    chained = ChainedAuthProvider([provider1, provider2])
-    result = chained.get_middleware()
-
-    assert result == middleware
-    provider1.get_middleware.assert_called_once()
-    provider2.get_middleware.assert_not_called()
+    assert RemoteAuthProvider is not None
+    assert JWTVerifier is not None

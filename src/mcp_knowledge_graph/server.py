@@ -1690,7 +1690,6 @@ async def start_server():
         transport_kwargs = {
             "host": settings.streamable_http_host,
             "port": settings.port,
-            "path": settings.streamable_http_path,
             "log_level": "debug" if settings.debug else "info",
         }
     else:
@@ -1720,9 +1719,8 @@ async def start_server():
         # Create web app with graph visualizer
         web_app = create_web_app(manager)
 
-        # Get MCP HTTP app with path configured directly
-        # FastMCP will handle routing at this path (e.g., /iq)
-        mcp_path = settings.streamable_http_path or "/mcp"
+        # MCP endpoint path (fixed to /mcp for simplicity)
+        mcp_path = "/mcp"
 
         # Use stateless HTTP mode for Cursor compatibility if enabled
         mcp_transport = "http" if settings.stateless_http else "streamable-http"

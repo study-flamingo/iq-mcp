@@ -40,7 +40,6 @@ def mock_context(temp_memory_dir):
         port=8000,
         memory_path=str(Path(temp_memory_dir) / "memory.jsonl"),
         streamable_http_host=None,
-        streamable_http_path=None,
         project_root=Path(temp_memory_dir),
         no_emojis=False,
         dry_run=False,
