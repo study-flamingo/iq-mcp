@@ -313,7 +313,7 @@ def create_web_app(manager: KnowledgeGraphManager) -> FastAPI:
         const SUPABASE_URL = '{supabase_url}';
         const SUPABASE_ANON_KEY = '{supabase_anon_key}';
 
-        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
         const urlParams = new URLSearchParams(window.location.search);
         const authorizationId = urlParams.get('authorization_id');
@@ -349,7 +349,7 @@ def create_web_app(manager: KnowledgeGraphManager) -> FastAPI:
         }}
 
         async function signIn() {{
-            const {{ error }} = await supabase.auth.signInWithOAuth({{
+            const {{ error }} = await supabaseClient.auth.signInWithOAuth({{
                 provider: 'github',
                 options: {{
                     redirectTo: window.location.href
@@ -428,7 +428,7 @@ def create_web_app(manager: KnowledgeGraphManager) -> FastAPI:
 
             try {{
                 // Call Supabase OAuth SDK to approve the authorization
-                const {{ data, error }} = await supabase.auth.oauth.approveAuthorization(authorizationId);
+                const {{ data, error }} = await supabaseClient.auth.oauth.approveAuthorization(authorizationId);
 
                 if (error) throw error;
 
@@ -453,7 +453,7 @@ def create_web_app(manager: KnowledgeGraphManager) -> FastAPI:
 
             try {{
                 // Call Supabase OAuth SDK to deny the authorization
-                const {{ data, error }} = await supabase.auth.oauth.denyAuthorization(authorizationId);
+                const {{ data, error }} = await supabaseClient.auth.oauth.denyAuthorization(authorizationId);
 
                 if (error) throw error;
 
@@ -477,7 +477,7 @@ def create_web_app(manager: KnowledgeGraphManager) -> FastAPI:
 
             try {{
                 // Check if user is logged in
-                const {{ data: {{ user }} }} = await supabase.auth.getUser();
+                const {{ data: {{ user }} }} = await supabaseClient.auth.getUser();
 
                 if (!user) {{
                     showLoginPrompt();
@@ -485,7 +485,7 @@ def create_web_app(manager: KnowledgeGraphManager) -> FastAPI:
                 }}
 
                 // Get authorization details using Supabase OAuth SDK
-                const {{ data, error }} = await supabase.auth.oauth.getAuthorizationDetails(authorizationId);
+                const {{ data, error }} = await supabaseClient.auth.oauth.getAuthorizationDetails(authorizationId);
 
                 if (error) throw error;
 
