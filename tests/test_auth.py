@@ -1,4 +1,4 @@
-"""Tests for authentication providers using RemoteAuthProvider."""
+"""Tests for authentication providers using SupabaseProvider."""
 
 import sys
 from pathlib import Path
@@ -64,8 +64,8 @@ def test_get_auth_provider_raises_when_base_url_missing():
             get_auth_provider()
 
 
-def test_get_auth_provider_creates_remote_auth_provider():
-    """Auth provider creates RemoteAuthProvider with correct configuration."""
+def test_get_auth_provider_creates_supabase_provider():
+    """Auth provider creates SupabaseProvider with correct configuration."""
     with patch("mcp_knowledge_graph.context.ctx") as mock_ctx, \
          patch.dict("os.environ", {"IQ_BASE_URL": "https://test.railway.app"}, clear=False):
         mock_ctx.is_initialized = True
@@ -81,16 +81,14 @@ def test_get_auth_provider_creates_remote_auth_provider():
         from mcp_knowledge_graph.auth import get_auth_provider
         result = get_auth_provider()
 
-        # Verify RemoteAuthProvider was created
+        # Verify SupabaseProvider was created
         assert result is not None
-        # The result should be a RemoteAuthProvider instance
+        # The result should be a SupabaseProvider instance
         assert hasattr(result, "verify_token")
 
 
-def test_remote_auth_provider_import():
-    """Verify RemoteAuthProvider can be imported from fastmcp."""
-    from fastmcp.server.auth import RemoteAuthProvider
-    from fastmcp.server.auth.providers.jwt import JWTVerifier
+def test_supabase_provider_import():
+    """Verify SupabaseProvider can be imported from fastmcp."""
+    from fastmcp.server.auth.providers.supabase import SupabaseProvider
 
-    assert RemoteAuthProvider is not None
-    assert JWTVerifier is not None
+    assert SupabaseProvider is not None

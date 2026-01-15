@@ -78,6 +78,7 @@ class IQSettings:
         no_emojis: bool,
         dry_run: bool,
         stateless_http: bool,
+        mcp_path: str,
     ) -> None:
         self.debug = bool(debug)
         self.transport = transport
@@ -88,6 +89,7 @@ class IQSettings:
         self.no_emojis = no_emojis
         self.dry_run = dry_run
         self.stateless_http = stateless_http
+        self.mcp_path = mcp_path
 
     # ---------- Construction ----------
     @classmethod
@@ -175,6 +177,9 @@ class IQSettings:
         # Stateless HTTP mode - for Cursor compatibility
         stateless_http = os.getenv("FASTMCP_STATELESS_HTTP", "false").lower() == "true"
 
+        # MCP path - where the MCP server is mounted (default: "/" for root)
+        mcp_path = os.getenv("IQ_MCP_PATH", "/")
+
         return cls(
             debug=debug,
             transport=transport,
@@ -185,6 +190,7 @@ class IQSettings:
             no_emojis=no_emojis,
             dry_run=dry_run,
             stateless_http=stateless_http,
+            mcp_path=mcp_path,
         )
 
 

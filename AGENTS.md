@@ -62,11 +62,17 @@ This project uses FastMCP. It provides built-in auth providers - **USE THEM**:
 | `GitHubProvider` | GitHub OAuth | https://gofastmcp.com/servers/auth/authentication |
 | `StaticTokenVerifier` | API key auth | Built-in |
 
-**Current OAuth Setup (Updated):**
+**Current OAuth Setup (Updated Jan 14, 2026):**
 - Uses `SupabaseProvider` from FastMCP (direct JWT validation via JWKS)
-- No client ID/secret needed - users authenticate directly with Supabase
-- Supports OAuth 2.1 with automatic token validation
+- No client ID/secret needed - Supabase handles the OAuth flow
+- Supports OAuth 2.1 with metadata forwarding (Supabase manages DCR)
+- MCP path configurable via `IQ_MCP_PATH` env var (default: `/` for root)
 - See `src/mcp_knowledge_graph/auth.py`
+
+**CRITICAL: Supabase Dashboard Configuration Required:**
+- Go to **Authentication > URL Configuration** and set **Site URL** to your server URL
+- Go to **Authentication > OAuth Server** and enable the OAuth server
+- Without correct Site URL, OAuth redirects will fail (go to localhost instead)
 
 ---
 
@@ -83,14 +89,18 @@ This project uses FastMCP. It provides built-in auth providers - **USE THEM**:
 
 ### Architecture
 ```
-Client → https://mcp.casimir.ai/iq
+Client → https://mcp.casimir.ai/ (or /iq if IQ_MCP_PATH=/iq)
          ↓
-      nginx (SSL termination, /iq → /mcp rewrite)
+      nginx (SSL termination)
          ↓
       iq-mcp container (FastMCP on port 8000, stateless HTTP mode)
          ↓
       Supabase (cloud sync) + local JSONL
 ```
+
+**MCP Path Configuration:**
+- `IQ_MCP_PATH=/` - MCP at root (recommended for OAuth simplicity)
+- `IQ_MCP_PATH=/iq` - MCP at `/iq` subpath
 
 ### Important: Stateless HTTP Mode
 - `FASTMCP_STATELESS_HTTP=true` is required for Cursor compatibility

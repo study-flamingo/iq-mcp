@@ -1719,8 +1719,8 @@ async def start_server():
         # Create web app with graph visualizer
         web_app = create_web_app(manager)
 
-        # MCP endpoint path (fixed to /mcp for simplicity)
-        mcp_path = "/mcp"
+        # MCP endpoint path (configurable via IQ_MCP_PATH, default: "/" for root)
+        mcp_path = settings.mcp_path
 
         # Use stateless HTTP mode for Cursor compatibility if enabled
         mcp_transport = "http" if settings.stateless_http else "streamable-http"

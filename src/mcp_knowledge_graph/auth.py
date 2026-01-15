@@ -1,8 +1,9 @@
 """
-Authentication configuration for IQ-MCP server using RemoteAuthProvider.
+Authentication configuration for IQ-MCP server using SupabaseProvider.
 
-RemoteAuthProvider enables Dynamic Client Registration (DCR) with Supabase Auth,
-allowing MCP clients to automatically register without manual OAuth app setup.
+SupabaseProvider integrates with Supabase Auth's JWT verification and supports
+Dynamic Client Registration (DCR) through metadata forwarding. Supabase handles
+the OAuth flow directly while FastMCP acts as a resource server.
 """
 
 from __future__ import annotations
@@ -18,24 +19,24 @@ if TYPE_CHECKING:
 
 def get_auth_provider(require_auth: bool = False) -> "AuthProvider | None":
     """
-    Create RemoteAuthProvider for DCR with Supabase Auth.
+    Create SupabaseProvider for OAuth 2.1 with Supabase Auth.
 
-    Uses Supabase's OAuth 2.1 server with Dynamic Client Registration,
-    allowing MCP clients to self-register without manual client credentials.
+    Uses Supabase's OAuth 2.1 server with metadata forwarding. Supabase handles
+    the OAuth flow directly (including DCR) while FastMCP validates JWTs.
 
     Required environment variables:
     - IQ_ENABLE_SUPABASE_AUTH=true
     - IQ_SUPABASE_AUTH_PROJECT_URL=https://xxx.supabase.co
     - IQ_SUPABASE_AUTH_ALGORITHM=ES256
-    - IQ_BASE_URL=https://iq-mcp-dev.up.railway.app
+    - IQ_BASE_URL=https://your-server.com
 
-    NOT required:
-    - IQ_OAUTH_CLIENT_ID (DCR handles this)
-    - IQ_OAUTH_CLIENT_SECRET (DCR handles this)
+    NOT required (Supabase handles OAuth flow):
+    - IQ_OAUTH_CLIENT_ID
+    - IQ_OAUTH_CLIENT_SECRET
     """
     from .context import ctx
 
-    logger.info("🔐 Configuring RemoteAuthProvider for DCR")
+    logger.info("🔐 Configuring SupabaseProvider")
 
     if not ctx.is_initialized:
         raise RuntimeError("Context not initialized")
@@ -47,54 +48,51 @@ def get_auth_provider(require_auth: bool = False) -> "AuthProvider | None":
         return None
 
     try:
-        from fastmcp.server.auth import RemoteAuthProvider
-        from fastmcp.server.auth.providers.jwt import JWTVerifier
-        from pydantic import AnyHttpUrl
+        from fastmcp.server.auth.providers.supabase import SupabaseProvider
 
         supabase_auth = ctx.settings.supabase_auth
         base_url = os.getenv("IQ_BASE_URL")
+        mcp_path = os.getenv("IQ_MCP_PATH", "/")
 
         # Validate required configuration
         if not base_url:
-            raise ValueError("IQ_BASE_URL is required for RemoteAuthProvider")
+            raise ValueError("IQ_BASE_URL is required for SupabaseProvider")
 
         project_url = supabase_auth.project_url.rstrip("/")
-        auth_base_url = base_url.rstrip("/")
 
-        logger.info("✅ RemoteAuthProvider configuration:")
-        logger.info(f"   Project: {project_url}")
+        # Include MCP path in base_url for correct OAuth discovery
+        if mcp_path and mcp_path != "/":
+            auth_base_url = f"{base_url.rstrip('/')}{mcp_path}"
+        else:
+            auth_base_url = base_url.rstrip("/")
+
+        logger.info("✅ SupabaseProvider configuration:")
+        logger.info(f"   Project URL: {project_url}")
         logger.info(f"   Base URL: {auth_base_url}")
         logger.info(f"   Algorithm: {supabase_auth.algorithm}")
 
-        # JWT verifier for token validation
-        token_verifier = JWTVerifier(
-            jwks_uri=f"{project_url}/auth/v1/.well-known/jwks.json",
-            issuer=f"{project_url}/auth/v1",
-            audience=auth_base_url,
+        # SupabaseProvider handles JWT validation via JWKS and metadata forwarding
+        auth = SupabaseProvider(
+            project_url=project_url,
+            base_url=auth_base_url,
+            algorithm=supabase_auth.algorithm,
             required_scopes=supabase_auth.required_scopes or None,
         )
 
-        # RemoteAuthProvider for DCR
-        auth = RemoteAuthProvider(
-            token_verifier=token_verifier,
-            authorization_servers=[AnyHttpUrl(f"{project_url}/auth/v1")],
-            base_url=auth_base_url,
-        )
-
-        logger.info("🔐 RemoteAuthProvider ready for DCR")
-        logger.info(f"   🌐 Discovery: {auth_base_url}/.well-known/oauth-protected-resource")
-        logger.info(f"   🌐 Authorization server: {project_url}/auth/v1")
-        logger.info("   ✨ MCP clients can now self-register via DCR!")
+        logger.info("🔐 SupabaseProvider ready")
+        logger.info(f"   🌐 JWKS: {project_url}/auth/v1/.well-known/jwks.json")
+        logger.info(f"   🌐 Auth Server: {project_url}/auth/v1")
+        logger.info("   ✨ Supabase handles OAuth flow, FastMCP validates JWTs")
 
         return auth
 
     except ImportError as e:
-        logger.error(f"❌ RemoteAuthProvider not available: {e}")
-        logger.error("   Ensure FastMCP 2.13.3+ is installed")
-        raise RuntimeError("RemoteAuthProvider not available")
+        logger.error(f"❌ SupabaseProvider not available: {e}")
+        logger.error("   Ensure FastMCP 2.14.3+ is installed")
+        raise RuntimeError("SupabaseProvider not available")
 
     except Exception as e:
-        logger.error(f"❌ Failed to configure RemoteAuthProvider: {e}")
+        logger.error(f"❌ Failed to configure SupabaseProvider: {e}")
         raise
 
 
