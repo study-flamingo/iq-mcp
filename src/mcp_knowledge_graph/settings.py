@@ -473,5 +473,10 @@ class AppSettings:
         """Check if stateless HTTP mode is enabled (for Cursor compatibility)."""
         return self.core.stateless_http
 
+    @property
+    def mcp_path(self) -> str:
+        """Get the MCP path for the server endpoint."""
+        return self.core.mcp_path
+
 
 __all__ = ["AppSettings", "IQSettings", "SupabaseConfig", "SupabaseAuthConfig"]
